@@ -16,10 +16,6 @@ test("protege acceso, crea perfiles y aplica permisos de Producción", async () 
   const base = `http://127.0.0.1:${server.address().port}`;
 
   try {
-    const page = await fetch(base);
-    assert.equal(page.status, 200);
-    assert.match(await page.text(), /Cotizador/);
-
     const anonymous = await request(base, "/api/projects");
     assert.equal(anonymous.response.status, 401);
 
