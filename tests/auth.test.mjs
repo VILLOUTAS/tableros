@@ -1,0 +1,124 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import { createApplication } from "../server.mjs";
+
+async function request(base, path, options = {}) {
+  const response = await fetch(`${base}${path}`, options);
+  const body = response.status === 204 ? null : await response.json();
+  return { response, body };
+}
+
+test("protege acceso, crea perfiles y aplica permisos de Producción", async () => {
+  const { app } = await createApplication();
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise((resolve) => server.once("listening", resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    const page = await fetch(base);
+    assert.equal(page.status, 200);
+    assert.match(await page.text(), /Cotizador/);
+
+    const anonymous = await request(base, "/api/projects");
+    assert.equal(anonymous.response.status, 401);
+
+    const setupStatus = await request(base, "/api/auth/setup-status");
+    assert.equal(setupStatus.body.needsSetup, true);
+
+    const setup = await request(base, "/api/auth/setup", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        fullName: "Administrador",
+        email: "admin@prueba.local",
+        password: "ClaveSegura123",
+      }),
+    });
+    assert.equal(setup.response.status, 201);
+    assert.equal(setup.body.user.role, "admin");
+    const adminCookie = setup.response.headers.get("set-cookie").split(";")[0];
+    const adminHeaders = {
+      "content-type": "application/json",
+      cookie: adminCookie,
+      "x-csrf-token": setup.body.csrfToken,
+    };
+
+    const user = await request(base, "/api/users", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({
+        fullName: "Equipo Producción",
+        email: "produccion@prueba.local",
+        password: "ClaveSegura456",
+        role: "produccion",
+      }),
+    });
+    assert.equal(user.response.status, 201);
+
+    const project = await request(base, "/api/projects", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({
+        project: {
+          projectName: "",
+          clientName: "Cliente obligatorio",
+          rut: "",
+          status: "venta",
+        },
+        pieces: [],
+        settings: {},
+      }),
+    });
+    assert.equal(project.response.status, 201);
+    assert.equal(project.body.project.project.clientName, "Cliente obligatorio");
+
+    const login = await request(base, "/api/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        email: "produccion@prueba.local",
+        password: "ClaveSegura456",
+      }),
+    });
+    assert.equal(login.response.status, 200);
+    const productionCookie = login.response.headers
+      .get("set-cookie")
+      .split(";")[0];
+    const productionHeaders = {
+      "content-type": "application/json",
+      cookie: productionCookie,
+      "x-csrf-token": login.body.csrfToken,
+    };
+
+    const visible = await request(base, "/api/projects", {
+      headers: { cookie: productionCookie },
+    });
+    assert.equal(visible.body.projects.length, 1);
+
+    const denied = await request(base, "/api/projects", {
+      method: "POST",
+      headers: productionHeaders,
+      body: JSON.stringify({
+        project: { clientName: "No permitido", status: "cotizacion" },
+      }),
+    });
+    assert.equal(denied.response.status, 403);
+
+    const advanced = await request(
+      base,
+      `/api/projects/${project.body.project.id}`,
+      {
+        method: "PATCH",
+        headers: productionHeaders,
+        body: JSON.stringify({
+          project: { status: "produccion" },
+        }),
+      },
+    );
+    assert.equal(advanced.response.status, 200);
+    assert.equal(advanced.body.project.project.status, "produccion");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

@@ -1,0 +1,30 @@
+{
+  "name": "cotizador-casa-diseno",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "catalog:import": "node scripts/import-catalog.mjs catalog/TABLEROS_PARA_COTIZADOR.xlsx",
+    "start": "node server.mjs",
+    "preview": "vite preview --host 0.0.0.0",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.6.0",
+    "helmet": "^8.3.0",
+    "jspdf": "^4.2.1",
+    "pg": "^8.22.0",
+    "read-excel-file": "^9.3.4",
+    "write-excel-file": "^4.1.1"
+  },
+  "devDependencies": {
+    "vite": "^7.0.0"
+  }
+}

@@ -1,0 +1,28 @@
+COTIZADOR CASA DISEÑO V2 — PUBLICACIÓN
+
+1. Descomprime este paquete.
+2. Reemplaza el contenido del repositorio GitHub con todos estos archivos.
+3. Confirma los cambios en la rama main.
+4. En Render entra a New > Blueprint.
+5. Selecciona el repositorio COTIZADOR-TABLEROS.
+6. Render leerá render.yaml y creará:
+   - Web Service: cotizador-casa-diseno-v2
+   - PostgreSQL: cotizador-casa-diseno-v2-db
+7. Espera a que el despliegue indique Live.
+8. Abre la URL del servicio V2.
+9. En la primera pantalla crea la cuenta Administrador.
+10. Después de probar el acceso y una cotización, retira el Static Site anterior.
+
+IMPORTANTE
+
+- No intentes cambiar el servicio anterior de Static Site a Web Service:
+  Render no permite modificar el tipo de un servicio existente.
+- No uses Publish Directory.
+- El comando de compilación es:
+  npm ci && npm run test && npm run build
+- El comando de inicio es:
+  npm start
+- DATABASE_URL se configura automáticamente con el Blueprint.
+- No existe una clave predeterminada.
+
+Si prefieres configuración manual, revisa README.md.
