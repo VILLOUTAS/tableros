@@ -19,7 +19,7 @@ IMPORTANTE
   Render no permite modificar el tipo de un servicio existente.
 - No uses Publish Directory.
 - El comando de compilación es:
-  npm ci && npm run test && npm run build
+  npm ci --include=dev && npm run test && npm run build
 - El comando de inicio es:
   npm start
 - DATABASE_URL se configura automáticamente con el Blueprint.

@@ -52,7 +52,7 @@ conectado al repositorio:
 
 ```text
 Runtime: Node
-Build Command: npm ci && npm run test && npm run build
+Build Command: npm ci --include=dev && npm run test && npm run build
 Start Command: npm start
 Health Check Path: /api/health
 ```
