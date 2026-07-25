@@ -76,7 +76,7 @@ usuarios y cambiar perfiles, claves y estado de las cuentas.
 
 ## Ejecutar localmente
 
-Requiere Node.js 20 o superior:
+Requiere Node.js 24:
 
 ```bash
 npm install

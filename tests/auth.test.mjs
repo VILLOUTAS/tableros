@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createApplication } from "../server.mjs";
+import { createApplication, projectVisibility } from "../server.mjs";
 
 async function request(base, path, options = {}) {
   const response = await fetch(`${base}${path}`, options);
@@ -10,7 +10,7 @@ async function request(base, path, options = {}) {
 }
 
 test("protege acceso, crea perfiles y aplica permisos de Producción", async () => {
-  const { app } = await createApplication();
+  const { app } = await createApplication({ useMemory: true });
   const server = app.listen(0, "127.0.0.1");
   await new Promise((resolve) => server.once("listening", resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -117,4 +117,19 @@ test("protege acceso, crea perfiles y aplica permisos de Producción", async () 
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
+});
+
+test("las consultas por perfil solo envían parámetros cuando el SQL los usa", () => {
+  assert.deepEqual(
+    projectVisibility({ id: "produccion-1", role: "produccion" }).params,
+    [],
+  );
+  assert.deepEqual(
+    projectVisibility({ id: "admin-1", role: "admin" }).params,
+    [],
+  );
+  assert.deepEqual(
+    projectVisibility({ id: "comercial-1", role: "comercial" }).params,
+    ["comercial-1"],
+  );
 });

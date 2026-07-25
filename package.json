@@ -1,10 +1,10 @@
 {
   "name": "cotizador-casa-diseno",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": "24.x"
   },
   "scripts": {
     "dev": "vite --host 0.0.0.0",

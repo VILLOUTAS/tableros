@@ -139,6 +139,22 @@ class PostgresStore {
       CREATE INDEX IF NOT EXISTS projects_status_idx ON projects(status);
       CREATE INDEX IF NOT EXISTS sessions_expiry_idx ON app_sessions(expires_at);
     `);
+    // La versión 2.0.1 ejecutó accidentalmente la prueba de integración contra
+    // DATABASE_URL durante el build de Render. Se eliminan únicamente esos
+    // registros de prueba conocidos para devolver la base a su estado inicial.
+    await this.pool.query(`
+      DELETE FROM projects
+      WHERE owner_id IN (
+        SELECT id FROM app_users
+        WHERE email IN ('admin@prueba.local', 'produccion@prueba.local')
+      )
+      OR assigned_to IN (
+        SELECT id FROM app_users
+        WHERE email IN ('admin@prueba.local', 'produccion@prueba.local')
+      );
+      DELETE FROM app_users
+      WHERE email IN ('admin@prueba.local', 'produccion@prueba.local');
+    `);
     await this.pool.query("DELETE FROM app_sessions WHERE expires_at <= NOW()");
   }
 
@@ -241,15 +257,7 @@ class PostgresStore {
   }
 
   async listProjects(user) {
-    const where =
-      user.role === "admin"
-        ? "TRUE"
-        : user.role === "produccion"
-          ? "p.status IN ('venta','produccion')"
-          : user.role === "comercial"
-            ? "(p.owner_id=$1 OR p.assigned_to=$1)"
-            : "p.owner_id=$1";
-    const params = user.role === "admin" ? [] : [user.id];
+    const { where, params } = projectVisibility(user);
     const result = await this.pool.query(
       `SELECT p.*, owner.full_name AS owner_name,
               assigned.full_name AS assigned_name
@@ -305,6 +313,19 @@ class PostgresStore {
     );
     return mapProject(result.rows[0]);
   }
+}
+
+export function projectVisibility(user) {
+  const where =
+      user.role === "admin"
+        ? "TRUE"
+        : user.role === "produccion"
+          ? "p.status IN ('venta','produccion')"
+          : user.role === "comercial"
+            ? "(p.owner_id=$1 OR p.assigned_to=$1)"
+            : "p.owner_id=$1";
+  const params = ["comercial", "cliente"].includes(user.role) ? [user.id] : [];
+  return { where, params };
 }
 
 class MemoryStore {
@@ -436,12 +457,18 @@ function projectRecord(body, ownerId, current = null) {
   };
 }
 
-export async function createApplication({ store } = {}) {
+export async function createApplication({ store, useMemory = false } = {}) {
   const databaseUrl = process.env.DATABASE_URL;
   if (!store && isProduction && !databaseUrl) {
     throw new Error("Falta DATABASE_URL. Vincula una base PostgreSQL en Render.");
   }
-  const database = store || (databaseUrl ? new PostgresStore(databaseUrl) : new MemoryStore());
+  const database =
+    store ||
+    (useMemory
+      ? new MemoryStore()
+      : databaseUrl
+        ? new PostgresStore(databaseUrl)
+        : new MemoryStore());
   await database.init();
 
   const app = express();
