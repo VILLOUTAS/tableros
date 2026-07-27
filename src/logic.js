@@ -319,6 +319,127 @@ export function optimize(material, pieces, edgeBands, settings = {}) {
   };
 }
 
+export function optimizeProject(
+  projectMaterials,
+  pieces,
+  edgeBands,
+  settings = {},
+) {
+  const activeMaterials = projectMaterials.filter(Boolean);
+  const fallbackMaterialId = activeMaterials[0]?.id || "";
+  const materialResults = activeMaterials
+    .map((material) => {
+      const materialPieces = pieces
+        .filter(
+          (piece) =>
+            (piece.materialId || fallbackMaterialId) === material.id,
+        )
+        .map((piece) => ({ ...piece, materialId: material.id }));
+      if (!materialPieces.length) return null;
+      return {
+        material,
+        result: optimize(material, materialPieces, edgeBands, settings),
+      };
+    })
+    .filter(Boolean);
+
+  let globalPlateIndex = 0;
+  const plates = materialResults.flatMap(({ material, result }) =>
+    result.plates.map((plate) => ({
+      ...plate,
+      index: (globalPlateIndex += 1),
+      materialPlateIndex: plate.index,
+      materialId: material.id,
+      material,
+    })),
+  );
+  const warnings = materialResults.flatMap(({ material, result }) =>
+    result.warnings.map((warning) => `${material.sku}: ${warning}`),
+  );
+  const numericFields = [
+    "boardCount",
+    "cutCount",
+    "edgeMeters",
+    "boardSubtotal",
+    "edgeSubtotal",
+    "cuttingSubtotal",
+    "bandingSubtotal",
+    "servicesSubtotal",
+    "boardDiscountAmount",
+    "edgeDiscountAmount",
+    "servicesDiscountAmount",
+    "discountTotal",
+    "net",
+    "vat",
+    "total",
+  ];
+  const summary = Object.fromEntries(
+    numericFields.map((field) => [
+      field,
+      materialResults.reduce(
+        (sum, item) => sum + Number(item.result.summary[field] || 0),
+        0,
+      ),
+    ]),
+  );
+  const totalBoardArea = materialResults.reduce(
+    (sum, { material, result }) =>
+      sum +
+      result.plates.length * material.plateLength * material.plateWidth,
+    0,
+  );
+  const totalUsedArea = materialResults.reduce(
+    (sum, { result }) =>
+      sum +
+      result.plates.reduce(
+        (plateSum, plate) => plateSum + plate.usedArea,
+        0,
+      ),
+    0,
+  );
+  summary.waste = totalBoardArea
+    ? 100 - (totalUsedArea / totalBoardArea) * 100
+    : 0;
+  summary.boardDiscount = Math.min(
+    100,
+    Math.max(0, Number(settings.boardDiscount) || 0),
+  );
+  summary.edgeDiscount = Math.min(
+    100,
+    Math.max(0, Number(settings.edgeDiscount) || 0),
+  );
+  summary.servicesDiscount = Math.min(
+    100,
+    Math.max(0, Number(settings.servicesDiscount) || 0),
+  );
+  summary.metersByEdge = materialResults.reduce(
+    (totals, { result }) => {
+      Object.entries(result.summary.metersByEdge || {}).forEach(
+        ([id, meters]) => {
+          totals[id] = (totals[id] || 0) + meters;
+        },
+      );
+      return totals;
+    },
+    {},
+  );
+
+  return {
+    plates,
+    warnings,
+    summary,
+    materialSummaries: materialResults.map(({ material, result }) => ({
+      materialId: material.id,
+      sku: material.sku,
+      name: material.name,
+      brand: material.brand,
+      boardCount: result.summary.boardCount,
+      boardSubtotal: result.summary.boardSubtotal,
+      utilization: 100 - result.summary.waste,
+    })),
+  };
+}
+
 function fittedText(ctx, value, maxWidth) {
   const text = String(value || "");
   if (ctx.measureText(text).width <= maxWidth) return text;
@@ -415,6 +536,21 @@ function drawCutTag(ctx, text, x, y, maxWidth = 160) {
   ctx.fillRect(x, y - 11, tagWidth, 15);
   ctx.fillStyle = "#101820";
   ctx.fillText(label, x + 6, y);
+}
+
+function drawMeasureLabel(ctx, text, x, y, maxWidth, rotation = 0) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(rotation);
+  const label = fittedText(ctx, text, maxWidth);
+  const labelWidth = Math.min(maxWidth, ctx.measureText(label).width);
+  const boxWidth = labelWidth + 8;
+  ctx.fillStyle = "rgba(255,255,255,.9)";
+  ctx.fillRect(-boxWidth / 2, -9, boxWidth, 14);
+  ctx.fillStyle = "#101820";
+  ctx.textAlign = "center";
+  ctx.fillText(label, 0, 2);
+  ctx.restore();
 }
 
 function spacedMarks(values, scale, minimumPixels = 28) {
@@ -515,7 +651,7 @@ export function drawCutPlan(
   ctx.fillText(
     fittedText(
       ctx,
-      `PLACA ${plate.index} · PRIMER CORTE: ${
+      `PLACA ${plate.materialPlateIndex || plate.index} · PRIMER CORTE: ${
         plate.cutAxis === "transversal" ? "TRANSVERSAL" : "LONGITUDINAL"
       } · GENERADO: ${context.generatedAt || new Date().toLocaleString("es-CL")}${
         context.createdBy ? ` · RESPONSABLE: ${context.createdBy}` : ""
@@ -602,21 +738,39 @@ export function drawCutPlan(
     if (w > 48 && h > 36) {
       const horizontalMeasure = Math.round(piece.drawWidth);
       const verticalMeasure = Math.round(piece.drawHeight);
-      ctx.fillStyle = "#101820";
       ctx.font = `700 ${w > 100 && h > 70 ? 10 : 8}px Arial`;
-      ctx.textAlign = "center";
-      ctx.fillText(`${horizontalMeasure}`, x + w / 2, y + 14, w - 28);
-      ctx.fillText(`${horizontalMeasure}`, x + w / 2, y + h - 7, w - 28);
-      ctx.save();
-      ctx.translate(x + 13, y + h / 2);
-      ctx.rotate(-Math.PI / 2);
-      ctx.fillText(`${verticalMeasure}`, 0, 0, h - 28);
-      ctx.restore();
-      ctx.save();
-      ctx.translate(x + w - 8, y + h / 2);
-      ctx.rotate(Math.PI / 2);
-      ctx.fillText(`${verticalMeasure}`, 0, 0, h - 28);
-      ctx.restore();
+      const horizontalInset = Math.min(29, Math.max(18, h * 0.18));
+      const verticalInset = Math.min(29, Math.max(18, w * 0.12));
+      drawMeasureLabel(
+        ctx,
+        `${horizontalMeasure}`,
+        x + w / 2,
+        y + horizontalInset,
+        Math.max(18, w - 58),
+      );
+      drawMeasureLabel(
+        ctx,
+        `${horizontalMeasure}`,
+        x + w / 2,
+        y + h - horizontalInset,
+        Math.max(18, w - 58),
+      );
+      drawMeasureLabel(
+        ctx,
+        `${verticalMeasure}`,
+        x + verticalInset,
+        y + h / 2,
+        Math.max(18, h - 58),
+        -Math.PI / 2,
+      );
+      drawMeasureLabel(
+        ctx,
+        `${verticalMeasure}`,
+        x + w - verticalInset,
+        y + h / 2,
+        Math.max(18, h - 58),
+        Math.PI / 2,
+      );
     }
 
     if (piece.grain !== "sin-veta" && w > 70 && h > 55) {

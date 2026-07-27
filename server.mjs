@@ -449,11 +449,13 @@ export function projectVisibility(user) {
       user.role === "admin"
         ? "TRUE"
         : user.role === "produccion"
-          ? "p.status IN ('venta','produccion')"
+          ? "(p.status IN ('venta','produccion') OR p.owner_id=$1)"
           : user.role === "comercial"
             ? "(p.owner_id=$1 OR p.assigned_to=$1)"
             : "p.owner_id=$1";
-  const params = ["comercial", "cliente"].includes(user.role) ? [user.id] : [];
+  const params = ["comercial", "cliente", "produccion"].includes(user.role)
+    ? [user.id]
+    : [];
   return { where, params };
 }
 
@@ -541,7 +543,10 @@ class MemoryStore {
       .filter((project) => {
         if (user.role === "admin") return true;
         if (user.role === "produccion") {
-          return ["venta", "produccion"].includes(project.project.status);
+          return (
+            project.ownerId === user.id ||
+            ["venta", "produccion"].includes(project.project.status)
+          );
         }
         if (user.role === "comercial") {
           return project.ownerId === user.id || project.assignedTo === user.id;
@@ -574,7 +579,10 @@ class MemoryStore {
 export function canReadProject(user, project) {
   if (user.role === "admin") return true;
   if (user.role === "produccion") {
-    return ["venta", "produccion"].includes(project.project.status);
+    return (
+      project.ownerId === user.id ||
+      ["venta", "produccion"].includes(project.project.status)
+    );
   }
   if (user.role === "comercial") {
     return project.ownerId === user.id || project.assignedTo === user.id;
@@ -584,7 +592,7 @@ export function canReadProject(user, project) {
 
 export function canEditProject(user, project) {
   if (user.role === "admin") return true;
-  if (user.role === "produccion") return false;
+  if (user.role === "produccion") return canReadProject(user, project);
   if (user.role === "comercial") {
     return project.ownerId === user.id || project.assignedTo === user.id;
   }
@@ -593,6 +601,26 @@ export function canEditProject(user, project) {
 
 function projectRecord(body, ownerId, current = null) {
   const project = body.project || {};
+  const materialIds = [
+    ...new Set(
+      [
+        ...(Array.isArray(body.materialIds) ? body.materialIds : []),
+        body.materialId,
+      ]
+        .map((id) => String(id || ""))
+        .filter(Boolean),
+    ),
+  ];
+  const materialId = String(body.materialId || materialIds[0] || "");
+  if (materialId && !materialIds.includes(materialId)) {
+    materialIds.unshift(materialId);
+  }
+  const pieces = Array.isArray(body.pieces)
+    ? body.pieces.map((piece) => ({
+        ...piece,
+        materialId: String(piece.materialId || materialId),
+      }))
+    : [];
   return {
     id: current?.id || body.id || randomUUID(),
     ownerId: current?.ownerId || ownerId,
@@ -605,9 +633,10 @@ function projectRecord(body, ownerId, current = null) {
     },
     payload: {
       categoryId: String(body.categoryId || ""),
-      materialId: String(body.materialId || ""),
+      materialId,
+      materialIds,
       defaultGrain: String(body.defaultGrain || "longitudinal"),
-      pieces: Array.isArray(body.pieces) ? body.pieces : [],
+      pieces,
       settings: body.settings && typeof body.settings === "object" ? body.settings : {},
       discounts:
         body.discounts && typeof body.discounts === "object" ? body.discounts : {},
@@ -619,13 +648,23 @@ function projectRecord(body, ownerId, current = null) {
 function projectDimensionError(record) {
   const pieces = record.payload.pieces;
   if (!pieces.length) return "";
-  const material = materials.find((item) => item.id === record.payload.materialId);
-  if (!material) return "Selecciona un tablero válido antes de guardar las piezas.";
-  const invalidIndex = pieces.findIndex(
-    (piece) => !pieceFitsMaterial(piece, material),
-  );
+  const invalidIndex = pieces.findIndex((piece) => {
+    const material = materials.find(
+      (item) => item.id === piece.materialId,
+    );
+    return (
+      !material ||
+      !record.payload.materialIds.includes(material.id) ||
+      !pieceFitsMaterial(piece, material)
+    );
+  });
   if (invalidIndex < 0) return "";
-  return `La pieza ${pieces[invalidIndex].code || invalidIndex + 1} excede la plancha de ${material.plateLength} × ${material.plateWidth} mm para la veta seleccionada.`;
+  const piece = pieces[invalidIndex];
+  const material = materials.find((item) => item.id === piece.materialId);
+  if (!material) {
+    return `La pieza ${piece.code || invalidIndex + 1} no tiene un tablero válido asignado.`;
+  }
+  return `La pieza ${piece.code || invalidIndex + 1} excede la plancha de ${material.plateLength} × ${material.plateWidth} mm para la veta seleccionada.`;
 }
 
 export async function createApplication({ store, useMemory = false } = {}) {
@@ -898,9 +937,6 @@ export async function createApplication({ store, useMemory = false } = {}) {
   });
 
   app.post("/api/projects", authenticate, csrf, async (request, response) => {
-    if (request.auth.user.role === "produccion") {
-      return response.status(403).json({ error: "Producción trabaja sobre órdenes existentes." });
-    }
     const record = projectRecord(request.body, request.auth.user.id);
     if (!record.project.clientName) {
       return response.status(400).json({ error: "El nombre del cliente es obligatorio." });
@@ -942,28 +978,6 @@ export async function createApplication({ store, useMemory = false } = {}) {
     const current = await database.getProject(request.params.id);
     if (!current || !canReadProject(request.auth.user, current)) {
       return response.status(404).json({ error: "Proyecto no encontrado." });
-    }
-    if (request.auth.user.role === "produccion") {
-      const status = request.body.project?.status;
-      if (status !== "produccion") {
-        return response.status(403).json({
-          error: "Producción solo puede avanzar una orden al estado Producción.",
-        });
-      }
-      const saved = await database.saveProject({
-        ...projectRecord(current, current.ownerId, current),
-        project: { ...current.project, status: "produccion" },
-        payload: {
-          categoryId: current.categoryId,
-          materialId: current.materialId,
-          defaultGrain: current.defaultGrain,
-          pieces: current.pieces,
-          settings: current.settings,
-          discounts: current.discounts,
-        },
-        summary: current.summary,
-      });
-      return response.json({ project: saved });
     }
     if (!canEditProject(request.auth.user, current)) {
       return response.status(403).json({ error: "No puedes modificar este proyecto." });

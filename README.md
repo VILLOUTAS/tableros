@@ -1,6 +1,6 @@
 # Cotizador online — Casa Diseño Multiespacio
 
-Versión 2.1.2 del cotizador y optimizador de cortes. Incluye acceso seguro con
+Versión 2.2.0 del cotizador y optimizador de cortes. Incluye acceso seguro con
 usuarios diferenciados, base PostgreSQL, catálogo completo importado desde
 Excel y persistencia de proyectos.
 
@@ -14,6 +14,9 @@ Excel y persistencia de proyectos.
 - Estados Cotización, Venta y Producción.
 - 145 tableros y 121 tapacantos del Excel entregado.
 - Selección progresiva por categoría y búsqueda por código, nombre o marca.
+- Selección de múltiples tipos de tablero dentro de un mismo proyecto.
+- Asignación de cada pieza a uno de los tableros seleccionados, tanto en el
+  ingreso manual como en la importación Excel.
 - Espacio para imágenes de materiales.
 - Código de pieza autogenerado y nombre del elemento opcional.
 - Validación manual, Excel y servidor para impedir piezas mayores que el
@@ -22,6 +25,7 @@ Excel y persistencia de proyectos.
 - Plantilla Excel incluida como archivo descargable directo, sin generación
   dinámica en el navegador.
 - Optimización longitudinal prioritaria o sin prioridad de eje.
+- Optimización, planos de corte y subtotales separados por cada tablero.
 - Corte cobrado por tablero.
 - Servicio de tapacanto por metro lineal: 0,4 mm $500; 1,0 mm $600;
   1,5 mm $700; 2,0 mm $850.
@@ -33,6 +37,10 @@ Excel y persistencia de proyectos.
 - Identificación de cada tapacanto mediante código T1/T2/T3, color de alto
   contraste, patrón propio y trazos paralelos cuando dos piezas contiguas
   llevan terminaciones distintas.
+- Cotas interiores desplazadas hacia el centro y con respaldo blanco para
+  evitar que los tapacantos oculten sus valores.
+- Guardado de proyectos disponible para Administrador, Comercial, Producción
+  y Cliente, respetando la visibilidad y estados autorizados para cada perfil.
 - Centro de notificaciones para Administradores y aviso opcional por correo
   cuando se crea una nueva cotización.
 
@@ -153,6 +161,7 @@ La aplicación descarga una plantilla y reconoce:
 ```text
 codigo_opcional
 nombre_elemento_opcional
+codigo_material_opcional
 largo
 ancho
 cantidad
@@ -161,7 +170,10 @@ notas
 ```
 
 Si el código viene vacío, se genera automáticamente como `P-001`, `P-002`, etc.
-El nombre del elemento también puede quedar vacío.
+El nombre del elemento también puede quedar vacío. En
+`codigo_material_opcional` puedes escribir el código de uno de los tableros
+seleccionados, por ejemplo `62-EGGER-1502`. Si la celda queda vacía, la pieza
+se asigna al tablero activo en el formulario.
 
 ## Verificación
 

@@ -15,7 +15,7 @@ import {
   cutDimensions,
   drawCutPlan,
   formatRut,
-  optimize,
+  optimizeProject,
   pieceFitsMaterial,
   validateRut,
 } from "./logic.js";
@@ -42,6 +42,7 @@ function emptyState() {
     },
     categoryId: "",
     materialId: "",
+    materialIds: [],
     productSearch: "",
     defaultGrain: "longitudinal",
     pieces: [],
@@ -78,8 +79,19 @@ const safe = (value = "") =>
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
 
-const selectedMaterial = () =>
-  materials.find((item) => item.id === state.materialId);
+const selectedMaterials = () => {
+  const ids = state.materialIds?.length
+    ? state.materialIds
+    : state.materialId
+      ? [state.materialId]
+      : [];
+  return ids
+    .map((id) => materials.find((item) => item.id === id))
+    .filter(Boolean);
+};
+
+const selectedMaterial = (id = state.materialId) =>
+  materials.find((item) => item.id === id) || selectedMaterials()[0];
 
 async function api(path, options = {}) {
   const headers = { ...(options.headers || {}) };
@@ -124,11 +136,11 @@ function unreadNotifications() {
 }
 
 function canCreateQuote() {
-  return auth.user && auth.user.role !== "produccion";
+  return Boolean(auth.user);
 }
 
 function canEditCurrent() {
-  if (!auth.user || auth.user.role === "produccion") return false;
+  if (!auth.user) return false;
   if (auth.user.role === "cliente" && state.project.status !== "cotizacion") {
     return false;
   }
@@ -157,8 +169,8 @@ function validateCurrentStep() {
       return false;
     }
   }
-  if (state.step === 1 && !selectedMaterial()) {
-    notify("Selecciona primero una categoría y después un producto.", "error");
+  if (state.step === 1 && selectedMaterials().length === 0) {
+    notify("Selecciona al menos un tablero para el proyecto.", "error");
     return false;
   }
   if (state.step === 2 && state.pieces.length === 0) {
@@ -178,14 +190,14 @@ async function saveProject(showMessage = true) {
   if (
     !state.project.clientName.trim() ||
     (state.project.rut.trim() && !validateRut(state.project.rut)) ||
-    !selectedMaterial() ||
+    selectedMaterials().length === 0 ||
     state.pieces.length === 0
   ) {
     notify("Faltan datos obligatorios para guardar el proyecto.", "error");
     return false;
   }
-  const result = optimize(
-    selectedMaterial(),
+  const result = optimizeProject(
+    selectedMaterials(),
     state.pieces,
     edgeBands,
     state.settings,
@@ -195,6 +207,7 @@ async function saveProject(showMessage = true) {
     project: state.project,
     categoryId: state.categoryId,
     materialId: state.materialId,
+    materialIds: state.materialIds,
     defaultGrain: state.defaultGrain,
     pieces: state.pieces,
     settings: state.settings,
@@ -403,11 +416,27 @@ function projectStep() {
 
 function materialStep() {
   const products = materials.filter((item) => item.categoryId === state.categoryId);
+  const chosenMaterials = selectedMaterials();
   return `
     <section class="intro-row">
-      <div><p class="eyebrow">SELECCIÓN PROGRESIVA</p><h2>Primero categoría, después producto</h2></div>
-      <div class="selection-flow"><b class="${state.categoryId ? "done" : ""}">1 Categoría</b><span>→</span><b class="${state.materialId ? "done" : ""}">2 Producto</b></div>
+      <div><p class="eyebrow">SELECCIÓN PROGRESIVA</p><h2>Selecciona uno o más tableros</h2><p>Puedes cambiar de categoría y seguir incorporando productos al mismo proyecto.</p></div>
+      <div class="selection-flow"><b class="${state.categoryId ? "done" : ""}">1 Categoría</b><span>→</span><b class="${chosenMaterials.length ? "done" : ""}">${chosenMaterials.length} tablero(s)</b></div>
     </section>
+    ${
+      chosenMaterials.length
+        ? `<section class="selected-materials" aria-label="Tableros seleccionados">
+            ${chosenMaterials
+              .map(
+                (material) => `<article>
+                  <span class="sample" style="background:${material.texture}"><img class="material-image" src="${safe(material.image)}" alt="" /></span>
+                  <div><small>${safe(material.sku)}</small><b>${safe(material.name)}</b></div>
+                  <button class="icon danger" data-action="remove-material" data-id="${material.id}" aria-label="Quitar ${safe(material.name)}">×</button>
+                </article>`,
+              )
+              .join("")}
+          </section>`
+        : ""
+    }
     <section class="card">
       <div class="section-title"><span>1</span><div><h3>Categoría del tablero</h3><p>Los listados se muestran de forma progresiva.</p></div></div>
       <div class="category-grid">
@@ -431,9 +460,12 @@ function materialStep() {
             </div>
             <div class="product-grid">
               ${products
-                .map(
-                  (material) => `
-                  <button class="product ${material.id === state.materialId ? "selected" : ""}" data-material="${material.id}" data-search-text="${safe(`${material.sku} ${material.name} ${material.brand}`.toLowerCase())}">
+                .map((material) => {
+                  const isSelected = chosenMaterials.some(
+                    (item) => item.id === material.id,
+                  );
+                  return `
+                  <button class="product ${isSelected ? "selected" : ""}" data-material="${material.id}" data-search-text="${safe(`${material.sku} ${material.name} ${material.brand}`.toLowerCase())}">
                     <span class="sample" style="background:${material.texture}">
                       <img class="material-image" src="${safe(material.image)}" alt="" loading="lazy" />
                     </span>
@@ -443,9 +475,9 @@ function materialStep() {
                         ? `<span class="admin-prices">Mínimo ${clp(material.minPrice)} · Compra ${clp(material.purchasePrice)}</span>`
                         : ""
                     }</span>
-                    <i>${material.id === state.materialId ? "✓" : "＋"}</i>
-                  </button>`,
-                )
+                    <i>${isSelected ? "✓" : "＋"}</i>
+                  </button>`;
+                })
                 .join("")}
             </div>
           </section>`
@@ -457,6 +489,7 @@ function materialStep() {
 
 function piecesStep() {
   const material = selectedMaterial();
+  const chosenMaterials = selectedMaterials();
   const limits = dimensionLimits(state.defaultGrain, material);
   return `
     <section class="intro-row">
@@ -471,6 +504,16 @@ function piecesStep() {
             <div class="locked-field">${nextPieceCode()} <span>Automático</span></div>
           </label>
           <label>Nombre del elemento <small>Opcional</small><input name="name" placeholder="Costado izquierdo" /></label>
+          <label class="piece-material-field">Tablero de esta pieza <em>*</em>
+            <select name="materialId" required>
+              ${chosenMaterials
+                .map(
+                  (item) =>
+                    `<option value="${item.id}" ${item.id === material?.id ? "selected" : ""}>${safe(item.sku)} · ${safe(item.name)} · ${item.thickness} mm</option>`,
+                )
+                .join("")}
+            </select>
+          </label>
           <label>Largo terminado (mm) <em>*</em><input name="length" type="number" min="1" max="${limits.maxLength}" required placeholder="720" /></label>
           <label>Ancho terminado (mm) <em>*</em><input name="width" type="number" min="1" max="${limits.maxWidth}" required placeholder="560" /></label>
           <label>Cantidad <em>*</em><input name="quantity" type="number" min="1" value="1" required /></label>
@@ -490,7 +533,7 @@ function piecesStep() {
         </form>
       </section>
       <section class="card import-card">
-        <div class="section-title"><span>⇧</span><div><h3>Importar Excel</h3><p>Se revisan las filas antes de incorporarlas.</p></div></div>
+        <div class="section-title"><span>⇧</span><div><h3>Importar Excel</h3><p>Indica el código de material por fila; si queda vacío se usará el tablero activo.</p></div></div>
         <label class="dropzone">
           <input type="file" id="excel-file" accept=".xlsx" />
           <strong>Seleccionar archivo</strong>
@@ -525,11 +568,12 @@ function piecesTable() {
   return `<section class="card table-card">
     <div class="section-title"><span>▦</span><div><h3>Listado de piezas</h3><p>${state.pieces.length} líneas ingresadas.</p></div></div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Código · elemento</th><th>Terminada</th><th>Cant.</th><th>Veta</th><th></th></tr></thead>
+      <thead><tr><th>Código · elemento</th><th>Tablero</th><th>Terminada</th><th>Cant.</th><th>Veta</th><th></th></tr></thead>
       <tbody>${state.pieces
-        .map(
-          (piece) => `<tr><td><b>${safe(piece.code)}</b><span>${safe(piece.name)}</span></td><td>${piece.length} × ${piece.width} mm</td><td>${piece.quantity}</td><td><i class="mini-grain">${grainIcon(piece.grain)}</i>${grainLabels[piece.grain]}</td><td><button class="icon danger" data-action="remove-piece" data-id="${piece.id}" aria-label="Eliminar">×</button></td></tr>`,
-        )
+        .map((piece) => {
+          const material = selectedMaterial(piece.materialId);
+          return `<tr><td><b>${safe(piece.code)}</b><span>${safe(piece.name)}</span></td><td><b>${safe(material?.sku || "Sin asignar")}</b><span>${safe(material?.name || "")}</span></td><td>${piece.length} × ${piece.width} mm</td><td>${piece.quantity}</td><td><i class="mini-grain">${grainIcon(piece.grain)}</i>${grainLabels[piece.grain]}</td><td><button class="icon danger" data-action="remove-piece" data-id="${piece.id}" aria-label="Eliminar">×</button></td></tr>`;
+        })
         .join("")}</tbody>
     </table></div>
   </section>`;
@@ -540,7 +584,7 @@ function edgeStep() {
   const suggested = edgeBands.find((item) => item.id === material?.suggestedEdgeId);
   return `
     <section class="intro-row">
-      <div><p class="eyebrow">TERMINACIÓN</p><h2>Tapacantos agrupados por tipo y espesor</h2><p>El espesor seleccionado se descuenta automáticamente de la medida de corte.</p></div>
+      <div><p class="eyebrow">TERMINACIÓN</p><h2>Tapacantos por pieza y tablero</h2><p>El espesor seleccionado se descuenta automáticamente de la medida de corte.</p></div>
     </section>
     <section class="card edge-toolbar">
       <div><small>SUGERIDO PARA ${safe(material?.name)}</small><b><i style="background:${suggested?.color}"></i>${suggested?.group} · ${suggested?.name}</b></div>
@@ -552,9 +596,10 @@ function edgeStep() {
       ${state.pieces
         .map((piece) => {
           const cut = cutDimensions(piece, edgeBands);
+          const pieceMaterial = selectedMaterial(piece.materialId);
           return `<article class="card edge-piece">
             <div class="edge-piece-head">
-              <div><small>${safe(piece.code)}</small><h3>${safe(piece.name || "Pieza sin nombre")}</h3><p>Terminada: ${piece.length} × ${piece.width} mm · Cantidad: ${piece.quantity}</p></div>
+              <div><small>${safe(piece.code)} · ${safe(pieceMaterial?.sku || "Sin tablero")}</small><h3>${safe(piece.name || "Pieza sin nombre")}</h3><p>${safe(pieceMaterial?.name || "")} · Terminada: ${piece.length} × ${piece.width} mm · Cantidad: ${piece.quantity}</p></div>
               <div class="cut-size"><span>MEDIDA DE CORTE</span><b>${cut.cutLength} × ${cut.cutWidth} mm</b></div>
             </div>
             <div class="edge-sides">
@@ -600,19 +645,16 @@ function summaryRows(summary) {
 }
 
 function optimizeStep() {
-  const material = selectedMaterial();
-  latestResult = optimize(material, state.pieces, edgeBands, state.settings);
+  latestResult = optimizeProject(
+    selectedMaterials(),
+    state.pieces,
+    edgeBands,
+    state.settings,
+  );
   const summary = latestResult.summary;
-  const chosenAxis = latestResult.plates[0]?.cutAxis || "longitudinal";
   return `
     <section class="intro-row">
-      <div><p class="eyebrow">RESULTADO</p><h2>Plano de corte ${
-        chosenAxis === "longitudinal" ? "longitudinal" : "sin prioridad longitudinal"
-      }</h2><p>${
-        chosenAxis === "longitudinal"
-          ? "Los cortes dorados longitudinales completos se ejecutan primero."
-          : "El optimizador eligió el eje que utiliza menos placas y cortes."
-      }</p></div>
+      <div><p class="eyebrow">RESULTADO</p><h2>Planos agrupados por tablero</h2><p>Cada material se optimiza por separado y genera sus propias hojas de corte.</p></div>
       <div class="actions">
         <button class="secondary" data-action="pdf">↓ Descargar PDF</button>
         ${
@@ -638,14 +680,23 @@ function optimizeStep() {
         ${latestResult.plates
           .map(
             (plate) => `<article class="card plan-card">
-              <header><div><small>HOJA DE CORTE</small><h3>Placa ${plate.index}</h3></div><b>${plate.utilization.toFixed(1)} % utilizado</b></header>
+              <header><div><small>${safe(plate.material.sku)} · ${safe(plate.material.name)}</small><h3>Placa ${plate.materialPlateIndex} de este tablero</h3></div><b>${plate.utilization.toFixed(1)} % utilizado</b></header>
               <div class="canvas-wrap"><canvas id="plan-${plate.index}"></canvas></div>
             </article>`,
           )
           .join("")}
       </section>
       <aside class="quote-side">
-        <section class="card summary-card"><p class="eyebrow">RESUMEN ECONÓMICO</p><h3>Subtotales</h3>${summaryRows(summary)}</section>
+        <section class="card summary-card"><p class="eyebrow">RESUMEN ECONÓMICO</p><h3>Subtotales</h3>
+          <div class="material-summary-list">
+            ${latestResult.materialSummaries
+              .map(
+                (item) => `<div><span><b>${safe(item.sku)}</b><small>${safe(item.name)} · ${item.boardCount} placa(s)</small></span><strong>${clp(item.boardSubtotal)}</strong></div>`,
+              )
+              .join("")}
+          </div>
+          ${summaryRows(summary)}
+        </section>
         <section class="card settings-card">
           <p class="eyebrow">PARÁMETROS</p>
           <label>Sierra (mm)<input type="number" min="0" step="0.1" data-setting="kerf" value="${state.settings.kerf}" /></label>
@@ -875,7 +926,7 @@ function render() {
         latestResult.plates.forEach((plate) => {
           const canvas = document.querySelector(`#plan-${plate.index}`);
           if (canvas) {
-            drawCutPlan(canvas, plate, selectedMaterial(), edgeBands, logo, {
+            drawCutPlan(canvas, plate, plate.material, edgeBands, logo, {
               projectId: state.projectId,
               project: state.project,
               statusLabel: statusLabels[state.project.status],
@@ -930,8 +981,13 @@ function dimensionLimits(grain, material = selectedMaterial()) {
   };
 }
 
-function updateDimensionInputs(grain) {
-  const limits = dimensionLimits(grain);
+function updateDimensionInputs(
+  grain,
+  materialId = document.querySelector(
+    '#piece-form select[name="materialId"]',
+  )?.value,
+) {
+  const limits = dimensionLimits(grain, selectedMaterial(materialId));
   const lengthInput = document.querySelector('#piece-form input[name="length"]');
   const widthInput = document.querySelector('#piece-form input[name="width"]');
   const note = document.querySelector("#dimension-limit-note");
@@ -946,12 +1002,17 @@ function addPiece(form) {
   const width = Number(data.get("width"));
   const quantity = Number(data.get("quantity"));
   const grain = String(data.get("grain") || "sin-veta");
+  const materialId = String(data.get("materialId") || "");
+  const material = selectedMaterial(materialId);
   if (length <= 0 || width <= 0 || quantity <= 0) {
     notify("Revisa los datos obligatorios de la pieza.", "error");
     return;
   }
-  if (!pieceFitsMaterial({ length, width, grain }, selectedMaterial())) {
-    const material = selectedMaterial();
+  if (!material || !state.materialIds.includes(material.id)) {
+    notify("Selecciona un tablero válido para la pieza.", "error");
+    return;
+  }
+  if (!pieceFitsMaterial({ length, width, grain }, material)) {
     notify(
       `La pieza no cabe en la plancha de ${material.plateLength} × ${material.plateWidth} mm con la veta seleccionada.`,
       "error",
@@ -967,6 +1028,7 @@ function addPiece(form) {
     width,
     quantity,
     grain: state.defaultGrain,
+    materialId: material.id,
     notes: String(data.get("notes") || "").trim(),
     edges: { top: null, right: null, bottom: null, left: null },
   });
@@ -1021,6 +1083,22 @@ async function importExcel(file) {
       const length = Number(pick(row, ["largo", "length"]));
       const width = Number(pick(row, ["ancho", "width"]));
       const quantity = Number(pick(row, ["cantidad", "qty"]));
+      const materialReference = String(
+        pick(row, [
+          "codigo material",
+          "código material",
+          "codigo material opcional",
+          "material",
+          "sku material",
+        ]) || "",
+      ).trim();
+      const chosenMaterials = selectedMaterials();
+      const material =
+        chosenMaterials.find((item) =>
+          [item.id, item.sku, item.name]
+            .map((value) => normalizeHeader(value))
+            .includes(normalizeHeader(materialReference)),
+        ) || (!materialReference ? selectedMaterial() : null);
       const rawGrain = normalizeHeader(pick(row, ["veta", "grain"]) || "sin-veta");
       const grain = rawGrain.startsWith("long")
         ? "longitudinal"
@@ -1031,8 +1109,13 @@ async function importExcel(file) {
         errors.push(`Fila ${index + 2}: faltan medidas o cantidad.`);
         return;
       }
-      if (!pieceFitsMaterial({ length, width, grain }, selectedMaterial())) {
-        const material = selectedMaterial();
+      if (!material) {
+        errors.push(
+          `Fila ${index + 2}: el código de material no corresponde a un tablero seleccionado.`,
+        );
+        return;
+      }
+      if (!pieceFitsMaterial({ length, width, grain }, material)) {
         errors.push(
           `Fila ${index + 2}: la pieza excede la plancha ${material.plateLength} × ${material.plateWidth} mm para la veta indicada.`,
         );
@@ -1047,6 +1130,7 @@ async function importExcel(file) {
         width,
         quantity,
         grain,
+        materialId: material.id,
         notes: String(pick(row, ["notas", "nota", "notes"]) || ""),
         edges: { top: null, right: null, bottom: null, left: null },
       });
@@ -1154,6 +1238,13 @@ app.addEventListener("change", async (event) => {
   if (target.name === "grain") {
     updateDimensionInputs(target.value);
   }
+  if (target.name === "materialId" && target.closest("#piece-form")) {
+    state.materialId = target.value;
+    const grain =
+      document.querySelector('#piece-form input[name="grain"]:checked')?.value ||
+      state.defaultGrain;
+    updateDimensionInputs(grain, target.value);
+  }
   if (target.dataset.project === "rut") {
     state.project.rut = formatRut(target.value);
     target.value = state.project.rut;
@@ -1217,12 +1308,27 @@ app.addEventListener("click", async (event) => {
   const action = button.dataset.action;
   if (button.dataset.category) {
     state.categoryId = button.dataset.category;
-    if (selectedMaterial()?.categoryId !== state.categoryId) state.materialId = "";
     render();
     return;
   }
   if (button.dataset.material) {
-    state.materialId = button.dataset.material;
+    const materialId = button.dataset.material;
+    if (state.materialIds.includes(materialId)) {
+      if (state.pieces.some((piece) => piece.materialId === materialId)) {
+        notify(
+          "No puedes quitar un tablero que ya tiene piezas asignadas.",
+          "error",
+        );
+        return;
+      }
+      state.materialIds = state.materialIds.filter((id) => id !== materialId);
+      if (state.materialId === materialId) {
+        state.materialId = state.materialIds[0] || "";
+      }
+    } else {
+      state.materialIds.push(materialId);
+      state.materialId = materialId;
+    }
     render();
     return;
   }
@@ -1283,6 +1389,18 @@ app.addEventListener("click", async (event) => {
     state.pieces = state.pieces.filter((piece) => piece.id !== button.dataset.id);
     render();
   }
+  if (action === "remove-material") {
+    const materialId = button.dataset.id;
+    if (state.pieces.some((piece) => piece.materialId === materialId)) {
+      notify("Primero elimina o reasigna las piezas de ese tablero.", "error");
+      return;
+    }
+    state.materialIds = state.materialIds.filter((id) => id !== materialId);
+    if (state.materialId === materialId) {
+      state.materialId = state.materialIds[0] || "";
+    }
+    render();
+  }
   if (action === "confirm-import" && state.importPreview) {
     state.pieces.push(...state.importPreview.rows);
     state.importPreview = null;
@@ -1323,13 +1441,27 @@ app.addEventListener("click", async (event) => {
     const item = projectsCache.find((project) => project.id === button.dataset.id);
     if (item) {
       const defaults = emptyState();
+      const materialIds = [
+        ...new Set(
+          [
+            ...(Array.isArray(item.materialIds) ? item.materialIds : []),
+            item.materialId,
+            ...(item.pieces || []).map((piece) => piece.materialId),
+          ].filter((id) => materials.some((material) => material.id === id)),
+        ),
+      ];
+      const primaryMaterialId =
+        materialIds.includes(item.materialId) ? item.materialId : materialIds[0];
       state = {
         ...defaults,
         ...item,
         project: { ...item.project },
+        materialId: primaryMaterialId || "",
+        materialIds,
         settings: { ...defaults.settings, ...(item.settings || {}) },
         pieces: (item.pieces || []).map((piece) => ({
           ...piece,
+          materialId: piece.materialId || primaryMaterialId || "",
           edges: {
             top: null,
             right: null,

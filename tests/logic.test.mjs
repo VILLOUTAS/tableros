@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   cutDimensions,
   optimize,
+  optimizeProject,
   pieceFitsMaterial,
   validateRut,
 } from "../src/logic.js";
@@ -143,4 +144,40 @@ test("el modo sin prioridad evalúa ambos ejes de primer corte", () => {
     { kerf: 2, cutRatePerBoard: 1000, optimizationMode: "free" },
   );
   assert.ok(["longitudinal", "transversal"].includes(result.plates[0].cutAxis));
+});
+
+test("optimiza y subtotaliza por separado los tableros de un proyecto", () => {
+  const materials = [
+    { ...material, id: "tablero-a", sku: "A", name: "Tablero A" },
+    {
+      ...material,
+      id: "tablero-b",
+      sku: "B",
+      name: "Tablero B",
+      netPrice: 70000,
+    },
+  ];
+  const result = optimizeProject(
+    materials,
+    [
+      piece({ id: "p-a", materialId: "tablero-a", edges: {} }),
+      piece({ id: "p-b", materialId: "tablero-b", edges: {} }),
+    ],
+    [],
+    { kerf: 2, cutRatePerBoard: 900, optimizationMode: "longitudinal" },
+  );
+
+  assert.equal(result.materialSummaries.length, 2);
+  assert.equal(result.plates.length, 2);
+  assert.deepEqual(
+    result.plates.map((plate) => plate.materialId),
+    ["tablero-a", "tablero-b"],
+  );
+  assert.equal(result.summary.boardCount, 2);
+  assert.equal(result.summary.boardSubtotal, 120000);
+  assert.equal(result.summary.cuttingSubtotal, 1800);
+  assert.equal(
+    result.summary.total,
+    result.summary.net * 1.19,
+  );
 });

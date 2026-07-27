@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createApplication, projectVisibility } from "../server.mjs";
+import {
+  canEditProject,
+  createApplication,
+  projectVisibility,
+} from "../server.mjs";
 
 async function request(base, path, options = {}) {
   const response = await fetch(`${base}${path}`, options);
@@ -9,7 +13,7 @@ async function request(base, path, options = {}) {
   return { response, body };
 }
 
-test("protege acceso, crea perfiles y aplica permisos de Producción", async () => {
+test("protege acceso, crea perfiles y permite guardar proyectos por perfil", async () => {
   const { app } = await createApplication({ useMemory: true });
   const server = app.listen(0, "127.0.0.1");
   await new Promise((resolve) => server.once("listening", resolve));
@@ -154,14 +158,49 @@ test("protege acceso, crea perfiles y aplica permisos de Producción", async () 
     });
     assert.equal(visible.body.projects.length, 1);
 
-    const denied = await request(base, "/api/projects", {
+    const productionProject = await request(base, "/api/projects", {
       method: "POST",
       headers: productionHeaders,
       body: JSON.stringify({
-        project: { clientName: "No permitido", status: "cotizacion" },
+        project: { clientName: "Proyecto de Producción", status: "cotizacion" },
+        materialId: "62-egger-1502-1",
+        materialIds: ["62-egger-1502-1", "62-egger-1501-2"],
+        pieces: [
+          {
+            code: "P-001",
+            name: "Frente",
+            materialId: "62-egger-1502-1",
+            length: 500,
+            width: 400,
+            quantity: 1,
+            grain: "longitudinal",
+          },
+          {
+            code: "P-002",
+            name: "Costado",
+            materialId: "62-egger-1501-2",
+            length: 700,
+            width: 500,
+            quantity: 1,
+            grain: "longitudinal",
+          },
+        ],
       }),
     });
-    assert.equal(denied.response.status, 403);
+    assert.equal(productionProject.response.status, 201);
+    assert.deepEqual(productionProject.body.project.materialIds, [
+      "62-egger-1502-1",
+      "62-egger-1501-2",
+    ]);
+    assert.equal(
+      productionProject.body.project.pieces[1].materialId,
+      "62-egger-1501-2",
+    );
+
+    const visibleAfterSave = await request(base, "/api/projects", {
+      headers: { cookie: productionCookie },
+    });
+    assert.equal(visibleAfterSave.body.projects.length, 2);
 
     const advanced = await request(
       base,
@@ -170,7 +209,11 @@ test("protege acceso, crea perfiles y aplica permisos de Producción", async () 
         method: "PATCH",
         headers: productionHeaders,
         body: JSON.stringify({
-          project: { status: "produccion" },
+          ...project.body.project,
+          project: {
+            ...project.body.project.project,
+            status: "produccion",
+          },
         }),
       },
     );
@@ -184,7 +227,7 @@ test("protege acceso, crea perfiles y aplica permisos de Producción", async () 
 test("las consultas por perfil solo envían parámetros cuando el SQL los usa", () => {
   assert.deepEqual(
     projectVisibility({ id: "produccion-1", role: "produccion" }).params,
-    [],
+    ["produccion-1"],
   );
   assert.deepEqual(
     projectVisibility({ id: "admin-1", role: "admin" }).params,
@@ -193,5 +236,29 @@ test("las consultas por perfil solo envían parámetros cuando el SQL los usa", 
   assert.deepEqual(
     projectVisibility({ id: "comercial-1", role: "comercial" }).params,
     ["comercial-1"],
+  );
+});
+
+test("todos los perfiles pueden guardar los proyectos que les corresponden", () => {
+  const ownQuote = {
+    ownerId: "usuario-1",
+    assignedTo: "comercial-1",
+    project: { status: "cotizacion" },
+  };
+  assert.equal(
+    canEditProject({ id: "admin-1", role: "admin" }, ownQuote),
+    true,
+  );
+  assert.equal(
+    canEditProject({ id: "comercial-1", role: "comercial" }, ownQuote),
+    true,
+  );
+  assert.equal(
+    canEditProject({ id: "usuario-1", role: "produccion" }, ownQuote),
+    true,
+  );
+  assert.equal(
+    canEditProject({ id: "usuario-1", role: "cliente" }, ownQuote),
+    true,
   );
 });

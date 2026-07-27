@@ -15,6 +15,7 @@ test("incluye una plantilla Excel descargable y compatible con la importación",
   assert.deepEqual(rows[0], [
     "codigo_opcional",
     "nombre_elemento_opcional",
+    "codigo_material_opcional",
     "largo",
     "ancho",
     "cantidad",
@@ -22,6 +23,7 @@ test("incluye una plantilla Excel descargable y compatible con la importación",
     "notas",
   ]);
   assert.equal(rows[1][1], "Costado izquierdo");
-  assert.equal(rows[1][2], 720);
-  assert.equal(rows[1][5], "longitudinal");
+  assert.equal(rows[1][2], "62-EGGER-1502");
+  assert.equal(rows[1][3], 720);
+  assert.equal(rows[1][6], "longitudinal");
 });
