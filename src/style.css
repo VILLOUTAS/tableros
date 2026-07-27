@@ -252,6 +252,12 @@ th { text-align: left; color: var(--muted); font-size: 10px; letter-spacing: .08
 td { padding: 13px 10px; border-bottom: 1px solid #edf0f2; }
 td b, td span { display: block; }
 td span { color: var(--muted); font-size: 11px; margin-top: 2px; }
+.inline-dimensions { display: grid; grid-template-columns: 78px auto 78px auto; gap: 5px; align-items: end; min-width: 190px; }
+.inline-dimensions label { gap: 3px; color: var(--muted); font-size: 8px; text-transform: uppercase; letter-spacing: .06em; }
+.inline-dimensions input, .inline-quantity { padding: 7px 8px; font-size: 12px; }
+.inline-dimensions > b { align-self: center; margin-top: 11px; color: var(--muted); }
+.inline-dimensions > small { align-self: center; margin-top: 11px; color: var(--muted); }
+.inline-quantity { width: 66px; }
 .mini-grain { color: var(--gold); font-style: normal; font-size: 18px; margin-right: 7px; }
 .icon { width: 28px; height: 28px; border-radius: 50%; border: 0; }
 .danger { background: #fff0f0; color: var(--red); }
@@ -308,6 +314,20 @@ td span { color: var(--muted); font-size: 11px; margin-top: 2px; }
 .rate-table span { display: flex; justify-content: space-between; color: var(--muted); }
 .rate-table strong { color: var(--ink); }
 .alert { background: #fff5e1; color: #7b5b29; padding: 12px 15px; border-radius: 10px; margin-bottom: 18px; font-size: 13px; }
+.optimized-list-card { margin-bottom: 20px; }
+.result-piece-table { min-width: 850px; }
+.result-piece-table td { vertical-align: top; font-size: 11px; }
+.result-piece-table th { white-space: nowrap; }
+.result-piece-table .plate-references { max-width: 260px; line-height: 1.35; }
+.result-piece-table tr.row-warning td { background: #fff8e9; }
+.result-piece-table tr.row-warning td:nth-child(6) b,
+.result-piece-table tr.row-warning td:nth-child(6) span { color: #9b5f16; }
+.plate-piece-list { margin-top: 15px; padding-top: 14px; border-top: 1px solid var(--line); }
+.plate-piece-list > div:first-child { display: flex; justify-content: space-between; gap: 15px; margin-bottom: 8px; }
+.plate-piece-list > div:first-child b { color: var(--navy); }
+.plate-piece-list > div:first-child span { color: var(--muted); font-size: 11px; }
+.result-piece-table.compact { min-width: 690px; }
+.result-piece-table.compact td { padding-block: 9px; }
 
 .project-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
 .project-card header { display: flex; align-items: center; gap: 7px; }

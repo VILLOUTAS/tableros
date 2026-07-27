@@ -1,4 +1,4 @@
-COTIZADOR CASA DISEÑO V2.2.0 — ACTUALIZACIÓN
+COTIZADOR CASA DISEÑO V2.3.0 — ACTUALIZACIÓN
 
 1. Descomprime este paquete.
 2. Reemplaza el contenido del repositorio GitHub con todos estos archivos.
@@ -34,6 +34,9 @@ IMPORTANTE
 - Todos los perfiles pueden guardar los proyectos que les corresponden.
 - Los tapacantos se identifican con T1/T2/T3, colores y patrones diferentes.
 - Las cotas interiores quedan separadas de las líneas de tapacanto.
+- El largo, ancho y cantidad se pueden editar directamente en el listado.
+- El paso 5 muestra el listado general optimizado y el listado de cada placa.
+- El PDF incluye listado general, planos y listados completos por placa.
 - Para enviar correos, agrega en Render:
   RESEND_API_KEY=<clave API>
   NOTIFICATION_FROM_EMAIL=Casa Diseño <cotizaciones@tu-dominio.cl>

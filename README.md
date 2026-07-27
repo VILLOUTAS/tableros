@@ -1,6 +1,6 @@
 # Cotizador online — Casa Diseño Multiespacio
 
-Versión 2.2.0 del cotizador y optimizador de cortes. Incluye acceso seguro con
+Versión 2.3.0 del cotizador y optimizador de cortes. Incluye acceso seguro con
 usuarios diferenciados, base PostgreSQL, catálogo completo importado desde
 Excel y persistencia de proyectos.
 
@@ -19,6 +19,8 @@ Excel y persistencia de proyectos.
   ingreso manual como en la importación Excel.
 - Espacio para imágenes de materiales.
 - Código de pieza autogenerado y nombre del elemento opcional.
+- Edición directa de largo, ancho y cantidad desde el listado de piezas, con
+  validación inmediata contra las dimensiones del tablero y la veta.
 - Validación manual, Excel y servidor para impedir piezas mayores que el
   tablero seleccionado, considerando el sentido de la veta.
 - Importación Excel de piezas con revisión previa.
@@ -26,6 +28,10 @@ Excel y persistencia de proyectos.
   dinámica en el navegador.
 - Optimización longitudinal prioritaria o sin prioridad de eje.
 - Optimización, planos de corte y subtotales separados por cada tablero.
+- Listado general de piezas optimizadas con medida terminada, medida de corte,
+  cantidad solicitada, cantidad optimizada y placas asignadas.
+- Listado específico en cada hoja de corte con las piezas que se fabrican desde
+  esa placa.
 - Corte cobrado por tablero.
 - Servicio de tapacanto por metro lineal: 0,4 mm $500; 1,0 mm $600;
   1,5 mm $700; 2,0 mm $850.
@@ -43,6 +49,8 @@ Excel y persistencia de proyectos.
   y Cliente, respetando la visibilidad y estados autorizados para cada perfil.
 - Centro de notificaciones para Administradores y aviso opcional por correo
   cuando se crea una nueva cotización.
+- PDF de fabricación con listado general al inicio, plano de cada placa y
+  listado completo de piezas asociado a cada hoja de corte.
 
 ## Publicar en Render
 

@@ -17,6 +17,8 @@ import {
   formatRut,
   optimizeProject,
   pieceFitsMaterial,
+  summarizeOptimizedPieces,
+  summarizePlatePieces,
   validateRut,
 } from "./logic.js";
 
@@ -572,7 +574,33 @@ function piecesTable() {
       <tbody>${state.pieces
         .map((piece) => {
           const material = selectedMaterial(piece.materialId);
-          return `<tr><td><b>${safe(piece.code)}</b><span>${safe(piece.name)}</span></td><td><b>${safe(material?.sku || "Sin asignar")}</b><span>${safe(material?.name || "")}</span></td><td>${piece.length} × ${piece.width} mm</td><td>${piece.quantity}</td><td><i class="mini-grain">${grainIcon(piece.grain)}</i>${grainLabels[piece.grain]}</td><td><button class="icon danger" data-action="remove-piece" data-id="${piece.id}" aria-label="Eliminar">×</button></td></tr>`;
+          const limits = dimensionLimits(piece.grain, material);
+          const editable = canEditCurrent();
+          return `<tr>
+            <td><b>${safe(piece.code)}</b><span>${safe(piece.name)}</span></td>
+            <td><b>${safe(material?.sku || "Sin asignar")}</b><span>${safe(material?.name || "")}</span></td>
+            <td>${
+              editable
+                ? `<div class="inline-dimensions">
+                    <label>Largo<input type="number" min="1" max="${limits.maxLength}" step="1" value="${piece.length}" data-piece-field="length" data-id="${piece.id}" aria-label="Largo de ${safe(piece.code)}" /></label>
+                    <b>×</b>
+                    <label>Ancho<input type="number" min="1" max="${limits.maxWidth}" step="1" value="${piece.width}" data-piece-field="width" data-id="${piece.id}" aria-label="Ancho de ${safe(piece.code)}" /></label>
+                    <small>mm</small>
+                  </div>`
+                : `${piece.length} × ${piece.width} mm`
+            }</td>
+            <td>${
+              editable
+                ? `<input class="inline-quantity" type="number" min="1" step="1" value="${piece.quantity}" data-piece-field="quantity" data-id="${piece.id}" aria-label="Cantidad de ${safe(piece.code)}" />`
+                : piece.quantity
+            }</td>
+            <td><i class="mini-grain">${grainIcon(piece.grain)}</i>${grainLabels[piece.grain]}</td>
+            <td>${
+              editable
+                ? `<button class="icon danger" data-action="remove-piece" data-id="${piece.id}" aria-label="Eliminar">×</button>`
+                : ""
+            }</td>
+          </tr>`;
         })
         .join("")}</tbody>
     </table></div>
@@ -644,6 +672,76 @@ function summaryRows(summary) {
   `;
 }
 
+function millimeters(value) {
+  return Number(value || 0).toLocaleString("es-CL", {
+    minimumFractionDigits: Number.isInteger(Number(value)) ? 0 : 1,
+    maximumFractionDigits: 2,
+  });
+}
+
+function optimizedPieceList() {
+  return summarizeOptimizedPieces(
+    latestResult?.plates || [],
+    state.pieces,
+    edgeBands,
+  );
+}
+
+function optimizedPiecesTable() {
+  const rows = optimizedPieceList();
+  return `<section class="card optimized-list-card">
+    <div class="section-title">
+      <span>≡</span>
+      <div>
+        <h3>Listado completo de piezas optimizadas</h3>
+        <p>${rows.length} línea(s) · ${rows.reduce((sum, row) => sum + row.optimizedQuantity, 0)} pieza(s) ubicadas.</p>
+      </div>
+    </div>
+    <div class="table-wrap"><table class="result-piece-table">
+      <thead><tr><th>Código · elemento</th><th>Tablero</th><th>Terminada</th><th>Corte</th><th>Solic.</th><th>Optim.</th><th>Placa(s)</th></tr></thead>
+      <tbody>${rows
+        .map((row) => {
+          const material = materials.find((item) => item.id === row.materialId);
+          const incomplete = row.optimizedQuantity !== row.requestedQuantity;
+          return `<tr class="${incomplete ? "row-warning" : ""}">
+            <td><b>${safe(row.code)}</b><span>${safe(row.name || "Sin nombre")}</span></td>
+            <td><b>${safe(material?.sku || "Sin asignar")}</b><span>${safe(material?.name || "")}</span></td>
+            <td>${millimeters(row.finishedLength)} × ${millimeters(row.finishedWidth)} mm</td>
+            <td>${millimeters(row.cutLength)} × ${millimeters(row.cutWidth)} mm</td>
+            <td>${row.requestedQuantity}</td>
+            <td><b>${row.optimizedQuantity}</b>${incomplete ? `<span>Revisar</span>` : ""}</td>
+            <td><span class="plate-references">${safe(row.plates.join(" · ") || "Sin ubicación")}</span></td>
+          </tr>`;
+        })
+        .join("")}</tbody>
+    </table></div>
+  </section>`;
+}
+
+function platePiecesTable(plate) {
+  const rows = summarizePlatePieces(plate);
+  return `<section class="plate-piece-list">
+    <div>
+      <b>Piezas generadas en esta placa</b>
+      <span>${plate.pieces.length} pieza(s) · ${rows.length} línea(s)</span>
+    </div>
+    <div class="table-wrap"><table class="result-piece-table compact">
+      <thead><tr><th>Código · elemento</th><th>Terminada</th><th>Corte</th><th>Cant.</th><th>Veta</th></tr></thead>
+      <tbody>${rows
+        .map(
+          (row) => `<tr>
+            <td><b>${safe(row.code)}</b><span>${safe(row.name || "Sin nombre")}</span></td>
+            <td>${millimeters(row.finishedLength)} × ${millimeters(row.finishedWidth)} mm</td>
+            <td>${millimeters(row.cutLength)} × ${millimeters(row.cutWidth)} mm</td>
+            <td><b>${row.quantity}</b></td>
+            <td>${safe(grainLabels[row.grain] || row.grain)}</td>
+          </tr>`,
+        )
+        .join("")}</tbody>
+    </table></div>
+  </section>`;
+}
+
 function optimizeStep() {
   latestResult = optimizeProject(
     selectedMaterials(),
@@ -675,6 +773,7 @@ function optimizeStep() {
         ? `<div class="alert"><b>Revisar piezas:</b> ${latestResult.warnings.map(safe).join(" · ")}</div>`
         : ""
     }
+    ${optimizedPiecesTable()}
     <div class="result-layout">
       <section class="plans">
         ${latestResult.plates
@@ -682,6 +781,7 @@ function optimizeStep() {
             (plate) => `<article class="card plan-card">
               <header><div><small>${safe(plate.material.sku)} · ${safe(plate.material.name)}</small><h3>Placa ${plate.materialPlateIndex} de este tablero</h3></div><b>${plate.utilization.toFixed(1)} % utilizado</b></header>
               <div class="canvas-wrap"><canvas id="plan-${plate.index}"></canvas></div>
+              ${platePiecesTable(plate)}
             </article>`,
           )
           .join("")}
@@ -1035,6 +1135,49 @@ function addPiece(form) {
   notify("Pieza agregada.");
 }
 
+function updatePieceField(target) {
+  const piece = state.pieces.find((item) => item.id === target.dataset.id);
+  if (!piece) return;
+  const field = target.dataset.pieceField;
+  const previous = piece[field];
+  const value = Number(target.value);
+  const isQuantity = field === "quantity";
+  if (
+    !["length", "width", "quantity"].includes(field) ||
+    !Number.isFinite(value) ||
+    value < 1 ||
+    (isQuantity && !Number.isInteger(value))
+  ) {
+    target.value = String(previous);
+    notify(
+      isQuantity
+        ? "La cantidad debe ser un número entero mayor que cero."
+        : "La dimensión debe ser mayor que cero.",
+      "error",
+    );
+    return;
+  }
+  const material = materials.find((item) => item.id === piece.materialId);
+  const candidate = { ...piece, [field]: value };
+  if (!isQuantity && !pieceFitsMaterial(candidate, material)) {
+    target.value = String(previous);
+    notify(
+      `La pieza no cabe en la plancha de ${material?.plateLength || 0} × ${
+        material?.plateWidth || 0
+      } mm con la veta seleccionada.`,
+      "error",
+    );
+    return;
+  }
+  piece[field] = value;
+  latestResult = null;
+  notify(
+    isQuantity
+      ? `Cantidad de ${piece.code} actualizada.`
+      : `Dimensiones de ${piece.code} actualizadas.`,
+  );
+}
+
 function normalizeHeader(value) {
   return String(value)
     .normalize("NFD")
@@ -1142,14 +1285,168 @@ async function importExcel(file) {
   }
 }
 
+function fittedPdfText(pdf, value, maxWidth) {
+  const text = String(value || "");
+  if (pdf.getTextWidth(text) <= maxWidth) return text;
+  let shortened = text;
+  while (
+    shortened.length > 1 &&
+    pdf.getTextWidth(`${shortened}…`) > maxWidth
+  ) {
+    shortened = shortened.slice(0, -1);
+  }
+  return `${shortened}…`;
+}
+
+function addPdfTable(
+  pdf,
+  { title, subtitle, columns, rows, useCurrentPage = false },
+) {
+  const margin = 12;
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
+  const rowHeight = 6.2;
+  let pageIndex = 0;
+  let y = 0;
+  let columnPositions = [];
+
+  const startPage = () => {
+    if (!useCurrentPage || pageIndex > 0) {
+      pdf.addPage("a4", "landscape");
+    }
+    pageIndex += 1;
+    pdf.setFillColor(23, 50, 77);
+    pdf.rect(0, 0, pageWidth, 28, "F");
+    pdf.setTextColor(255, 255, 255);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(8);
+    pdf.text("CASA DISEÑO MULTIESPACIO", margin, 9);
+    pdf.setFontSize(14);
+    pdf.text(
+      pageIndex > 1 ? `${title} · CONTINUACIÓN` : title,
+      margin,
+      17,
+    );
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(7.5);
+    const projectLine = `Proyecto: ${
+      state.project.projectName || "Sin nombre"
+    } · Cliente: ${state.project.clientName || "Sin identificar"} · Cotización: ${
+      state.projectId
+    } · Estado: ${statusLabels[state.project.status]}`;
+    pdf.text(fittedPdfText(pdf, projectLine, pageWidth - margin * 2), margin, 23);
+    pdf.setTextColor(46, 58, 69);
+    pdf.setFontSize(8);
+    pdf.text(fittedPdfText(pdf, subtitle, pageWidth - margin * 2), margin, 32);
+
+    y = 36;
+    pdf.setFillColor(226, 230, 233);
+    pdf.rect(margin, y, pageWidth - margin * 2, 7, "F");
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(7.5);
+    pdf.setTextColor(37, 49, 60);
+    let x = margin;
+    columnPositions = columns.map((column) => {
+      const position = { ...column, x };
+      const textX =
+        column.align === "right" ? x + column.width - 1.5 : x + 1.5;
+      pdf.text(column.title, textX, y + 4.8, {
+        align: column.align || "left",
+      });
+      x += column.width;
+      return position;
+    });
+    y += 7;
+  };
+
+  startPage();
+  rows.forEach((row, index) => {
+    if (y + rowHeight > pageHeight - 8) {
+      startPage();
+    }
+    if (index % 2) {
+      pdf.setFillColor(247, 248, 248);
+      pdf.rect(margin, y, pageWidth - margin * 2, rowHeight, "F");
+    }
+    pdf.setDrawColor(222, 226, 229);
+    pdf.line(margin, y + rowHeight, pageWidth - margin, y + rowHeight);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(7.2);
+    pdf.setTextColor(37, 49, 60);
+    columnPositions.forEach((column) => {
+      const rawValue =
+        typeof column.value === "function"
+          ? column.value(row)
+          : row[column.key] ?? "";
+      const text = fittedPdfText(pdf, rawValue, column.width - 3);
+      const textX =
+        column.align === "right"
+          ? column.x + column.width - 1.5
+          : column.x + 1.5;
+      pdf.text(text, textX, y + 4.2, {
+        align: column.align || "left",
+      });
+    });
+    y += rowHeight;
+  });
+}
+
 function exportPdf() {
   if (!latestResult?.plates.length) {
     notify("No hay placas para exportar.", "error");
     return;
   }
   const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+  pdf.setProperties({
+    title: `Plano de corte · ${state.project.projectName || state.project.clientName}`,
+    subject: "Listado de piezas optimizadas y planos de corte",
+    author: "Casa Diseño Multiespacio",
+  });
+  const generalRows = optimizedPieceList().map((row) => {
+    const material = materials.find((item) => item.id === row.materialId);
+    return {
+      piece: `${row.code}${row.name ? ` · ${row.name}` : ""}`,
+      material: `${material?.sku || "S/I"} · ${material?.name || ""}`,
+      finished: `${millimeters(row.finishedLength)}×${millimeters(
+        row.finishedWidth,
+      )}`,
+      cut: `${millimeters(row.cutLength)}×${millimeters(row.cutWidth)}`,
+      requested: String(row.requestedQuantity),
+      optimized: String(row.optimizedQuantity),
+      plates: row.plates.join(" · ") || "Sin ubicación",
+    };
+  });
+  addPdfTable(pdf, {
+    title: "LISTADO GENERAL DE PIEZAS OPTIMIZADAS",
+    subtitle: `${generalRows.length} línea(s) · ${generalRows.reduce(
+      (sum, row) => sum + Number(row.optimized || 0),
+      0,
+    )} pieza(s) ubicadas · Medidas en mm`,
+    useCurrentPage: true,
+    columns: [
+      { title: "CÓDIGO / ELEMENTO", key: "piece", width: 58 },
+      { title: "TABLERO", key: "material", width: 52 },
+      { title: "TERMINADA", key: "finished", width: 28 },
+      { title: "CORTE", key: "cut", width: 28 },
+      {
+        title: "SOLIC.",
+        key: "requested",
+        width: 18,
+        align: "right",
+      },
+      {
+        title: "OPTIM.",
+        key: "optimized",
+        width: 18,
+        align: "right",
+      },
+      { title: "PLACA(S)", key: "plates", width: 71 },
+    ],
+    rows: generalRows,
+  });
+
   latestResult.plates.forEach((plate, index) => {
-    if (index > 0) pdf.addPage("a4", "landscape");
+    pdf.addPage("a4", "landscape");
     const canvas = document.querySelector(`#plan-${plate.index}`);
     const imageWidth = 283;
     const imageHeight = (canvas.height / canvas.width) * imageWidth;
@@ -1161,6 +1458,36 @@ function exportPdf() {
       imageWidth,
       imageHeight,
     );
+    const plateRows = summarizePlatePieces(plate).map((row) => ({
+      piece: `${row.code}${row.name ? ` · ${row.name}` : ""}`,
+      finished: `${millimeters(row.finishedLength)}×${millimeters(
+        row.finishedWidth,
+      )}`,
+      cut: `${millimeters(row.cutLength)}×${millimeters(row.cutWidth)}`,
+      quantity: String(row.quantity),
+      grain: grainLabels[row.grain] || row.grain,
+    }));
+    addPdfTable(pdf, {
+      title: `PIEZAS DE PLACA ${plate.materialPlateIndex} · ${plate.material.sku}`,
+      subtitle: `${plate.material.brand} ${plate.material.name} · ${
+        plate.material.plateLength
+      }×${plate.material.plateWidth}×${
+        plate.material.thickness
+      } mm · ${plate.pieces.length} pieza(s)`,
+      columns: [
+        { title: "CÓDIGO / ELEMENTO", key: "piece", width: 91 },
+        { title: "MEDIDA TERMINADA", key: "finished", width: 48 },
+        { title: "MEDIDA DE CORTE", key: "cut", width: 48 },
+        {
+          title: "CANTIDAD",
+          key: "quantity",
+          width: 28,
+          align: "right",
+        },
+        { title: "VETA", key: "grain", width: 58 },
+      ],
+      rows: plateRows,
+    });
   });
   pdf.save(
     `Plano_Corte_${state.project.projectName.replace(/[^a-z0-9]+/gi, "_") || "Proyecto"}.pdf`,
@@ -1235,6 +1562,10 @@ app.addEventListener("input", (event) => {
 
 app.addEventListener("change", async (event) => {
   const target = event.target;
+  if (target.dataset.pieceField) {
+    updatePieceField(target);
+    return;
+  }
   if (target.name === "grain") {
     updateDimensionInputs(target.value);
   }

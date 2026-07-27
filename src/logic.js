@@ -440,6 +440,82 @@ export function optimizeProject(
   };
 }
 
+export function summarizePlatePieces(plate) {
+  const grouped = new Map();
+  for (const piece of plate?.pieces || []) {
+    const key = [
+      piece.id || piece.code || piece.instanceId,
+      piece.cutLength,
+      piece.cutWidth,
+      piece.grain,
+    ].join("|");
+    const current = grouped.get(key);
+    if (current) {
+      current.quantity += 1;
+      continue;
+    }
+    grouped.set(key, {
+      id: piece.id || "",
+      code: piece.code || "S/C",
+      name: piece.name || "",
+      materialId: plate.materialId || piece.materialId || "",
+      finishedLength: Number(piece.length) || 0,
+      finishedWidth: Number(piece.width) || 0,
+      cutLength: Number(piece.cutLength) || 0,
+      cutWidth: Number(piece.cutWidth) || 0,
+      grain: piece.grain || "sin-veta",
+      quantity: 1,
+    });
+  }
+  return [...grouped.values()].sort(
+    (a, b) =>
+      String(a.code).localeCompare(String(b.code), "es", { numeric: true }) ||
+      a.cutLength - b.cutLength ||
+      a.cutWidth - b.cutWidth,
+  );
+}
+
+export function summarizeOptimizedPieces(plates, pieces, edgeBands) {
+  const optimizedByPiece = new Map();
+  for (const plate of plates || []) {
+    const plateLabel = `${plate.material?.sku || plate.materialId || "Tablero"} · Placa ${
+      plate.materialPlateIndex || plate.index
+    }`;
+    for (const placed of plate.pieces || []) {
+      const key = placed.id || placed.code || placed.instanceId;
+      const current = optimizedByPiece.get(key) || {
+        quantity: 0,
+        plates: new Set(),
+      };
+      current.quantity += 1;
+      current.plates.add(plateLabel);
+      optimizedByPiece.set(key, current);
+    }
+  }
+
+  return (pieces || []).map((piece) => {
+    const optimized = optimizedByPiece.get(piece.id || piece.code) || {
+      quantity: 0,
+      plates: new Set(),
+    };
+    const cut = cutDimensions(piece, edgeBands || []);
+    return {
+      id: piece.id || "",
+      code: piece.code || "S/C",
+      name: piece.name || "",
+      materialId: piece.materialId || "",
+      finishedLength: Number(piece.length) || 0,
+      finishedWidth: Number(piece.width) || 0,
+      cutLength: cut.cutLength,
+      cutWidth: cut.cutWidth,
+      grain: piece.grain || "sin-veta",
+      requestedQuantity: Math.max(1, Number(piece.quantity) || 1),
+      optimizedQuantity: optimized.quantity,
+      plates: [...optimized.plates],
+    };
+  });
+}
+
 function fittedText(ctx, value, maxWidth) {
   const text = String(value || "");
   if (ctx.measureText(text).width <= maxWidth) return text;
@@ -948,8 +1024,75 @@ export function drawCutPlan(
     ctx.fillText("Sin tapacantos asignados", legendX, oy + 52);
   }
 
+  const platePieceRows = summarizePlatePieces(plate);
+  const listTop =
+    oy + Math.max(94, 78 + Math.max(1, usedEdgeIds.length) * 42);
+  ctx.fillStyle = "#101820";
+  ctx.font = "700 14px Arial";
+  ctx.textAlign = "left";
+  ctx.fillText("PIEZAS DE ESTA PLACA", legendX, listTop);
+  ctx.fillStyle = "#59636d";
+  ctx.font = "10px Arial";
+  ctx.fillText(
+    `${plate.pieces.length} pieza(s) · ${platePieceRows.length} línea(s)`,
+    legendX,
+    listTop + 17,
+  );
+  ctx.fillStyle = "#e1e4e6";
+  ctx.fillRect(legendX, listTop + 26, margin.right - 56, 20);
+  ctx.fillStyle = "#303a44";
+  ctx.font = "700 9px Arial";
+  ctx.fillText("CÓDIGO / ELEMENTO", legendX + 5, listTop + 40);
+  ctx.textAlign = "right";
+  ctx.fillText("CORTE", width - 83, listTop + 40);
+  ctx.fillText("CANT.", width - 42, listTop + 40);
+  ctx.textAlign = "left";
+  const availableRows = Math.max(
+    0,
+    Math.floor((height - 62 - (listTop + 50)) / 19),
+  );
+  const visibleRows = platePieceRows.slice(0, availableRows);
+  visibleRows.forEach((row, index) => {
+    const y = listTop + 64 + index * 19;
+    if (index % 2) {
+      ctx.fillStyle = "rgba(255,255,255,.58)";
+      ctx.fillRect(legendX, y - 13, margin.right - 56, 18);
+    }
+    ctx.fillStyle = "#303a44";
+    ctx.font = "700 9px Arial";
+    ctx.textAlign = "left";
+    ctx.fillText(
+      fittedText(
+        ctx,
+        `${row.code}${row.name ? ` · ${row.name}` : ""}`,
+        margin.right - 190,
+      ),
+      legendX + 5,
+      y,
+    );
+    ctx.font = "9px Arial";
+    ctx.textAlign = "right";
+    ctx.fillText(
+      `${Math.round(row.cutLength)}×${Math.round(row.cutWidth)}`,
+      width - 83,
+      y,
+    );
+    ctx.fillText(`${row.quantity}`, width - 42, y);
+  });
+  if (visibleRows.length < platePieceRows.length) {
+    ctx.fillStyle = "#58636d";
+    ctx.font = "700 9px Arial";
+    ctx.textAlign = "left";
+    ctx.fillText(
+      `+ ${platePieceRows.length - visibleRows.length} línea(s) · listado completo adjunto`,
+      legendX + 5,
+      listTop + 64 + visibleRows.length * 19,
+    );
+  }
+
   ctx.fillStyle = "#58636d";
   ctx.font = "11px Arial";
+  ctx.textAlign = "left";
   ctx.fillText(
     "Medidas interiores: parciales · Exteriores: acumuladas · T1/T2/T3: tapacanto por lado · Unidades en mm.",
     39,

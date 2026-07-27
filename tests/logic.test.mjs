@@ -6,6 +6,8 @@ import {
   optimize,
   optimizeProject,
   pieceFitsMaterial,
+  summarizeOptimizedPieces,
+  summarizePlatePieces,
   validateRut,
 } from "../src/logic.js";
 
@@ -180,4 +182,29 @@ test("optimiza y subtotaliza por separado los tableros de un proyecto", () => {
     result.summary.total,
     result.summary.net * 1.19,
   );
+  assert.equal(summarizePlatePieces(result.plates[0])[0].quantity, 1);
+  const optimizedPieces = summarizeOptimizedPieces(
+    result.plates,
+    [
+      piece({ id: "p-a", materialId: "tablero-a", edges: {} }),
+      piece({ id: "p-b", materialId: "tablero-b", edges: {} }),
+    ],
+    [],
+  );
+  assert.equal(optimizedPieces.length, 2);
+  assert.equal(optimizedPieces[0].optimizedQuantity, 1);
+  assert.match(optimizedPieces[0].plates[0], /A · Placa 1/);
+});
+
+test("agrupa las repeticiones de una pieza dentro de cada placa", () => {
+  const result = optimize(
+    material,
+    [piece({ id: "repetida", quantity: 3, edges: {} })],
+    [],
+    { kerf: 2, cutRatePerBoard: 900, optimizationMode: "longitudinal" },
+  );
+  const rows = summarizePlatePieces(result.plates[0]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].code, "P-001");
+  assert.equal(rows[0].quantity, 3);
 });
