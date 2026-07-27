@@ -332,21 +332,47 @@ function fittedText(ctx, value, maxWidth) {
   return `${shortened}…`;
 }
 
-function edgeDash(edge) {
-  if (edge.material === "ABS") return [14, 4, 3, 4];
-  if (edge.material === "EGR") return [2, 4];
-  if (edge.thickness <= 0.4) return [];
-  if (edge.thickness <= 1) return [11, 4];
-  if (edge.thickness <= 1.5) return [6, 3];
-  return [17, 5];
+const edgePalette = [
+  "#005A8D",
+  "#B93815",
+  "#146C43",
+  "#6A3D9A",
+  "#7A5700",
+  "#006B73",
+  "#9A1B50",
+  "#394B59",
+];
+
+const edgePatterns = [
+  [],
+  [16, 6],
+  [3, 5],
+  [14, 4, 3, 4],
+  [8, 4],
+  [20, 5, 4, 5],
+  [2, 4, 11, 4],
+  [9, 3, 2, 3, 2, 3],
+];
+
+function edgeVisualMap(edgeIds) {
+  return new Map(
+    edgeIds.map((id, index) => [
+      id,
+      {
+        code: `T${index + 1}`,
+        color: edgePalette[index % edgePalette.length],
+        dash: edgePatterns[index % edgePatterns.length],
+      },
+    ]),
+  );
 }
 
-function drawEdgeLine(ctx, edge, x1, y1, x2, y2) {
+function drawEdgeLine(ctx, edge, visual, x1, y1, x2, y2) {
   const thickness = Number(edge.thickness) || 0.4;
-  ctx.strokeStyle = "#101820";
+  ctx.strokeStyle = visual?.color || "#101820";
   ctx.lineWidth =
-    thickness >= 2 ? 9 : thickness >= 1.5 ? 7 : thickness >= 1 ? 5.5 : 4;
-  ctx.setLineDash(edgeDash(edge));
+    thickness >= 2 ? 10 : thickness >= 1.5 ? 8 : thickness >= 1 ? 6 : 4.5;
+  ctx.setLineDash(visual?.dash || []);
   ctx.beginPath();
   ctx.moveTo(x1, y1);
   ctx.lineTo(x2, y2);
@@ -358,6 +384,27 @@ function drawEdgeLine(ctx, edge, x1, y1, x2, y2) {
     ctx.stroke();
   }
   ctx.setLineDash([]);
+}
+
+function drawEdgeCode(ctx, visual, side, x, y, width, height) {
+  if (!visual || width < 48 || height < 44) return;
+  const positions = {
+    top: [x + 22, y + 13],
+    right: [x + width - 14, y + 23],
+    bottom: [x + width - 22, y + height - 13],
+    left: [x + 14, y + height - 23],
+  };
+  const [cx, cy] = positions[side];
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(cx - 15, cy - 10, 30, 20);
+  ctx.fillStyle = visual.color;
+  ctx.fillRect(cx - 13, cy - 8, 26, 16);
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "700 9px Arial";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(visual.code, cx, cy + 0.5);
+  ctx.textBaseline = "alphabetic";
 }
 
 function drawCutTag(ctx, text, x, y, maxWidth = 160) {
@@ -405,6 +452,14 @@ export function drawCutPlan(
   const plateH = material.plateWidth * scale;
   const ox = margin.left;
   const oy = margin.top;
+  const usedEdgeIds = [
+    ...new Set(
+      plate.pieces
+        .flatMap((piece) => Object.values(piece.edges ?? {}))
+        .filter(Boolean),
+    ),
+  ];
+  const edgeVisuals = edgeVisualMap(usedEdgeIds);
 
   ctx.fillStyle = "#f6f5f2";
   ctx.fillRect(0, 0, width, height);
@@ -504,16 +559,31 @@ export function drawCutPlan(
           left: originalEdges.bottom,
         }
       : originalEdges;
+    const edgeInset = 6;
     const edgeLines = [
-      ["top", x, y, x + w, y],
-      ["right", x + w, y, x + w, y + h],
-      ["bottom", x, y + h, x + w, y + h],
-      ["left", x, y, x, y + h],
+      ["top", x, y + edgeInset, x + w, y + edgeInset],
+      [
+        "right",
+        x + w - edgeInset,
+        y,
+        x + w - edgeInset,
+        y + h,
+      ],
+      [
+        "bottom",
+        x,
+        y + h - edgeInset,
+        x + w,
+        y + h - edgeInset,
+      ],
+      ["left", x + edgeInset, y, x + edgeInset, y + h],
     ];
     for (const [side, x1, y1, x2, y2] of edgeLines) {
       const edge = edgeBands.find((item) => item.id === edges[side]);
       if (!edge) continue;
-      drawEdgeLine(ctx, edge, x1, y1, x2, y2);
+      const visual = edgeVisuals.get(edge.id);
+      drawEdgeLine(ctx, edge, visual, x1, y1, x2, y2);
+      drawEdgeCode(ctx, visual, side, x, y, w, h);
     }
     ctx.setLineDash([]);
 
@@ -688,27 +758,37 @@ export function drawCutPlan(
   ctx.fillStyle = "#101820";
   ctx.font = "700 14px Arial";
   ctx.fillText("LEYENDA TAPACANTOS", legendX, oy + 24);
-  const usedEdges = [...new Set(plate.pieces.flatMap((piece) => Object.values(piece.edges ?? {})).filter(Boolean))];
-  usedEdges.forEach((id, index) => {
+  ctx.fillStyle = "#59636d";
+  ctx.font = "10px Arial";
+  ctx.fillText("Código + color + patrón + espesor", legendX, oy + 42);
+  usedEdgeIds.forEach((id, index) => {
     const edge = edgeBands.find((item) => item.id === id);
     if (!edge) return;
-    const y = oy + 52 + index * 31;
-    drawEdgeLine(ctx, edge, legendX, y, legendX + 62, y);
+    const visual = edgeVisuals.get(id);
+    const y = oy + 70 + index * 42;
+    ctx.fillStyle = visual.color;
+    ctx.fillRect(legendX, y - 10, 28, 20);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "700 10px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText(visual.code, legendX + 14, y + 4);
+    drawEdgeLine(ctx, edge, visual, legendX + 40, y, legendX + 100, y);
     ctx.fillStyle = "#303a44";
     ctx.font = "10px Arial";
+    ctx.textAlign = "left";
     ctx.fillText(
       fittedText(
         ctx,
         `${edge.material} ${String(edge.thickness).replace(".", ",")} mm · ${
           edge.sku
         } · ${edge.name}`,
-        margin.right - 118,
+        margin.right - 160,
       ),
-      legendX + 76,
+      legendX + 112,
       y + 4,
     );
   });
-  if (!usedEdges.length) {
+  if (!usedEdgeIds.length) {
     ctx.fillStyle = "#6b747d";
     ctx.font = "11px Arial";
     ctx.fillText("Sin tapacantos asignados", legendX, oy + 52);
@@ -717,7 +797,7 @@ export function drawCutPlan(
   ctx.fillStyle = "#58636d";
   ctx.font = "11px Arial";
   ctx.fillText(
-    "Medidas interiores: parciales de pieza · Medidas exteriores: acumuladas · Unidades en mm.",
+    "Medidas interiores: parciales · Exteriores: acumuladas · T1/T2/T3: tapacanto por lado · Unidades en mm.",
     39,
     height - 28,
   );

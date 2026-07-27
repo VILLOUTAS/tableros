@@ -1,6 +1,6 @@
 # Cotizador online — Casa Diseño Multiespacio
 
-Versión 2.1.1 del cotizador y optimizador de cortes. Incluye acceso seguro con
+Versión 2.1.2 del cotizador y optimizador de cortes. Incluye acceso seguro con
 usuarios diferenciados, base PostgreSQL, catálogo completo importado desde
 Excel y persistencia de proyectos.
 
@@ -30,6 +30,9 @@ Excel y persistencia de proyectos.
   material y número de placa.
 - Medidas parciales en los cuatro lados, acumuladas exteriores, veta y cortes
   completos, con tapacantos diferenciados por grosor y patrón de línea.
+- Identificación de cada tapacanto mediante código T1/T2/T3, color de alto
+  contraste, patrón propio y trazos paralelos cuando dos piezas contiguas
+  llevan terminaciones distintas.
 - Centro de notificaciones para Administradores y aviso opcional por correo
   cuando se crea una nueva cotización.
 

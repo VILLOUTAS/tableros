@@ -1,4 +1,4 @@
-COTIZADOR CASA DISEÑO V2.1.1 — ACTUALIZACIÓN
+COTIZADOR CASA DISEÑO V2.1.2 — ACTUALIZACIÓN
 
 1. Descomprime este paquete.
 2. Reemplaza el contenido del repositorio GitHub con todos estos archivos.
@@ -29,6 +29,7 @@ IMPORTANTE
 - No existe una clave predeterminada.
 - Las notificaciones internas funcionan sin configuración adicional.
 - La plantilla Excel se descarga directamente desde el botón del paso Piezas.
+- Los tapacantos se identifican con T1/T2/T3, colores y patrones diferentes.
 - Para enviar correos, agrega en Render:
   RESEND_API_KEY=<clave API>
   NOTIFICATION_FROM_EMAIL=Casa Diseño <cotizaciones@tu-dominio.cl>
