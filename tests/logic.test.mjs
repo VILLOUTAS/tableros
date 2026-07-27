@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   cutDimensions,
   optimize,
+  pieceFitsMaterial,
   validateRut,
 } from "../src/logic.js";
 
@@ -42,6 +43,44 @@ test("descuenta el tapacanto según el lado", () => {
     cutLength: 719,
     cutWidth: 559,
   });
+});
+
+test("limita las piezas a las dimensiones del tablero y respeta la veta", () => {
+  assert.equal(
+    pieceFitsMaterial(
+      { length: 2800, width: 2070, grain: "longitudinal" },
+      material,
+    ),
+    true,
+  );
+  assert.equal(
+    pieceFitsMaterial(
+      { length: 2801, width: 2070, grain: "longitudinal" },
+      material,
+    ),
+    false,
+  );
+  assert.equal(
+    pieceFitsMaterial(
+      { length: 2000, width: 2500, grain: "longitudinal" },
+      material,
+    ),
+    false,
+  );
+  assert.equal(
+    pieceFitsMaterial(
+      { length: 2000, width: 2500, grain: "transversal" },
+      material,
+    ),
+    true,
+  );
+  assert.equal(
+    pieceFitsMaterial(
+      { length: 2500, width: 2000, grain: "sin-veta" },
+      material,
+    ),
+    true,
+  );
 });
 
 test("genera franjas longitudinales y subtotales separados", () => {

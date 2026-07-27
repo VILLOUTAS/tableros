@@ -1,0 +1,27 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+import { readSheet } from "read-excel-file/node";
+
+const templatePath = fileURLToPath(
+  new URL("../public/Plantilla_Piezas_Casa_Diseno.xlsx", import.meta.url),
+);
+
+test("incluye una plantilla Excel descargable y compatible con la importación", async () => {
+  assert.equal(existsSync(templatePath), true);
+  const rows = await readSheet(templatePath);
+  assert.deepEqual(rows[0], [
+    "codigo_opcional",
+    "nombre_elemento_opcional",
+    "largo",
+    "ancho",
+    "cantidad",
+    "veta",
+    "notas",
+  ]);
+  assert.equal(rows[1][1], "Costado izquierdo");
+  assert.equal(rows[1][2], 720);
+  assert.equal(rows[1][5], "longitudinal");
+});

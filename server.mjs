@@ -9,6 +9,9 @@ import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import pg from "pg";
 
+import { materials } from "./src/data.js";
+import { pieceFitsMaterial } from "./src/logic.js";
+
 const { Pool } = pg;
 const root = fileURLToPath(new URL(".", import.meta.url));
 const dist = join(root, "dist");
@@ -93,6 +96,73 @@ function mapProject(row) {
   };
 }
 
+function mapNotification(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    userId: row.user_id,
+    projectId: row.project_id,
+    type: row.type,
+    title: row.title,
+    message: row.message,
+    readAt: row.read_at,
+    createdAt: row.created_at,
+  };
+}
+
+function html(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+async function sendQuoteEmail(recipients, project, creator) {
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.NOTIFICATION_FROM_EMAIL;
+  if (!apiKey || !from || !recipients.length) return;
+  const appUrl = process.env.RENDER_EXTERNAL_HOSTNAME
+    ? `https://${process.env.RENDER_EXTERNAL_HOSTNAME}`
+    : process.env.APP_URL || "";
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      from,
+      to: recipients,
+      subject: `Nueva cotización · ${project.project.clientName}`,
+      html: `
+        <h2>Nueva cotización en Casa Diseño</h2>
+        <p><strong>Cliente:</strong> ${html(project.project.clientName)}</p>
+        <p><strong>Proyecto:</strong> ${html(
+          project.project.projectName || "Sin nombre",
+        )}</p>
+        <p><strong>Estado:</strong> ${html(project.project.status)}</p>
+        <p><strong>Creada por:</strong> ${html(creator.fullName)} (${html(
+          creator.email,
+        )})</p>
+        <p><strong>Total:</strong> ${new Intl.NumberFormat("es-CL", {
+          style: "currency",
+          currency: "CLP",
+          maximumFractionDigits: 0,
+        }).format(project.summary?.total || 0)}</p>
+        ${
+          appUrl
+            ? `<p><a href="${html(appUrl)}">Abrir cotizador</a></p>`
+            : ""
+        }
+      `,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`Resend respondió ${response.status}.`);
+  }
+}
+
 class PostgresStore {
   constructor(connectionString) {
     this.pool = new Pool({
@@ -135,9 +205,21 @@ class PostgresStore {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+      CREATE TABLE IF NOT EXISTS app_notifications (
+        id UUID PRIMARY KEY,
+        user_id UUID NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+        project_id UUID REFERENCES projects(id) ON DELETE CASCADE,
+        type TEXT NOT NULL DEFAULT 'new_quote',
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        read_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
       CREATE INDEX IF NOT EXISTS projects_owner_idx ON projects(owner_id);
       CREATE INDEX IF NOT EXISTS projects_status_idx ON projects(status);
       CREATE INDEX IF NOT EXISTS sessions_expiry_idx ON app_sessions(expires_at);
+      CREATE INDEX IF NOT EXISTS notifications_user_idx
+        ON app_notifications(user_id, created_at DESC);
     `);
     // La versión 2.0.1 ejecutó accidentalmente la prueba de integración contra
     // DATABASE_URL durante el build de Render. Se eliminan únicamente esos
@@ -204,6 +286,13 @@ class PostgresStore {
     return result.rows.map(mapUser);
   }
 
+  async listActiveAdmins() {
+    const result = await this.pool.query(
+      "SELECT * FROM app_users WHERE role='admin' AND active=TRUE ORDER BY created_at",
+    );
+    return result.rows.map(mapUser);
+  }
+
   async updateUser(id, changes) {
     const current = await this.getUser(id);
     if (!current) return null;
@@ -254,6 +343,46 @@ class PostgresStore {
     await this.pool.query("DELETE FROM app_sessions WHERE token_hash=$1", [
       tokenHash,
     ]);
+  }
+
+  async createNotification(notification) {
+    const result = await this.pool.query(
+      `INSERT INTO app_notifications
+        (id, user_id, project_id, type, title, message)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       RETURNING *`,
+      [
+        notification.id,
+        notification.userId,
+        notification.projectId,
+        notification.type,
+        notification.title,
+        notification.message,
+      ],
+    );
+    return mapNotification(result.rows[0]);
+  }
+
+  async listNotifications(userId) {
+    const result = await this.pool.query(
+      `SELECT * FROM app_notifications
+       WHERE user_id=$1
+       ORDER BY created_at DESC
+       LIMIT 100`,
+      [userId],
+    );
+    return result.rows.map(mapNotification);
+  }
+
+  async markNotificationRead(id, userId) {
+    const result = await this.pool.query(
+      `UPDATE app_notifications
+       SET read_at=COALESCE(read_at, NOW())
+       WHERE id=$1 AND user_id=$2
+       RETURNING *`,
+      [id, userId],
+    );
+    return mapNotification(result.rows[0]);
   }
 
   async listProjects(user) {
@@ -333,6 +462,7 @@ class MemoryStore {
     this.users = new Map();
     this.sessions = new Map();
     this.projects = new Map();
+    this.notifications = new Map();
   }
   async init() {}
   async countUsers() {
@@ -357,6 +487,11 @@ class MemoryStore {
   async listUsers() {
     return [...this.users.values()];
   }
+  async listActiveAdmins() {
+    return [...this.users.values()].filter(
+      (user) => user.role === "admin" && user.active,
+    );
+  }
   async updateUser(id, changes) {
     const current = this.users.get(id);
     if (!current) return null;
@@ -376,6 +511,30 @@ class MemoryStore {
   }
   async deleteSession(tokenHash) {
     this.sessions.delete(tokenHash);
+  }
+  async createNotification(notification) {
+    const saved = {
+      ...notification,
+      readAt: null,
+      createdAt: new Date().toISOString(),
+    };
+    this.notifications.set(saved.id, saved);
+    return saved;
+  }
+  async listNotifications(userId) {
+    return [...this.notifications.values()]
+      .filter((notification) => notification.userId === userId)
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  }
+  async markNotificationRead(id, userId) {
+    const notification = this.notifications.get(id);
+    if (!notification || notification.userId !== userId) return null;
+    const saved = {
+      ...notification,
+      readAt: notification.readAt || new Date().toISOString(),
+    };
+    this.notifications.set(id, saved);
+    return saved;
   }
   async listProjects(user) {
     return [...this.projects.values()]
@@ -455,6 +614,18 @@ function projectRecord(body, ownerId, current = null) {
     },
     summary: body.summary && typeof body.summary === "object" ? body.summary : null,
   };
+}
+
+function projectDimensionError(record) {
+  const pieces = record.payload.pieces;
+  if (!pieces.length) return "";
+  const material = materials.find((item) => item.id === record.payload.materialId);
+  if (!material) return "Selecciona un tablero válido antes de guardar las piezas.";
+  const invalidIndex = pieces.findIndex(
+    (piece) => !pieceFitsMaterial(piece, material),
+  );
+  if (invalidIndex < 0) return "";
+  return `La pieza ${pieces[invalidIndex].code || invalidIndex + 1} excede la plancha de ${material.plateLength} × ${material.plateWidth} mm para la veta seleccionada.`;
 }
 
 export async function createApplication({ store, useMemory = false } = {}) {
@@ -680,6 +851,40 @@ export async function createApplication({ store, useMemory = false } = {}) {
     },
   );
 
+  app.get(
+    "/api/notifications",
+    authenticate,
+    adminOnly,
+    async (request, response) => {
+      const notifications = await database.listNotifications(
+        request.auth.user.id,
+      );
+      response.json({
+        notifications,
+        unreadCount: notifications.filter((item) => !item.readAt).length,
+      });
+    },
+  );
+
+  app.post(
+    "/api/notifications/:id/read",
+    authenticate,
+    csrf,
+    adminOnly,
+    async (request, response) => {
+      const notification = await database.markNotificationRead(
+        request.params.id,
+        request.auth.user.id,
+      );
+      if (!notification) {
+        return response
+          .status(404)
+          .json({ error: "Notificación no encontrada." });
+      }
+      return response.json({ notification });
+    },
+  );
+
   app.get("/api/projects", authenticate, async (request, response) => {
     response.json({ projects: await database.listProjects(request.auth.user) });
   });
@@ -700,12 +905,36 @@ export async function createApplication({ store, useMemory = false } = {}) {
     if (!record.project.clientName) {
       return response.status(400).json({ error: "El nombre del cliente es obligatorio." });
     }
+    const dimensionError = projectDimensionError(record);
+    if (dimensionError) {
+      return response.status(400).json({ error: dimensionError });
+    }
     if (request.auth.user.role !== "admin") {
       record.assignedTo =
         request.auth.user.role === "comercial" ? request.auth.user.id : null;
       if (request.auth.user.role === "cliente") record.project.status = "cotizacion";
     }
     const saved = await database.saveProject(record);
+    const admins = await database.listActiveAdmins();
+    for (const admin of admins) {
+      await database.createNotification({
+        id: randomUUID(),
+        userId: admin.id,
+        projectId: saved.id,
+        type: "new_quote",
+        title: "Nueva cotización",
+        message: `${saved.project.clientName} · ${
+          saved.project.projectName || "Proyecto sin nombre"
+        } · creada por ${request.auth.user.fullName}`,
+      });
+    }
+    sendQuoteEmail(
+      admins.map((admin) => admin.email),
+      saved,
+      request.auth.user,
+    ).catch((error) => {
+      console.error("No se pudo enviar la notificación por correo:", error.message);
+    });
     return response.status(201).json({ project: saved });
   });
 
@@ -742,6 +971,10 @@ export async function createApplication({ store, useMemory = false } = {}) {
     const record = projectRecord(request.body, current.ownerId, current);
     if (!record.project.clientName) {
       return response.status(400).json({ error: "El nombre del cliente es obligatorio." });
+    }
+    const dimensionError = projectDimensionError(record);
+    if (dimensionError) {
+      return response.status(400).json({ error: dimensionError });
     }
     if (request.auth.user.role === "cliente") record.project.status = "cotizacion";
     if (request.auth.user.role !== "admin") record.assignedTo = current.assignedTo;

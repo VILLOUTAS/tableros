@@ -1,17 +1,20 @@
-COTIZADOR CASA DISEÑO V2 — PUBLICACIÓN
+COTIZADOR CASA DISEÑO V2.1.1 — ACTUALIZACIÓN
 
 1. Descomprime este paquete.
 2. Reemplaza el contenido del repositorio GitHub con todos estos archivos.
 3. Confirma los cambios en la rama main.
-4. En Render entra a New > Blueprint.
-5. Selecciona el repositorio COTIZADOR-TABLEROS.
-6. Render leerá render.yaml y creará:
+4. Si el Web Service V2 ya existe, Render desplegará automáticamente el nuevo
+   commit. También puedes usar Manual Deploy > Deploy latest commit.
+5. Espera a que el despliegue indique Live y abre su URL.
+
+SI TODAVÍA NO EXISTE EL WEB SERVICE V2
+
+1. En Render entra a New > Blueprint.
+2. Selecciona el repositorio.
+3. Render leerá render.yaml y creará:
    - Web Service: cotizador-casa-diseno-v2
    - PostgreSQL: cotizador-casa-diseno-v2-db
-7. Espera a que el despliegue indique Live.
-8. Abre la URL del servicio V2.
-9. En la primera pantalla crea la cuenta Administrador.
-10. Después de probar el acceso y una cotización, retira el Static Site anterior.
+4. En la primera pantalla crea la cuenta Administrador.
 
 IMPORTANTE
 
@@ -24,5 +27,10 @@ IMPORTANTE
   npm start
 - DATABASE_URL se configura automáticamente con el Blueprint.
 - No existe una clave predeterminada.
+- Las notificaciones internas funcionan sin configuración adicional.
+- La plantilla Excel se descarga directamente desde el botón del paso Piezas.
+- Para enviar correos, agrega en Render:
+  RESEND_API_KEY=<clave API>
+  NOTIFICATION_FROM_EMAIL=Casa Diseño <cotizaciones@tu-dominio.cl>
 
 Si prefieres configuración manual, revisa README.md.

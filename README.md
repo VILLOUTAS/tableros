@@ -1,6 +1,6 @@
 # Cotizador online — Casa Diseño Multiespacio
 
-Versión 2.0 del cotizador y optimizador de cortes. Incluye acceso seguro con
+Versión 2.1.1 del cotizador y optimizador de cortes. Incluye acceso seguro con
 usuarios diferenciados, base PostgreSQL, catálogo completo importado desde
 Excel y persistencia de proyectos.
 
@@ -15,15 +15,23 @@ Excel y persistencia de proyectos.
 - 145 tableros y 121 tapacantos del Excel entregado.
 - Selección progresiva por categoría y búsqueda por código, nombre o marca.
 - Espacio para imágenes de materiales.
-- Código de pieza autogenerado y nombre del elemento obligatorio.
+- Código de pieza autogenerado y nombre del elemento opcional.
+- Validación manual, Excel y servidor para impedir piezas mayores que el
+  tablero seleccionado, considerando el sentido de la veta.
 - Importación Excel de piezas con revisión previa.
+- Plantilla Excel incluida como archivo descargable directo, sin generación
+  dinámica en el navegador.
 - Optimización longitudinal prioritaria o sin prioridad de eje.
 - Corte cobrado por tablero.
 - Servicio de tapacanto por metro lineal: 0,4 mm $500; 1,0 mm $600;
   1,5 mm $700; 2,0 mm $850.
 - Descuentos independientes para tableros, tapacantos y servicios.
-- Plano con nombre/código, medidas en los cuatro lados, acumuladas exteriores,
-  veta, cortes completos y tapacantos diferenciados.
+- Plano monocromático con proyecto, cliente, cotización, estado, responsable,
+  material y número de placa.
+- Medidas parciales en los cuatro lados, acumuladas exteriores, veta y cortes
+  completos, con tapacantos diferenciados por grosor y patrón de línea.
+- Centro de notificaciones para Administradores y aviso opcional por correo
+  cuando se crea una nueva cotización.
 
 ## Publicar en Render
 
@@ -63,6 +71,23 @@ Variables:
 NODE_ENV=production
 DATABASE_URL=<Internal Database URL de PostgreSQL>
 ```
+
+## Notificación de nuevas cotizaciones
+
+El aviso interno funciona automáticamente y aparece en **Notificaciones** para
+todos los Administradores activos. La aplicación consulta nuevas alertas cada
+60 segundos.
+
+Para enviar también un correo, crea una cuenta en Resend, verifica el dominio
+del remitente y agrega estas variables en **Render → Web Service → Environment**:
+
+```text
+RESEND_API_KEY=<clave API de Resend>
+NOTIFICATION_FROM_EMAIL=Casa Diseño <cotizaciones@tu-dominio.cl>
+```
+
+Los destinatarios se obtienen de los correos de todos los usuarios
+Administrador activos; no se escriben direcciones dentro del código.
 
 Si Render muestra `Empty build command; skipping build`, el servicio todavía
 está configurado como Static Site y debe reemplazarse por un Web Service.
@@ -124,7 +149,7 @@ La aplicación descarga una plantilla y reconoce:
 
 ```text
 codigo_opcional
-nombre_o_codigo_del_elemento
+nombre_elemento_opcional
 largo
 ancho
 cantidad
@@ -133,6 +158,7 @@ notas
 ```
 
 Si el código viene vacío, se genera automáticamente como `P-001`, `P-002`, etc.
+El nombre del elemento también puede quedar vacío.
 
 ## Verificación
 
@@ -141,5 +167,5 @@ npm test
 npm run build
 ```
 
-Las pruebas cubren catálogo, autenticación, permisos, tarifas, descuentos,
-medidas de corte y modos de optimización.
+Las pruebas cubren catálogo, autenticación, permisos, notificaciones, tarifas,
+descuentos, límites de piezas, medidas de corte y modos de optimización.

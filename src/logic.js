@@ -36,6 +36,20 @@ export function cutDimensions(piece, edgeBands) {
   };
 }
 
+export function pieceFitsMaterial(piece, material) {
+  if (!material) return false;
+  const length = Number(piece.length);
+  const width = Number(piece.width);
+  if (length <= 0 || width <= 0) return false;
+  const direct =
+    length <= material.plateLength && width <= material.plateWidth;
+  const rotated =
+    width <= material.plateLength && length <= material.plateWidth;
+  if (piece.grain === "longitudinal") return direct;
+  if (piece.grain === "transversal") return rotated;
+  return direct || rotated;
+}
+
 function orientations(piece, cut) {
   if (piece.grain === "longitudinal") {
     return [{ w: cut.cutLength, h: cut.cutWidth, rotated: false }];
@@ -305,17 +319,82 @@ export function optimize(material, pieces, edgeBands, settings = {}) {
   };
 }
 
-function lineDash(style) {
-  if (style === "dashed") return [9, 5];
-  if (style === "dashdot") return [9, 4, 2, 4];
-  return [];
+function fittedText(ctx, value, maxWidth) {
+  const text = String(value || "");
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  let shortened = text;
+  while (
+    shortened.length > 1 &&
+    ctx.measureText(`${shortened}…`).width > maxWidth
+  ) {
+    shortened = shortened.slice(0, -1);
+  }
+  return `${shortened}…`;
 }
 
-export function drawCutPlan(canvas, plate, material, edgeBands, logoImage) {
+function edgeDash(edge) {
+  if (edge.material === "ABS") return [14, 4, 3, 4];
+  if (edge.material === "EGR") return [2, 4];
+  if (edge.thickness <= 0.4) return [];
+  if (edge.thickness <= 1) return [11, 4];
+  if (edge.thickness <= 1.5) return [6, 3];
+  return [17, 5];
+}
+
+function drawEdgeLine(ctx, edge, x1, y1, x2, y2) {
+  const thickness = Number(edge.thickness) || 0.4;
+  ctx.strokeStyle = "#101820";
+  ctx.lineWidth =
+    thickness >= 2 ? 9 : thickness >= 1.5 ? 7 : thickness >= 1 ? 5.5 : 4;
+  ctx.setLineDash(edgeDash(edge));
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+  if (thickness >= 2) {
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 2.5;
+    ctx.setLineDash([]);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+}
+
+function drawCutTag(ctx, text, x, y, maxWidth = 160) {
+  ctx.font = "700 9px Arial";
+  const label = fittedText(ctx, text, maxWidth - 12);
+  const tagWidth = Math.min(maxWidth, ctx.measureText(label).width + 12);
+  ctx.fillStyle = "rgba(255,255,255,.94)";
+  ctx.fillRect(x, y - 11, tagWidth, 15);
+  ctx.fillStyle = "#101820";
+  ctx.fillText(label, x + 6, y);
+}
+
+function spacedMarks(values, scale, minimumPixels = 28) {
+  const sorted = [...new Set(values)].sort((a, b) => a - b);
+  return sorted.reduce((marks, value, index) => {
+    if (!marks.length) return [value];
+    if ((value - marks.at(-1)) * scale >= minimumPixels) {
+      marks.push(value);
+    } else if (index === sorted.length - 1) {
+      marks[marks.length - 1] = value;
+    }
+    return marks;
+  }, []);
+}
+
+export function drawCutPlan(
+  canvas,
+  plate,
+  material,
+  edgeBands,
+  logoImage,
+  context = {},
+) {
   const ctx = canvas.getContext("2d");
-  const width = 1200;
-  const height = 820;
-  const margin = { left: 88, top: 94, right: 235, bottom: 82 };
+  const width = 1400;
+  const height = 900;
+  const margin = { left: 115, top: 188, right: 350, bottom: 82 };
   canvas.width = width;
   canvas.height = height;
   const scale = Math.min(
@@ -327,28 +406,79 @@ export function drawCutPlan(canvas, plate, material, edgeBands, logoImage) {
   const ox = margin.left;
   const oy = margin.top;
 
-  ctx.fillStyle = "#f7f4ed";
+  ctx.fillStyle = "#f6f5f2";
   ctx.fillRect(0, 0, width, height);
   if (logoImage?.complete && logoImage.naturalWidth) {
-    ctx.drawImage(logoImage, 38, 13, 190, 68);
+    ctx.drawImage(logoImage, 38, 24, 190, 68);
   } else {
-    ctx.fillStyle = "#10243d";
+    ctx.fillStyle = "#101820";
     ctx.font = "700 26px Arial";
-    ctx.fillText("CASA DISEÑO", 38, 42);
+    ctx.fillText("CASA DISEÑO", 38, 55);
   }
-  ctx.fillStyle = "#10243d";
-  ctx.font = "700 18px Arial";
-  ctx.fillText("PLANO DE CORTE", 250, 41);
-  ctx.fillStyle = "#6f7782";
-  ctx.font = "15px Arial";
+  const project = context.project || {};
+  const headerX = 260;
+  const headerWidth = 780;
+  ctx.fillStyle = "#101820";
+  ctx.font = "700 22px Arial";
+  ctx.fillText("PLANO DE CORTE", headerX, 42);
+  ctx.font = "700 13px Arial";
   ctx.fillText(
-    `${material.brand} ${material.name} · Placa ${plate.index} · ${material.plateLength} × ${material.plateWidth} mm`,
-    250,
-    65,
+    fittedText(
+      ctx,
+      `PROYECTO: ${project.projectName || "Sin nombre"} · CLIENTE: ${
+        project.clientName || "Sin identificar"
+      }`,
+      headerWidth,
+    ),
+    headerX,
+    66,
   );
+  ctx.font = "12px Arial";
+  ctx.fillStyle = "#354352";
+  ctx.fillText(
+    fittedText(
+      ctx,
+      `COTIZACIÓN: ${context.projectId || "S/I"} · ESTADO: ${
+        context.statusLabel || project.status || "Cotización"
+      }${project.rut ? ` · RUT: ${project.rut}` : ""}`,
+      headerWidth,
+    ),
+    headerX,
+    88,
+  );
+  ctx.fillText(
+    fittedText(
+      ctx,
+      `MATERIAL: ${material.brand} ${material.name} (${material.sku}) · ${
+        material.plateLength
+      } × ${material.plateWidth} × ${material.thickness} mm`,
+      headerWidth,
+    ),
+    headerX,
+    109,
+  );
+  ctx.fillText(
+    fittedText(
+      ctx,
+      `PLACA ${plate.index} · PRIMER CORTE: ${
+        plate.cutAxis === "transversal" ? "TRANSVERSAL" : "LONGITUDINAL"
+      } · GENERADO: ${context.generatedAt || new Date().toLocaleString("es-CL")}${
+        context.createdBy ? ` · RESPONSABLE: ${context.createdBy}` : ""
+      }`,
+      headerWidth,
+    ),
+    headerX,
+    130,
+  );
+  ctx.strokeStyle = "#a9b0b7";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(38, 153);
+  ctx.lineTo(width - 38, 153);
+  ctx.stroke();
 
   ctx.fillStyle = "#fff";
-  ctx.strokeStyle = "#10243d";
+  ctx.strokeStyle = "#101820";
   ctx.lineWidth = 3;
   ctx.fillRect(ox, oy, plateW, plateH);
   ctx.strokeRect(ox, oy, plateW, plateH);
@@ -358,10 +488,10 @@ export function drawCutPlan(canvas, plate, material, edgeBands, logoImage) {
     const y = oy + piece.y * scale;
     const w = piece.drawWidth * scale;
     const h = piece.drawHeight * scale;
-    ctx.fillStyle = index % 2 ? "#e8edf1" : "#dce6ec";
+    ctx.fillStyle = index % 2 ? "#e7eaec" : "#d8dde0";
     ctx.fillRect(x, y, w, h);
-    ctx.strokeStyle = "#52677c";
-    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = "#59636d";
+    ctx.lineWidth = 1;
     ctx.setLineDash([]);
     ctx.strokeRect(x, y, w, h);
 
@@ -383,83 +513,66 @@ export function drawCutPlan(canvas, plate, material, edgeBands, logoImage) {
     for (const [side, x1, y1, x2, y2] of edgeLines) {
       const edge = edgeBands.find((item) => item.id === edges[side]);
       if (!edge) continue;
-      ctx.strokeStyle = edge.color;
-      ctx.lineWidth = edge.style === "double" ? 7 : 5;
-      ctx.setLineDash(lineDash(edge.style));
-      ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      ctx.lineTo(x2, y2);
-      ctx.stroke();
-      if (edge.style === "double") {
-        ctx.strokeStyle = "#10243d";
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-      }
+      drawEdgeLine(ctx, edge, x1, y1, x2, y2);
     }
     ctx.setLineDash([]);
 
-    ctx.fillStyle = "#10243d";
+    ctx.fillStyle = "#101820";
     ctx.textAlign = "center";
-    ctx.font = `${Math.max(10, Math.min(16, h / 4))}px Arial`;
+    ctx.font = `700 ${Math.max(9, Math.min(15, h / 5))}px Arial`;
+    const pieceLabel = piece.name
+      ? `${piece.code || "S/C"} · ${piece.name}`
+      : piece.code || "S/C";
     ctx.fillText(
-      `${piece.code || "S/C"} · ${piece.name}`,
+      fittedText(ctx, pieceLabel, Math.max(25, w - 28)),
       x + w / 2,
-      y + h / 2 - 5,
-      Math.max(25, w - 8),
-    );
-    ctx.font = "12px Arial";
-    ctx.fillText(
-      `${Math.round(piece.cutLength)} × ${Math.round(piece.cutWidth)} mm`,
-      x + w / 2,
-      y + h / 2 + 14,
-      Math.max(25, w - 8),
+      y + h / 2,
     );
 
-    if (w > 54 && h > 42) {
+    if (w > 48 && h > 36) {
       const horizontalMeasure = Math.round(piece.drawWidth);
       const verticalMeasure = Math.round(piece.drawHeight);
-      ctx.fillStyle = "#405469";
-      ctx.font = "700 9px Arial";
+      ctx.fillStyle = "#101820";
+      ctx.font = `700 ${w > 100 && h > 70 ? 10 : 8}px Arial`;
       ctx.textAlign = "center";
-      ctx.fillText(`${horizontalMeasure}`, x + w / 2, y + 11, w - 20);
-      ctx.fillText(`${horizontalMeasure}`, x + w / 2, y + h - 4, w - 20);
+      ctx.fillText(`${horizontalMeasure}`, x + w / 2, y + 14, w - 28);
+      ctx.fillText(`${horizontalMeasure}`, x + w / 2, y + h - 7, w - 28);
       ctx.save();
-      ctx.translate(x + 10, y + h / 2);
+      ctx.translate(x + 13, y + h / 2);
       ctx.rotate(-Math.PI / 2);
-      ctx.fillText(`${verticalMeasure}`, 0, 0, h - 20);
+      ctx.fillText(`${verticalMeasure}`, 0, 0, h - 28);
       ctx.restore();
       ctx.save();
-      ctx.translate(x + w - 5, y + h / 2);
+      ctx.translate(x + w - 8, y + h / 2);
       ctx.rotate(Math.PI / 2);
-      ctx.fillText(`${verticalMeasure}`, 0, 0, h - 20);
+      ctx.fillText(`${verticalMeasure}`, 0, 0, h - 28);
       ctx.restore();
     }
 
-    if (piece.grain !== "sin-veta" && w > 42 && h > 24) {
+    if (piece.grain !== "sin-veta" && w > 70 && h > 55) {
       const horizontal = piece.grain === "longitudinal" !== piece.rotated;
-      ctx.strokeStyle = "#b17b35";
-      ctx.fillStyle = "#b17b35";
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = "#4a535c";
+      ctx.lineWidth = 1.6;
       ctx.beginPath();
       if (horizontal) {
-        ctx.moveTo(x + w * 0.25, y + h * 0.75);
-        ctx.lineTo(x + w * 0.75, y + h * 0.75);
-        ctx.lineTo(x + w * 0.68, y + h * 0.68);
+        ctx.moveTo(x + w * 0.3, y + h * 0.7);
+        ctx.lineTo(x + w * 0.7, y + h * 0.7);
+        ctx.lineTo(x + w * 0.63, y + h * 0.64);
       } else {
-        ctx.moveTo(x + w * 0.75, y + h * 0.75);
-        ctx.lineTo(x + w * 0.75, y + h * 0.25);
-        ctx.lineTo(x + w * 0.68, y + h * 0.32);
+        ctx.moveTo(x + w * 0.7, y + h * 0.7);
+        ctx.lineTo(x + w * 0.7, y + h * 0.3);
+        ctx.lineTo(x + w * 0.64, y + h * 0.37);
       }
       ctx.stroke();
     }
   });
 
   ctx.textAlign = "left";
-  ctx.font = "11px Arial";
-  ctx.strokeStyle = "#c69b5e";
-  ctx.fillStyle = "#7a5a2d";
-  ctx.lineWidth = 2;
-  ctx.setLineDash([10, 5]);
+  ctx.font = "10px Arial";
+  ctx.strokeStyle = "#101820";
+  ctx.fillStyle = "#101820";
+  ctx.lineWidth = 2.2;
+  ctx.setLineDash([14, 6]);
   for (const strip of plate.strips) {
     if (plate.cutAxis === "transversal") {
       const cutX = ox + (strip.y + strip.height) * scale;
@@ -469,16 +582,17 @@ export function drawCutPlan(canvas, plate, material, edgeBands, logoImage) {
         ctx.lineTo(cutX, oy + plateH);
         ctx.stroke();
         ctx.save();
-        ctx.translate(cutX + 5, oy + plateH + 12);
+        ctx.translate(cutX + 11, oy + plateH - 12);
         ctx.rotate(-Math.PI / 2);
-        ctx.fillText("CORTE TRANSVERSAL COMPLETO", 0, 0);
+        drawCutTag(ctx, "CORTE TRANSVERSAL COMPLETO", 0, 0, 170);
         ctx.restore();
       }
       for (const piece of strip.pieces) {
         const cutY = oy + (piece.y + piece.drawHeight) * scale;
         if (cutY < oy + plateH - 1) {
-          ctx.strokeStyle = "#8b96a1";
-          ctx.setLineDash([4, 4]);
+          ctx.strokeStyle = "#6b747d";
+          ctx.lineWidth = 1;
+          ctx.setLineDash([3, 4]);
           ctx.beginPath();
           ctx.moveTo(ox + strip.y * scale, cutY);
           ctx.lineTo(ox + (strip.y + strip.height) * scale, cutY);
@@ -488,17 +602,27 @@ export function drawCutPlan(canvas, plate, material, edgeBands, logoImage) {
     } else {
       const cutY = oy + (strip.y + strip.height) * scale;
       if (cutY < oy + plateH - 1) {
+        ctx.strokeStyle = "#101820";
+        ctx.lineWidth = 2.2;
+        ctx.setLineDash([14, 6]);
         ctx.beginPath();
         ctx.moveTo(ox, cutY);
         ctx.lineTo(ox + plateW, cutY);
         ctx.stroke();
-        ctx.fillText("CORTE LONGITUDINAL COMPLETO", ox + plateW + 12, cutY + 4);
+        drawCutTag(
+          ctx,
+          "CORTE LONGITUDINAL COMPLETO",
+          ox + plateW - 185,
+          cutY - 3,
+          180,
+        );
       }
       for (const piece of strip.pieces) {
         const cutX = ox + (piece.x + piece.drawWidth) * scale;
         if (cutX < ox + plateW - 1) {
-          ctx.strokeStyle = "#8b96a1";
-          ctx.setLineDash([4, 4]);
+          ctx.strokeStyle = "#6b747d";
+          ctx.lineWidth = 1;
+          ctx.setLineDash([3, 4]);
           ctx.beginPath();
           ctx.moveTo(cutX, oy + strip.y * scale);
           ctx.lineTo(cutX, oy + (strip.y + strip.height) * scale);
@@ -509,57 +633,94 @@ export function drawCutPlan(canvas, plate, material, edgeBands, logoImage) {
   }
   ctx.setLineDash([]);
 
-  const xMarks = [...new Set([0, material.plateLength, ...plate.pieces.flatMap((piece) => [piece.x, piece.x + piece.drawWidth])])].sort((a, b) => a - b);
-  const yMarks = [...new Set([0, material.plateWidth, ...plate.pieces.flatMap((piece) => [piece.y, piece.y + piece.drawHeight])])].sort((a, b) => a - b);
-  ctx.fillStyle = "#52606d";
-  ctx.strokeStyle = "#52606d";
+  const xMarks = spacedMarks(
+    [
+      0,
+      material.plateLength,
+      ...plate.pieces.flatMap((piece) => [
+        piece.x,
+        piece.x + piece.drawWidth,
+      ]),
+    ],
+    scale,
+  );
+  const yMarks = spacedMarks(
+    [
+      0,
+      material.plateWidth,
+      ...plate.pieces.flatMap((piece) => [
+        piece.y,
+        piece.y + piece.drawHeight,
+      ]),
+    ],
+    scale,
+  );
+  ctx.fillStyle = "#303a44";
+  ctx.strokeStyle = "#59636d";
   ctx.font = "10px Arial";
   ctx.textAlign = "center";
-  for (const value of xMarks) {
+  xMarks.forEach((value, index) => {
     const x = ox + value * scale;
+    const level = index % 2;
+    const tickTop = oy - (level ? 35 : 20);
     ctx.beginPath();
     ctx.moveTo(x, oy - 5);
-    ctx.lineTo(x, oy - 16);
+    ctx.lineTo(x, tickTop);
     ctx.stroke();
-    ctx.fillText(`${Math.round(value)}`, x, oy - 22);
-  }
+    ctx.fillText(`${Math.round(value)}`, x, tickTop - 5);
+  });
   ctx.save();
   ctx.textAlign = "right";
-  for (const value of yMarks) {
+  yMarks.forEach((value, index) => {
     const y = oy + value * scale;
+    const level = index % 2;
+    const tickLeft = ox - (level ? 42 : 21);
     ctx.beginPath();
     ctx.moveTo(ox - 5, y);
-    ctx.lineTo(ox - 16, y);
+    ctx.lineTo(tickLeft, y);
     ctx.stroke();
-    ctx.fillText(`${Math.round(value)}`, ox - 22, y + 3);
-  }
+    ctx.fillText(`${Math.round(value)}`, tickLeft - 5, y + 3);
+  });
   ctx.restore();
 
+  const legendX = ox + plateW + 28;
   ctx.textAlign = "left";
-  ctx.fillStyle = "#10243d";
+  ctx.fillStyle = "#101820";
   ctx.font = "700 14px Arial";
-  ctx.fillText("LEYENDA TAPACANTOS", ox + plateW + 18, oy + 24);
+  ctx.fillText("LEYENDA TAPACANTOS", legendX, oy + 24);
   const usedEdges = [...new Set(plate.pieces.flatMap((piece) => Object.values(piece.edges ?? {})).filter(Boolean))];
   usedEdges.forEach((id, index) => {
     const edge = edgeBands.find((item) => item.id === id);
     if (!edge) return;
-    const y = oy + 52 + index * 34;
-    ctx.strokeStyle = edge.color;
-    ctx.lineWidth = 5;
-    ctx.setLineDash(lineDash(edge.style));
-    ctx.beginPath();
-    ctx.moveTo(ox + plateW + 20, y);
-    ctx.lineTo(ox + plateW + 70, y);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle = "#394957";
-    ctx.font = "12px Arial";
-    ctx.fillText(`${edge.group} · ${edge.name}`, ox + plateW + 80, y + 4);
+    const y = oy + 52 + index * 31;
+    drawEdgeLine(ctx, edge, legendX, y, legendX + 62, y);
+    ctx.fillStyle = "#303a44";
+    ctx.font = "10px Arial";
+    ctx.fillText(
+      fittedText(
+        ctx,
+        `${edge.material} ${String(edge.thickness).replace(".", ",")} mm · ${
+          edge.sku
+        } · ${edge.name}`,
+        margin.right - 118,
+      ),
+      legendX + 76,
+      y + 4,
+    );
   });
+  if (!usedEdges.length) {
+    ctx.fillStyle = "#6b747d";
+    ctx.font = "11px Arial";
+    ctx.fillText("Sin tapacantos asignados", legendX, oy + 52);
+  }
 
-  ctx.fillStyle = "#6d7780";
-  ctx.font = "12px Arial";
-  ctx.fillText("Medidas parciales y acumulativas en milímetros.", 39, height - 28);
+  ctx.fillStyle = "#58636d";
+  ctx.font = "11px Arial";
+  ctx.fillText(
+    "Medidas interiores: parciales de pieza · Medidas exteriores: acumuladas · Unidades en mm.",
+    39,
+    height - 28,
+  );
 }
 
 export function clp(value) {

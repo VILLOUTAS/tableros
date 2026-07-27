@@ -1,7 +1,6 @@
 import "./style.css";
 import { jsPDF } from "jspdf";
 import readXlsxFile from "read-excel-file/browser";
-import writeXlsxFile from "write-excel-file/browser";
 
 import {
   categories,
@@ -17,6 +16,7 @@ import {
   drawCutPlan,
   formatRut,
   optimize,
+  pieceFitsMaterial,
   validateRut,
 } from "./logic.js";
 
@@ -62,6 +62,7 @@ let state = emptyState();
 let latestResult = null;
 let projectsCache = [];
 let usersCache = [];
+let notificationsCache = [];
 const auth = {
   user: null,
   csrfToken: "",
@@ -109,6 +110,17 @@ async function loadUsers() {
   if (auth.user?.role !== "admin") return;
   const payload = await api("/api/users");
   usersCache = payload.users || [];
+}
+
+async function loadNotifications() {
+  if (auth.user?.role !== "admin") return;
+  const payload = await api("/api/notifications");
+  notificationsCache = payload.notifications || [];
+}
+
+function unreadNotifications() {
+  return notificationsCache.filter((notification) => !notification.readAt)
+    .length;
 }
 
 function canCreateQuote() {
@@ -198,6 +210,7 @@ async function saveProject(showMessage = true) {
     const index = projectsCache.findIndex((item) => item.id === state.projectId);
     if (index >= 0) projectsCache[index] = payload.project;
     else projectsCache.unshift(payload.project);
+    if (!exists && auth.user?.role === "admin") await loadNotifications();
     if (showMessage) notify("Proyecto guardado correctamente.");
     return true;
   } catch (error) {
@@ -295,7 +308,10 @@ function shell(content) {
         </button>
         ${
           auth.user?.role === "admin"
-            ? `<button class="step-link ${state.view === "users" ? "active" : ""}" data-action="users">
+            ? `<button class="step-link ${state.view === "notifications" ? "active" : ""}" data-action="notifications">
+                <span>♢</span><b>Notificaciones<small><i class="notification-badge" ${unreadNotifications() ? "" : "hidden"}>${unreadNotifications()}</i> Nuevas cotizaciones</small></b>
+              </button>
+              <button class="step-link ${state.view === "users" ? "active" : ""}" data-action="users">
                 <span>♙</span><b>Usuarios<small>Perfiles y accesos</small></b>
               </button>`
             : ""
@@ -312,6 +328,8 @@ function shell(content) {
             <p class="eyebrow">${
               state.view === "projects"
                 ? "SEGUIMIENTO"
+                : state.view === "notifications"
+                  ? "MONITOREO COMERCIAL"
                 : state.view === "users"
                   ? "ADMINISTRACIÓN"
                   : `PASO ${state.step + 1} DE 5`
@@ -319,6 +337,8 @@ function shell(content) {
             <h1>${
               state.view === "projects"
                 ? "Proyectos"
+                : state.view === "notifications"
+                  ? "Notificaciones"
                 : state.view === "users"
                   ? "Usuarios y perfiles"
                   : steps[state.step][0]
@@ -436,6 +456,8 @@ function materialStep() {
 }
 
 function piecesStep() {
+  const material = selectedMaterial();
+  const limits = dimensionLimits(state.defaultGrain, material);
   return `
     <section class="intro-row">
       <div><p class="eyebrow">INGRESO DE PIEZAS</p><h2>Manual o mediante una planilla Excel</h2><p>Las medidas ingresadas son medidas terminadas.</p></div>
@@ -443,14 +465,14 @@ function piecesStep() {
     </section>
     <div class="two-columns">
       <section class="card">
-        <div class="section-title"><span>＋</span><div><h3>Agregar pieza</h3><p>Todos los campos marcados son obligatorios.</p></div></div>
+        <div class="section-title"><span>＋</span><div><h3>Agregar pieza</h3><p>El nombre es opcional; el código se genera automáticamente.</p></div></div>
         <form id="piece-form" class="piece-form">
           <label>Código autogenerado
             <div class="locked-field">${nextPieceCode()} <span>Automático</span></div>
           </label>
-          <label>Nombre o código del elemento <em>*</em><input name="name" required placeholder="Costado izquierdo" /></label>
-          <label>Largo terminado (mm) <em>*</em><input name="length" type="number" min="1" required placeholder="720" /></label>
-          <label>Ancho terminado (mm) <em>*</em><input name="width" type="number" min="1" required placeholder="560" /></label>
+          <label>Nombre del elemento <small>Opcional</small><input name="name" placeholder="Costado izquierdo" /></label>
+          <label>Largo terminado (mm) <em>*</em><input name="length" type="number" min="1" max="${limits.maxLength}" required placeholder="720" /></label>
+          <label>Ancho terminado (mm) <em>*</em><input name="width" type="number" min="1" max="${limits.maxWidth}" required placeholder="560" /></label>
           <label>Cantidad <em>*</em><input name="quantity" type="number" min="1" value="1" required /></label>
           <label>Notas<input name="notes" placeholder="Opcional" /></label>
           <div class="grain-field">
@@ -462,6 +484,7 @@ function piecesStep() {
                 )
                 .join("")}
             </div>
+            <small id="dimension-limit-note">${safe(limits.note)}</small>
           </div>
           <button class="primary" type="submit">Agregar pieza</button>
         </form>
@@ -473,7 +496,7 @@ function piecesStep() {
           <strong>Seleccionar archivo</strong>
           <span>Excel .xlsx · máximo recomendado 1.000 filas</span>
         </label>
-        <button class="text-button" data-action="template">↓ Descargar plantilla Excel</button>
+        <a class="text-button" href="/Plantilla_Piezas_Casa_Diseno.xlsx" download="Plantilla_Piezas_Casa_Diseno.xlsx">↓ Descargar plantilla Excel</a>
         ${
           state.importPreview
             ? `<div class="import-result ${state.importPreview.errors.length ? "warning" : ""}">
@@ -531,7 +554,7 @@ function edgeStep() {
           const cut = cutDimensions(piece, edgeBands);
           return `<article class="card edge-piece">
             <div class="edge-piece-head">
-              <div><small>${safe(piece.code)}</small><h3>${safe(piece.name)}</h3><p>Terminada: ${piece.length} × ${piece.width} mm · Cantidad: ${piece.quantity}</p></div>
+              <div><small>${safe(piece.code)}</small><h3>${safe(piece.name || "Pieza sin nombre")}</h3><p>Terminada: ${piece.length} × ${piece.width} mm · Cantidad: ${piece.quantity}</p></div>
               <div class="cut-size"><span>MEDIDA DE CORTE</span><b>${cut.cutLength} × ${cut.cutWidth} mm</b></div>
             </div>
             <div class="edge-sides">
@@ -692,6 +715,57 @@ function projectsView() {
     </section>`);
 }
 
+function notificationsView() {
+  const notifications = [...notificationsCache].sort(
+    (a, b) => new Date(b.createdAt) - new Date(a.createdAt),
+  );
+  return shell(`
+    <section class="intro-row notification-intro">
+      <div>
+        <p class="eyebrow">MONITOREO COMERCIAL</p>
+        <h2>Nuevas cotizaciones</h2>
+        <p>Las alertas quedan registradas aquí. El correo se envía a todos los administradores activos cuando el servicio está configurado.</p>
+      </div>
+      <div class="notification-summary">
+        <strong>${unreadNotifications()}</strong>
+        <span>sin leer</span>
+      </div>
+    </section>
+    ${
+      notifications.length
+        ? `<section class="card notification-list">
+            ${notifications
+              .map(
+                (notification) => `<article class="notification-row ${
+                  notification.readAt ? "" : "unread"
+                }">
+                  <span class="notification-marker" aria-hidden="true"></span>
+                  <div class="notification-copy">
+                    <div>
+                      <h3>${safe(notification.title)}</h3>
+                      <time>${new Date(notification.createdAt).toLocaleString(
+                        "es-CL",
+                      )}</time>
+                    </div>
+                    <p>${safe(notification.message)}</p>
+                  </div>
+                  <div class="notification-actions">
+                    <button class="secondary small" data-action="open-project" data-id="${notification.projectId}" data-notification-id="${notification.id}">Abrir cotización</button>
+                    ${
+                      notification.readAt
+                        ? `<small>Leída</small>`
+                        : `<button class="ghost small" data-action="mark-notification" data-id="${notification.id}">Marcar leída</button>`
+                    }
+                  </div>
+                </article>`,
+              )
+              .join("")}
+          </section>`
+        : `<section class="card empty-state large"><span>♢</span><h2>Aún no hay notificaciones</h2><p>La primera alerta aparecerá cuando se guarde una nueva cotización.</p></section>`
+    }
+  `);
+}
+
 function usersView() {
   return shell(`
     <section class="intro-row">
@@ -786,6 +860,11 @@ function render() {
     renderEnhancements();
     return;
   }
+  if (state.view === "notifications") {
+    app.innerHTML = notificationsView();
+    renderEnhancements();
+    return;
+  }
   const views = [projectStep, materialStep, piecesStep, edgeStep, optimizeStep];
   app.innerHTML = shell(views[state.step]());
   renderEnhancements();
@@ -796,7 +875,13 @@ function render() {
         latestResult.plates.forEach((plate) => {
           const canvas = document.querySelector(`#plan-${plate.index}`);
           if (canvas) {
-            drawCutPlan(canvas, plate, selectedMaterial(), edgeBands, logo);
+            drawCutPlan(canvas, plate, selectedMaterial(), edgeBands, logo, {
+              projectId: state.projectId,
+              project: state.project,
+              statusLabel: statusLabels[state.project.status],
+              createdBy: auth.user?.fullName,
+              generatedAt: new Date().toLocaleString("es-CL"),
+            });
           }
         });
       drawPlans();
@@ -815,21 +900,65 @@ function nextPieceCode(pieces = state.pieces) {
   return `P-${String(highest + 1).padStart(3, "0")}`;
 }
 
+function dimensionLimits(grain, material = selectedMaterial()) {
+  if (!material) {
+    return {
+      maxLength: 9999,
+      maxWidth: 9999,
+      note: "Selecciona un tablero para aplicar sus límites.",
+    };
+  }
+  if (grain === "transversal") {
+    return {
+      maxLength: material.plateWidth,
+      maxWidth: material.plateLength,
+      note: `Máximo con veta transversal: ${material.plateWidth} × ${material.plateLength} mm.`,
+    };
+  }
+  if (grain === "sin-veta") {
+    const maximum = Math.max(material.plateLength, material.plateWidth);
+    return {
+      maxLength: maximum,
+      maxWidth: maximum,
+      note: `Debe caber en ${material.plateLength} × ${material.plateWidth} mm; se permite girar la pieza.`,
+    };
+  }
+  return {
+    maxLength: material.plateLength,
+    maxWidth: material.plateWidth,
+    note: `Máximo con veta longitudinal: ${material.plateLength} × ${material.plateWidth} mm.`,
+  };
+}
+
+function updateDimensionInputs(grain) {
+  const limits = dimensionLimits(grain);
+  const lengthInput = document.querySelector('#piece-form input[name="length"]');
+  const widthInput = document.querySelector('#piece-form input[name="width"]');
+  const note = document.querySelector("#dimension-limit-note");
+  if (lengthInput) lengthInput.max = String(limits.maxLength);
+  if (widthInput) widthInput.max = String(limits.maxWidth);
+  if (note) note.textContent = limits.note;
+}
+
 function addPiece(form) {
   const data = new FormData(form);
   const length = Number(data.get("length"));
   const width = Number(data.get("width"));
   const quantity = Number(data.get("quantity"));
-  if (
-    !String(data.get("name")).trim() ||
-    length <= 0 ||
-    width <= 0 ||
-    quantity <= 0
-  ) {
+  const grain = String(data.get("grain") || "sin-veta");
+  if (length <= 0 || width <= 0 || quantity <= 0) {
     notify("Revisa los datos obligatorios de la pieza.", "error");
     return;
   }
-  state.defaultGrain = String(data.get("grain") || "sin-veta");
+  if (!pieceFitsMaterial({ length, width, grain }, selectedMaterial())) {
+    const material = selectedMaterial();
+    notify(
+      `La pieza no cabe en la plancha de ${material.plateLength} × ${material.plateWidth} mm con la veta seleccionada.`,
+      "error",
+    );
+    return;
+  }
+  state.defaultGrain = grain;
   state.pieces.push({
     id: crypto.randomUUID(),
     code: nextPieceCode(),
@@ -881,6 +1010,9 @@ async function importExcel(file) {
         pick(row, [
           "nombre o codigo del elemento",
           "nombre o código del elemento",
+          "nombre elemento opcional",
+          "nombre del elemento opcional",
+          "nombre opcional",
           "nombre",
           "pieza",
           "name",
@@ -895,8 +1027,15 @@ async function importExcel(file) {
         : rawGrain.startsWith("trans")
           ? "transversal"
           : "sin-veta";
-      if (!name || length <= 0 || width <= 0 || quantity <= 0) {
-        errors.push(`Fila ${index + 2}: faltan nombre del elemento, medidas o cantidad.`);
+      if (length <= 0 || width <= 0 || quantity <= 0) {
+        errors.push(`Fila ${index + 2}: faltan medidas o cantidad.`);
+        return;
+      }
+      if (!pieceFitsMaterial({ length, width, grain }, selectedMaterial())) {
+        const material = selectedMaterial();
+        errors.push(
+          `Fila ${index + 2}: la pieza excede la plancha ${material.plateLength} × ${material.plateWidth} mm para la veta indicada.`,
+        );
         return;
       }
       const generatedCode = code || nextPieceCode([...state.pieces, ...valid]);
@@ -919,37 +1058,6 @@ async function importExcel(file) {
   }
 }
 
-async function downloadTemplate() {
-  const headers = [
-    "codigo_opcional",
-    "nombre_o_codigo_del_elemento",
-    "largo",
-    "ancho",
-    "cantidad",
-    "veta",
-    "notas",
-  ];
-  await writeXlsxFile(
-    [
-      headers.map((value) => ({ value, fontWeight: "bold" })),
-      [
-        { value: "" },
-        { value: "Costado izquierdo" },
-        { value: 720 },
-        { value: 560 },
-        { value: 2 },
-        { value: "longitudinal" },
-        { value: "Ejemplo" },
-      ],
-    ],
-    {
-      fileName: "Plantilla_Piezas_Casa_Diseno.xlsx",
-      sheet: "Piezas",
-      columns: [18, 34, 12, 12, 12, 18, 24].map((width) => ({ width })),
-    },
-  );
-}
-
 function exportPdf() {
   if (!latestResult?.plates.length) {
     notify("No hay placas para exportar.", "error");
@@ -959,7 +1067,16 @@ function exportPdf() {
   latestResult.plates.forEach((plate, index) => {
     if (index > 0) pdf.addPage("a4", "landscape");
     const canvas = document.querySelector(`#plan-${plate.index}`);
-    pdf.addImage(canvas.toDataURL("image/png"), "PNG", 7, 7, 283, 193);
+    const imageWidth = 283;
+    const imageHeight = (canvas.height / canvas.width) * imageWidth;
+    pdf.addImage(
+      canvas.toDataURL("image/png"),
+      "PNG",
+      7,
+      (210 - imageHeight) / 2,
+      imageWidth,
+      imageHeight,
+    );
   });
   pdf.save(
     `Plano_Corte_${state.project.projectName.replace(/[^a-z0-9]+/gi, "_") || "Proyecto"}.pdf`,
@@ -984,7 +1101,9 @@ app.addEventListener("submit", async (event) => {
       auth.csrfToken = payload.csrfToken;
       auth.needsSetup = false;
       await loadProjects();
-      if (auth.user.role === "admin") await loadUsers();
+      if (auth.user.role === "admin") {
+        await Promise.all([loadUsers(), loadNotifications()]);
+      }
       state = emptyState();
       state.view = "projects";
     } catch (error) {
@@ -1032,6 +1151,9 @@ app.addEventListener("input", (event) => {
 
 app.addEventListener("change", async (event) => {
   const target = event.target;
+  if (target.name === "grain") {
+    updateDimensionInputs(target.value);
+  }
   if (target.dataset.project === "rut") {
     state.project.rut = formatRut(target.value);
     target.value = state.project.rut;
@@ -1128,6 +1250,15 @@ app.addEventListener("click", async (event) => {
       notify(error.message, "error");
     }
   }
+  if (action === "notifications" && auth.user?.role === "admin") {
+    try {
+      await Promise.all([loadNotifications(), loadProjects()]);
+      state.view = "notifications";
+      render();
+    } catch (error) {
+      notify(error.message, "error");
+    }
+  }
   if (action === "logout") {
     try {
       await api("/api/auth/logout", { method: "POST" });
@@ -1139,6 +1270,7 @@ app.addEventListener("click", async (event) => {
     auth.error = "";
     projectsCache = [];
     usersCache = [];
+    notificationsCache = [];
     state = emptyState();
     render();
   }
@@ -1151,7 +1283,6 @@ app.addEventListener("click", async (event) => {
     state.pieces = state.pieces.filter((piece) => piece.id !== button.dataset.id);
     render();
   }
-  if (action === "template") await downloadTemplate();
   if (action === "confirm-import" && state.importPreview) {
     state.pieces.push(...state.importPreview.rows);
     state.importPreview = null;
@@ -1173,6 +1304,22 @@ app.addEventListener("click", async (event) => {
   if (action === "save") await saveProject();
   if (action === "pdf") exportPdf();
   if (action === "open-project") {
+    if (button.dataset.notificationId) {
+      try {
+        const payload = await api(
+          `/api/notifications/${button.dataset.notificationId}/read`,
+          { method: "POST" },
+        );
+        notificationsCache = notificationsCache.map((notification) =>
+          notification.id === payload.notification.id
+            ? payload.notification
+            : notification,
+        );
+      } catch (error) {
+        notify(error.message, "error");
+        return;
+      }
+    }
     const item = projectsCache.find((project) => project.id === button.dataset.id);
     if (item) {
       const defaults = emptyState();
@@ -1195,6 +1342,21 @@ app.addEventListener("click", async (event) => {
         step: 4,
       };
       render();
+    }
+  }
+  if (action === "mark-notification") {
+    try {
+      const payload = await api(`/api/notifications/${button.dataset.id}/read`, {
+        method: "POST",
+      });
+      notificationsCache = notificationsCache.map((notification) =>
+        notification.id === payload.notification.id
+          ? payload.notification
+          : notification,
+      );
+      render();
+    } catch (error) {
+      notify(error.message, "error");
     }
   }
   if (action === "mark-production") {
@@ -1242,7 +1404,9 @@ async function initialize() {
         auth.user = session.user;
         auth.csrfToken = session.csrfToken;
         await loadProjects();
-        if (auth.user.role === "admin") await loadUsers();
+        if (auth.user.role === "admin") {
+          await Promise.all([loadUsers(), loadNotifications()]);
+        }
         state.view = "projects";
       } catch {
         auth.user = null;
@@ -1258,3 +1422,22 @@ async function initialize() {
 }
 
 initialize();
+
+window.setInterval(async () => {
+  if (auth.user?.role !== "admin") return;
+  try {
+    await loadNotifications();
+    if (state.view === "notifications") {
+      render();
+      return;
+    }
+    const badge = document.querySelector(".notification-badge");
+    if (badge) {
+      const unread = unreadNotifications();
+      badge.textContent = String(unread);
+      badge.hidden = unread === 0;
+    }
+  } catch {
+    // La próxima consulta vuelve a intentarlo sin interrumpir el trabajo actual.
+  }
+}, 60_000);

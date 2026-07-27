@@ -52,6 +52,30 @@ test("protege acceso, crea perfiles y aplica permisos de Producción", async () 
     });
     assert.equal(user.response.status, 201);
 
+    const oversized = await request(base, "/api/projects", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({
+        project: {
+          clientName: "Cliente con pieza inválida",
+          status: "cotizacion",
+        },
+        materialId: "62-egger-1502-1",
+        pieces: [
+          {
+            code: "P-001",
+            name: "",
+            length: 3000,
+            width: 500,
+            quantity: 1,
+            grain: "longitudinal",
+          },
+        ],
+      }),
+    });
+    assert.equal(oversized.response.status, 400);
+    assert.match(oversized.body.error, /excede la plancha/);
+
     const project = await request(base, "/api/projects", {
       method: "POST",
       headers: adminHeaders,
@@ -62,12 +86,50 @@ test("protege acceso, crea perfiles y aplica permisos de Producción", async () 
           rut: "",
           status: "venta",
         },
-        pieces: [],
+        materialId: "62-egger-1502-1",
+        pieces: [
+          {
+            code: "P-001",
+            name: "",
+            length: 500,
+            width: 500,
+            quantity: 1,
+            grain: "longitudinal",
+          },
+        ],
         settings: {},
       }),
     });
     assert.equal(project.response.status, 201);
     assert.equal(project.body.project.project.clientName, "Cliente obligatorio");
+    assert.equal(project.body.project.pieces[0].name, "");
+
+    const notifications = await request(base, "/api/notifications", {
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(notifications.response.status, 200);
+    assert.equal(notifications.body.notifications.length, 1);
+    assert.equal(notifications.body.unreadCount, 1);
+    assert.match(
+      notifications.body.notifications[0].message,
+      /Cliente obligatorio/,
+    );
+
+    const readNotification = await request(
+      base,
+      `/api/notifications/${notifications.body.notifications[0].id}/read`,
+      {
+        method: "POST",
+        headers: adminHeaders,
+      },
+    );
+    assert.equal(readNotification.response.status, 200);
+    assert.ok(readNotification.body.notification.readAt);
+
+    const notificationsAfterRead = await request(base, "/api/notifications", {
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(notificationsAfterRead.body.unreadCount, 0);
 
     const login = await request(base, "/api/auth/login", {
       method: "POST",

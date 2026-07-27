@@ -1,6 +1,6 @@
 {
   "name": "cotizador-casa-diseno",
-  "version": "2.0.3",
+  "version": "2.1.1",
   "private": true,
   "type": "module",
   "engines": {
@@ -22,7 +22,6 @@
     "jspdf": "^4.2.1",
     "pg": "^8.22.0",
     "read-excel-file": "^9.3.4",
-    "vite": "^7.0.0",
-    "write-excel-file": "^4.1.1"
+    "vite": "^7.0.0"
   }
 }
