@@ -66,6 +66,7 @@ let latestResult = null;
 let projectsCache = [];
 let usersCache = [];
 let notificationsCache = [];
+let bulkUserPreview = null;
 const auth = {
   user: null,
   csrfToken: "",
@@ -291,6 +292,32 @@ function accessView() {
           <small>${setup ? "Usa al menos 10 caracteres." : "La sesión se mantiene por 8 horas."}</small>
           ${auth.error ? `<div class="form-error">${safe(auth.error)}</div>` : ""}
           <button class="primary" type="submit">${setup ? "Crear cuenta y continuar" : "Ingresar"}</button>
+        </form>
+      </section>
+    </main>`;
+}
+
+function passwordChangeView() {
+  return `
+    <main class="access-page">
+      <section class="access-brand">
+        <img src="./logo-casa-diseno.png" alt="Casa Diseño Multiespacio" />
+        <p>Protección de acceso</p>
+      </section>
+      <section class="card access-card">
+        <p class="eyebrow">PRIMER INGRESO</p>
+        <h1>Cambia tu clave temporal</h1>
+        <p>Antes de continuar debes definir una clave personal de al menos 10 caracteres.</p>
+        <form id="force-password-form" class="access-form">
+          <label>Nueva clave <em>*</em>
+            <input name="password" type="password" minlength="10" required autocomplete="new-password" />
+          </label>
+          <label>Confirmar nueva clave <em>*</em>
+            <input name="passwordConfirmation" type="password" minlength="10" required autocomplete="new-password" />
+          </label>
+          ${auth.error ? `<div class="form-error">${safe(auth.error)}</div>` : ""}
+          <button class="primary" type="submit">Guardar nueva clave</button>
+          <button class="ghost" type="button" data-action="logout">Cerrar sesión</button>
         </form>
       </section>
     </main>`;
@@ -875,7 +902,7 @@ function notificationsView() {
       <div>
         <p class="eyebrow">MONITOREO COMERCIAL</p>
         <h2>Nuevas cotizaciones</h2>
-        <p>Las alertas quedan registradas aquí. El correo se envía a todos los administradores activos cuando el servicio está configurado.</p>
+        <p>Las alertas quedan registradas aquí. Cuando el correo está configurado, el aviso se envía a contacto@cdchile.cl y a los administradores activos.</p>
       </div>
       <div class="notification-summary">
         <strong>${unreadNotifications()}</strong>
@@ -917,6 +944,51 @@ function notificationsView() {
   `);
 }
 
+function bulkUserPreviewHtml() {
+  if (!bulkUserPreview) return "";
+  return `<div class="bulk-user-preview">
+    <div class="bulk-preview-summary">
+      <b>${bulkUserPreview.rows.length} usuario(s) válido(s)</b>
+      <span>${bulkUserPreview.errors.length} observación(es)</span>
+    </div>
+    ${
+      bulkUserPreview.rows.length
+        ? `<div class="table-wrap"><table>
+            <thead><tr><th>Nombre</th><th>Correo</th><th>Perfil</th><th>Empresa</th><th>Activo</th></tr></thead>
+            <tbody>${bulkUserPreview.rows
+              .slice(0, 20)
+              .map(
+                (user) => `<tr>
+                  <td><b>${safe(user.fullName)}</b></td>
+                  <td>${safe(user.email)}</td>
+                  <td>${safe(roleLabels[user.role])}</td>
+                  <td>${safe(user.clientName || "—")}</td>
+                  <td>${user.active ? "Sí" : "No"}</td>
+                </tr>`,
+              )
+              .join("")}</tbody>
+          </table></div>
+          ${
+            bulkUserPreview.rows.length > 20
+              ? `<small>Se muestran las primeras 20 filas de ${bulkUserPreview.rows.length}.</small>`
+              : ""
+          }`
+        : ""
+    }
+    ${
+      bulkUserPreview.errors.length
+        ? `<ul class="bulk-user-errors">${bulkUserPreview.errors
+            .slice(0, 12)
+            .map((error) => `<li>${safe(error)}</li>`)
+            .join("")}</ul>`
+        : ""
+    }
+    <button class="primary" data-action="confirm-user-import" ${
+      bulkUserPreview.rows.length ? "" : "disabled"
+    }>Crear ${bulkUserPreview.rows.length} usuario(s)</button>
+  </div>`;
+}
+
 function usersView() {
   return shell(`
     <section class="intro-row">
@@ -945,7 +1017,7 @@ function usersView() {
             .map(
               (user) => `<article class="user-row">
                 <div><b>${safe(user.fullName)}</b><span>${safe(user.email)} · ${roleLabels[user.role]}</span></div>
-                <span class="account-state ${user.active ? "" : "inactive"}">${user.active ? "Activo" : "Inactivo"}</span>
+                <span class="account-state ${user.active ? "" : "inactive"}">${user.active ? "Activo" : "Inactivo"}${user.mustChangePassword ? " · Clave temporal" : ""}</span>
                 <div class="user-controls">
                   <label>Perfil<select data-user-role="${user.id}">
                     ${Object.entries(roleLabels).map(([value, label]) => `<option value="${value}" ${value === user.role ? "selected" : ""}>${label}</option>`).join("")}
@@ -964,6 +1036,43 @@ function usersView() {
             )
             .join("")}
         </div>
+      </section>
+      <section class="card users-import-card">
+        <div class="section-title">
+          <span>⇧</span>
+          <div>
+            <h3>Importar usuarios desde Excel</h3>
+            <p>Máximo 200 usuarios por archivo. Las claves importadas son temporales.</p>
+          </div>
+        </div>
+        <div class="bulk-import-layout">
+          <label class="dropzone compact-dropzone">
+            <input type="file" id="user-excel-file" accept=".xlsx" />
+            <strong>Seleccionar plantilla completada</strong>
+            <span>Se validarán correos, perfiles, claves y duplicados.</span>
+          </label>
+          <div class="bulk-import-help">
+            <b>Columnas requeridas</b>
+            <span>nombre_completo · correo · perfil · cliente_empresa · clave_temporal · activo</span>
+            <a class="text-button" href="/Plantilla_Usuarios_Casa_Diseno.xlsx" download="Plantilla_Usuarios_Casa_Diseno.xlsx">↓ Descargar plantilla de usuarios</a>
+          </div>
+        </div>
+        ${bulkUserPreviewHtml()}
+      </section>
+      <section class="card role-access-card">
+        <div class="section-title">
+          <span>⌘</span>
+          <div><h3>Accesos definidos por perfil</h3><p>El Administrador puede cambiar el perfil desde el listado superior.</p></div>
+        </div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Perfil</th><th>Proyectos visibles</th><th>Acciones principales</th></tr></thead>
+          <tbody>
+            <tr><td><b>Administrador</b></td><td>Todos</td><td>Usuarios, precios, descuentos, estados y notificaciones.</td></tr>
+            <tr><td><b>Comercial</b></td><td>Propios y asignados</td><td>Crea, cotiza, guarda y gestiona estados.</td></tr>
+            <tr><td><b>Producción</b></td><td>Propios, Venta y Producción</td><td>Revisa planos, órdenes y guarda proyectos autorizados.</td></tr>
+            <tr><td><b>Cliente</b></td><td>Solo sus cotizaciones</td><td>Crea, guarda y consulta sin cambiar a Venta o Producción.</td></tr>
+          </tbody>
+        </table></div>
       </section>
     </div>
   `);
@@ -999,6 +1108,10 @@ function render() {
   }
   if (!auth.user) {
     app.innerHTML = accessView();
+    return;
+  }
+  if (auth.user.mustChangePassword) {
+    app.innerHTML = passwordChangeView();
     return;
   }
   if (state.view === "projects") {
@@ -1285,6 +1398,120 @@ async function importExcel(file) {
   }
 }
 
+function normalizeImportedRole(value) {
+  const role = normalizeHeader(value);
+  if (["admin", "administrador"].includes(role)) return "admin";
+  if (role === "comercial") return "comercial";
+  if (role === "produccion") return "produccion";
+  if (role === "cliente") return "cliente";
+  return "";
+}
+
+function parseImportedActive(value) {
+  const normalized = normalizeHeader(value);
+  if (!normalized || ["si", "true", "1", "activo", "active", "yes"].includes(normalized)) {
+    return true;
+  }
+  if (["no", "false", "0", "inactivo", "inactive"].includes(normalized)) {
+    return false;
+  }
+  return null;
+}
+
+async function importUsersExcel(file) {
+  try {
+    const sheets = await readXlsxFile(file);
+    const table = sheets[0]?.data || [];
+    if (!table.length) {
+      throw new Error("La hoja Usuarios está vacía.");
+    }
+    const headers = (table[0] || []).map((value) => String(value || ""));
+    const rows = table.slice(1).map((row) =>
+      Object.fromEntries(
+        headers.map((header, index) => [header, row[index] ?? ""]),
+      ),
+    );
+    const valid = [];
+    const errors = [];
+    const importedEmails = new Set();
+    const registeredEmails = new Set(
+      usersCache.map((user) => String(user.email || "").trim().toLowerCase()),
+    );
+
+    rows.forEach((row, index) => {
+      const sourceRow = index + 2;
+      const values = Object.values(row).map((value) => String(value ?? "").trim());
+      if (!values.some(Boolean)) return;
+
+      const fullName = String(
+        pick(row, ["nombre_completo", "nombre completo", "nombre", "full name"]) || "",
+      ).trim();
+      const email = String(
+        pick(row, ["correo", "email", "correo electronico"]) || "",
+      )
+        .trim()
+        .toLowerCase();
+      const role = normalizeImportedRole(pick(row, ["perfil", "rol", "role"]));
+      const clientName = String(
+        pick(row, [
+          "cliente_empresa",
+          "cliente empresa",
+          "empresa",
+          "cliente",
+          "client name",
+        ]) || "",
+      ).trim();
+      const password = String(
+        pick(row, [
+          "clave_temporal",
+          "clave temporal",
+          "clave",
+          "password",
+        ]) || "",
+      );
+      const active = parseImportedActive(
+        pick(row, ["activo", "active", "estado"]),
+      );
+      const rowErrors = [];
+
+      if (fullName.length < 2) rowErrors.push("falta el nombre completo");
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        rowErrors.push("el correo no es válido");
+      }
+      if (!role) rowErrors.push("el perfil no es válido");
+      if (password.length < 10) {
+        rowErrors.push("la clave temporal debe tener al menos 10 caracteres");
+      }
+      if (active === null) rowErrors.push("activo debe indicar sí o no");
+      if (importedEmails.has(email)) rowErrors.push("el correo está repetido en el archivo");
+      if (registeredEmails.has(email)) rowErrors.push("el correo ya está registrado");
+
+      if (rowErrors.length) {
+        errors.push(`Fila ${sourceRow}: ${rowErrors.join("; ")}.`);
+        return;
+      }
+      importedEmails.add(email);
+      valid.push({
+        sourceRow,
+        fullName,
+        email,
+        role,
+        clientName,
+        password,
+        active,
+      });
+    });
+
+    bulkUserPreview = { rows: valid, errors };
+    render();
+  } catch (error) {
+    notify(
+      error.message || "No fue posible leer el archivo de usuarios.",
+      "error",
+    );
+  }
+}
+
 function fittedPdfText(pdf, value, maxWidth) {
   const text = String(value || "");
   if (pdf.getTextWidth(text) <= maxWidth) return text;
@@ -1501,6 +1728,32 @@ app.addEventListener("submit", async (event) => {
     addPiece(form);
     return;
   }
+  if (form.id === "force-password-form") {
+    const data = Object.fromEntries(new FormData(form));
+    auth.error = "";
+    if (data.password !== data.passwordConfirmation) {
+      auth.error = "Las claves no coinciden.";
+      render();
+      return;
+    }
+    try {
+      const payload = await api("/api/auth/change-password", {
+        method: "POST",
+        body: { password: data.password },
+      });
+      auth.user = payload.user;
+      state = emptyState();
+      await loadProjects();
+      if (auth.user.role === "admin") {
+        await Promise.all([loadUsers(), loadNotifications()]);
+      }
+      state.view = "projects";
+    } catch (error) {
+      auth.error = error.message;
+    }
+    render();
+    return;
+  }
   if (form.id === "login-form" || form.id === "setup-form") {
     const data = Object.fromEntries(new FormData(form));
     auth.error = "";
@@ -1511,12 +1764,14 @@ app.addEventListener("submit", async (event) => {
       auth.user = payload.user;
       auth.csrfToken = payload.csrfToken;
       auth.needsSetup = false;
-      await loadProjects();
-      if (auth.user.role === "admin") {
-        await Promise.all([loadUsers(), loadNotifications()]);
-      }
       state = emptyState();
-      state.view = "projects";
+      if (!auth.user.mustChangePassword) {
+        await loadProjects();
+        if (auth.user.role === "admin") {
+          await Promise.all([loadUsers(), loadNotifications()]);
+        }
+        state.view = "projects";
+      }
     } catch (error) {
       auth.error = error.message;
     }
@@ -1581,7 +1836,10 @@ app.addEventListener("change", async (event) => {
     target.value = state.project.rut;
   }
   if (target.id === "excel-file" && target.files?.[0]) {
-    importExcel(target.files[0]);
+    await importExcel(target.files[0]);
+  }
+  if (target.id === "user-excel-file" && target.files?.[0]) {
+    await importUsersExcel(target.files[0]);
   }
   if (target.dataset.pieceEdge) {
     const piece = state.pieces.find((item) => item.id === target.dataset.pieceEdge);
@@ -1708,6 +1966,7 @@ app.addEventListener("click", async (event) => {
     projectsCache = [];
     usersCache = [];
     notificationsCache = [];
+    bulkUserPreview = null;
     state = emptyState();
     render();
   }
@@ -1736,6 +1995,30 @@ app.addEventListener("click", async (event) => {
     state.pieces.push(...state.importPreview.rows);
     state.importPreview = null;
     notify("Filas válidas incorporadas.");
+  }
+  if (action === "confirm-user-import" && bulkUserPreview?.rows.length) {
+    try {
+      const payload = await api("/api/users/bulk", {
+        method: "POST",
+        body: { users: bulkUserPreview.rows },
+      });
+      await loadUsers();
+      const serverErrors = (payload.errors || []).map(
+        (item) =>
+          `Fila ${item.row}${item.email ? ` · ${item.email}` : ""}: ${item.error}`,
+      );
+      bulkUserPreview = serverErrors.length
+        ? { rows: [], errors: serverErrors }
+        : null;
+      notify(
+        `${payload.created?.length || 0} usuario(s) creado(s)${
+          serverErrors.length ? `; ${serverErrors.length} fila(s) con error.` : "."
+        }`,
+        serverErrors.length ? "error" : "success",
+      );
+    } catch (error) {
+      notify(error.message, "error");
+    }
   }
   if (action === "apply-all") {
     const edgeId = document.querySelector("#global-edge")?.value || null;
@@ -1866,11 +2149,13 @@ async function initialize() {
         const session = await api("/api/auth/me");
         auth.user = session.user;
         auth.csrfToken = session.csrfToken;
-        await loadProjects();
-        if (auth.user.role === "admin") {
-          await Promise.all([loadUsers(), loadNotifications()]);
+        if (!auth.user.mustChangePassword) {
+          await loadProjects();
+          if (auth.user.role === "admin") {
+            await Promise.all([loadUsers(), loadNotifications()]);
+          }
+          state.view = "projects";
         }
-        state.view = "projects";
       } catch {
         auth.user = null;
       }

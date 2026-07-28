@@ -1,6 +1,6 @@
 # Cotizador online — Casa Diseño Multiespacio
 
-Versión 2.3.0 del cotizador y optimizador de cortes. Incluye acceso seguro con
+Versión 2.4.0 del cotizador y optimizador de cortes. Incluye acceso seguro con
 usuarios diferenciados, base PostgreSQL, catálogo completo importado desde
 Excel y persistencia de proyectos.
 
@@ -10,6 +10,12 @@ Excel y persistencia de proyectos.
 - Inicio de sesión real: claves cifradas con bcrypt, cookie `HttpOnly`, token
   CSRF y bloqueo temporal por intentos repetidos.
 - Perfiles Administrador, Comercial, Producción y Cliente.
+- Creación masiva de hasta 200 usuarios desde una plantilla Excel, con
+  validación previa de correo, perfil, estado, clave y duplicados.
+- Claves iniciales temporales: cada usuario nuevo debe reemplazarlas en su
+  primer ingreso antes de acceder a proyectos.
+- Matriz de permisos visible en el módulo Usuarios y cambio de perfil reservado
+  al Administrador.
 - Proyectos con nombre de cliente como único dato obligatorio.
 - Estados Cotización, Venta y Producción.
 - 145 tableros y 121 tapacantos del Excel entregado.
@@ -47,8 +53,9 @@ Excel y persistencia de proyectos.
   evitar que los tapacantos oculten sus valores.
 - Guardado de proyectos disponible para Administrador, Comercial, Producción
   y Cliente, respetando la visibilidad y estados autorizados para cada perfil.
-- Centro de notificaciones para Administradores y aviso opcional por correo
-  cuando se crea una nueva cotización.
+- Centro de notificaciones para Administradores y aviso por correo de nuevas
+  cotizaciones a `contacto@cdchile.cl` y a los Administradores activos, cuando
+  el servicio de correo está configurado.
 - PDF de fabricación con listado general al inicio, plano de cada placa y
   listado completo de piezas asociado a cada hoja de corte.
 
@@ -89,6 +96,9 @@ Variables:
 ```text
 NODE_ENV=production
 DATABASE_URL=<Internal Database URL de PostgreSQL>
+NOTIFICATION_TO_EMAIL=contacto@cdchile.cl
+RESEND_API_KEY=<clave API de Resend>
+NOTIFICATION_FROM_EMAIL=Casa Diseño <cotizaciones@tu-dominio.cl>
 ```
 
 ## Notificación de nuevas cotizaciones
@@ -103,10 +113,13 @@ del remitente y agrega estas variables en **Render → Web Service → Environme
 ```text
 RESEND_API_KEY=<clave API de Resend>
 NOTIFICATION_FROM_EMAIL=Casa Diseño <cotizaciones@tu-dominio.cl>
+NOTIFICATION_TO_EMAIL=contacto@cdchile.cl
 ```
 
-Los destinatarios se obtienen de los correos de todos los usuarios
-Administrador activos; no se escriben direcciones dentro del código.
+Cada nueva cotización se envía a `contacto@cdchile.cl`. También se incluyen los
+correos de todos los usuarios Administrador activos y cualquier dirección
+adicional configurada en `NOTIFICATION_TO_EMAIL`, separada por coma o punto y
+coma. La aplicación elimina destinatarios repetidos.
 
 Si Render muestra `Empty build command; skipping build`, el servicio todavía
 está configurado como Static Site y debe reemplazarse por un Web Service.
@@ -116,7 +129,28 @@ está configurado como Static Site y debe reemplazarse por un Web Service.
 Cuando la tabla de usuarios está vacía, la aplicación muestra “Crear
 administrador”. No existe una clave predeterminada. Usa un correo válido y una
 clave de al menos 10 caracteres. El Administrador puede crear los demás
-usuarios y cambiar perfiles, claves y estado de las cuentas.
+usuarios, importar cuentas desde Excel y cambiar perfiles, claves y estado de
+las cuentas. Todas las cuentas creadas por el Administrador reciben una clave
+temporal que deben reemplazar al iniciar sesión.
+
+## Importación masiva de usuarios
+
+En **Usuarios → Importar usuarios desde Excel**, descarga
+`Plantilla_Usuarios_Casa_Diseno.xlsx`. Las columnas son:
+
+```text
+nombre_completo
+correo
+perfil
+cliente_empresa
+clave_temporal
+activo
+```
+
+Los valores admitidos en `perfil` son `admin`, `comercial`, `produccion` y
+`cliente`. En `activo`, usa `si` o `no`. La clave temporal debe tener al menos
+10 caracteres. Antes de crear las cuentas se muestra una revisión de filas
+válidas y observaciones.
 
 ## Ejecutar localmente
 

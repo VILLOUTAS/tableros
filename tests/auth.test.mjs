@@ -5,6 +5,7 @@ import {
   canEditProject,
   createApplication,
   projectVisibility,
+  quoteEmailRecipients,
 } from "../server.mjs";
 
 async function request(base, path, options = {}) {
@@ -55,6 +56,49 @@ test("protege acceso, crea perfiles y permite guardar proyectos por perfil", asy
       }),
     });
     assert.equal(user.response.status, 201);
+    assert.equal(user.body.user.mustChangePassword, true);
+
+    const bulkUsers = await request(base, "/api/users/bulk", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({
+        users: [
+          {
+            sourceRow: 2,
+            fullName: "Equipo Comercial",
+            email: "comercial@prueba.local",
+            password: "TemporalComercial123",
+            role: "comercial",
+            active: true,
+          },
+          {
+            sourceRow: 3,
+            fullName: "Cliente Masivo",
+            email: "cliente@prueba.local",
+            password: "TemporalCliente123",
+            role: "cliente",
+            clientName: "Empresa Cliente",
+            active: false,
+          },
+          {
+            sourceRow: 4,
+            fullName: "Administrador repetido",
+            email: "admin@prueba.local",
+            password: "TemporalAdmin123",
+            role: "admin",
+            active: true,
+          },
+        ],
+      }),
+    });
+    assert.equal(bulkUsers.response.status, 200);
+    assert.equal(bulkUsers.body.created.length, 2);
+    assert.equal(bulkUsers.body.errors.length, 1);
+    assert.equal(bulkUsers.body.errors[0].row, 4);
+    assert.match(bulkUsers.body.errors[0].error, /registrado/);
+    assert.ok(
+      bulkUsers.body.created.every((createdUser) => createdUser.mustChangePassword),
+    );
 
     const oversized = await request(base, "/api/projects", {
       method: "POST",
@@ -153,6 +197,24 @@ test("protege acceso, crea perfiles y permite guardar proyectos por perfil", asy
       "x-csrf-token": login.body.csrfToken,
     };
 
+    assert.equal(login.body.user.mustChangePassword, true);
+    const blockedBeforePasswordChange = await request(base, "/api/projects", {
+      headers: { cookie: productionCookie },
+    });
+    assert.equal(blockedBeforePasswordChange.response.status, 403);
+    assert.equal(
+      blockedBeforePasswordChange.body.code,
+      "PASSWORD_CHANGE_REQUIRED",
+    );
+
+    const changedPassword = await request(base, "/api/auth/change-password", {
+      method: "POST",
+      headers: productionHeaders,
+      body: JSON.stringify({ password: "NuevaClaveSegura789" }),
+    });
+    assert.equal(changedPassword.response.status, 200);
+    assert.equal(changedPassword.body.user.mustChangePassword, false);
+
     const visible = await request(base, "/api/projects", {
       headers: { cookie: productionCookie },
     });
@@ -236,6 +298,25 @@ test("las consultas por perfil solo envían parámetros cuando el SQL los usa", 
   assert.deepEqual(
     projectVisibility({ id: "comercial-1", role: "comercial" }).params,
     ["comercial-1"],
+  );
+});
+
+test("notifica nuevas cotizaciones a contacto y evita destinatarios repetidos", () => {
+  const recipients = quoteEmailRecipients(
+    [
+      { email: "ADMIN@PRUEBA.CL" },
+      { email: "contacto@cdchile.cl" },
+    ],
+    "ventas@prueba.cl; contacto@cdchile.cl",
+  );
+  assert.deepEqual(new Set(recipients), new Set([
+    "admin@prueba.cl",
+    "contacto@cdchile.cl",
+    "ventas@prueba.cl",
+  ]));
+  assert.equal(
+    recipients.filter((email) => email === "contacto@cdchile.cl").length,
+    1,
   );
 });
 

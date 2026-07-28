@@ -421,6 +421,18 @@ td span { color: var(--muted); font-size: 11px; margin-top: 2px; }
 }
 .ghost.small { padding: 9px 10px; font-size: 11px; }
 .users-layout { display: grid; grid-template-columns: minmax(310px, .75fr) minmax(430px, 1.25fr); gap: 20px; align-items: start; }
+.users-import-card, .role-access-card { grid-column: 1 / -1; }
+.bulk-import-layout { display: grid; grid-template-columns: minmax(300px, .8fr) minmax(320px, 1.2fr); gap: 18px; align-items: stretch; }
+.compact-dropzone { min-height: 135px; }
+.bulk-import-help { display: grid; align-content: center; gap: 8px; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: #fafbfb; }
+.bulk-import-help b { color: var(--navy); }
+.bulk-import-help span { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.bulk-user-preview { display: grid; gap: 13px; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); }
+.bulk-preview-summary { display: flex; justify-content: space-between; gap: 15px; }
+.bulk-preview-summary b { color: var(--green); }
+.bulk-preview-summary span { color: #92631e; font-size: 12px; }
+.bulk-user-errors { margin: 0; padding: 12px 12px 12px 30px; border-radius: 9px; background: #fff5e1; color: #805d28; font-size: 11px; }
+.bulk-user-preview .primary { justify-self: end; }
 .user-list { display: grid; gap: 8px; }
 .user-row { display: grid; grid-template-columns: minmax(170px, 1fr) auto minmax(260px, 1fr); align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; }
 .user-row > div { display: grid; gap: 3px; }
@@ -441,6 +453,7 @@ td span { color: var(--muted); font-size: 11px; margin-top: 2px; }
   .category-grid { grid-template-columns: repeat(2, 1fr); }
   .two-columns, .result-layout { grid-template-columns: 1fr; }
   .users-layout { grid-template-columns: 1fr; }
+  .bulk-import-layout { grid-template-columns: 1fr; }
   .quote-side { position: static; grid-template-columns: repeat(2, 1fr); }
   .edge-toolbar { grid-template-columns: 1fr 1fr; }
   .project-grid { grid-template-columns: repeat(2, 1fr); }

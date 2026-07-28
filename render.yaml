@@ -20,3 +20,9 @@ services:
         fromDatabase:
           name: cotizador-casa-diseno-v2-db
           property: connectionString
+      - key: NOTIFICATION_TO_EMAIL
+        value: contacto@cdchile.cl
+      - key: RESEND_API_KEY
+        sync: false
+      - key: NOTIFICATION_FROM_EMAIL
+        sync: false

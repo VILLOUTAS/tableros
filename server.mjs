@@ -32,11 +32,43 @@ const publicUser = (user) =>
     role: user.role,
     clientName: user.clientName || "",
     active: Boolean(user.active),
+    mustChangePassword: Boolean(user.mustChangePassword),
     createdAt: user.createdAt,
   };
 
 function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
+}
+
+function parseActive(value, fallback = true) {
+  if (typeof value === "boolean") return value;
+  if (value === undefined || value === null || value === "") return fallback;
+  return !["no", "false", "0", "inactivo", "inactive"].includes(
+    String(value).trim().toLowerCase(),
+  );
+}
+
+function normalizeUserInput(body = {}) {
+  return {
+    email: normalizeEmail(body.email),
+    fullName: String(body.fullName || "").trim(),
+    password: String(body.password || ""),
+    role: String(body.role || "").trim().toLowerCase(),
+    clientName: String(body.clientName || "").trim(),
+    active: parseActive(body.active, true),
+  };
+}
+
+function userInputError(user) {
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(user.email)) {
+    return "El correo no es válido.";
+  }
+  if (user.fullName.length < 2) return "Falta el nombre completo.";
+  if (user.password.length < 10) {
+    return "La clave temporal requiere al menos 10 caracteres.";
+  }
+  if (!validRoles.has(user.role)) return "El perfil no es válido.";
+  return "";
 }
 
 function parseCookies(header = "") {
@@ -71,6 +103,7 @@ function mapUser(row) {
     role: row.role,
     clientName: row.client_name,
     active: row.active,
+    mustChangePassword: Boolean(row.must_change_password),
     createdAt: row.created_at,
   };
 }
@@ -118,10 +151,31 @@ function html(value) {
     .replaceAll('"', "&quot;");
 }
 
+export function quoteEmailRecipients(
+  admins = [],
+  configuredRecipients =
+    process.env.NOTIFICATION_TO_EMAIL || "contacto@cdchile.cl",
+) {
+  const configured = String(configuredRecipients || "")
+    .split(/[;,]/)
+    .map(normalizeEmail)
+    .filter((email) => email.includes("@"));
+  return [
+    ...new Set([
+      ...admins.map((admin) => normalizeEmail(admin.email)),
+      ...configured,
+      "contacto@cdchile.cl",
+    ]),
+  ].filter((email) => email.includes("@"));
+}
+
 async function sendQuoteEmail(recipients, project, creator) {
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.NOTIFICATION_FROM_EMAIL;
-  if (!apiKey || !from || !recipients.length) return;
+  const uniqueRecipients = [...new Set(recipients.map(normalizeEmail))].filter(
+    (email) => email.includes("@"),
+  );
+  if (!apiKey || !from || !uniqueRecipients.length) return;
   const appUrl = process.env.RENDER_EXTERNAL_HOSTNAME
     ? `https://${process.env.RENDER_EXTERNAL_HOSTNAME}`
     : process.env.APP_URL || "";
@@ -133,7 +187,7 @@ async function sendQuoteEmail(recipients, project, creator) {
     },
     body: JSON.stringify({
       from,
-      to: recipients,
+      to: uniqueRecipients,
       subject: `Nueva cotización · ${project.project.clientName}`,
       html: `
         <h2>Nueva cotización en Casa Diseño</h2>
@@ -182,6 +236,7 @@ class PostgresStore {
         role TEXT NOT NULL CHECK (role IN ('admin','comercial','produccion','cliente')),
         client_name TEXT NOT NULL DEFAULT '',
         active BOOLEAN NOT NULL DEFAULT TRUE,
+        must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
@@ -220,6 +275,8 @@ class PostgresStore {
       CREATE INDEX IF NOT EXISTS sessions_expiry_idx ON app_sessions(expires_at);
       CREATE INDEX IF NOT EXISTS notifications_user_idx
         ON app_notifications(user_id, created_at DESC);
+      ALTER TABLE app_users
+        ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
     `);
     // La versión 2.0.1 ejecutó accidentalmente la prueba de integración contra
     // DATABASE_URL durante el build de Render. Se eliminan únicamente esos
@@ -248,8 +305,9 @@ class PostgresStore {
   async createUser(user) {
     const result = await this.pool.query(
       `INSERT INTO app_users
-        (id, email, password_hash, full_name, role, client_name, active)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)
+        (id, email, password_hash, full_name, role, client_name, active,
+         must_change_password)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
        RETURNING *`,
       [
         user.id,
@@ -259,6 +317,7 @@ class PostgresStore {
         user.role,
         user.clientName || "",
         user.active ?? true,
+        user.mustChangePassword ?? false,
       ],
     );
     return mapUser(result.rows[0]);
@@ -300,7 +359,7 @@ class PostgresStore {
     const result = await this.pool.query(
       `UPDATE app_users
        SET email=$2, password_hash=$3, full_name=$4, role=$5,
-           client_name=$6, active=$7, updated_at=NOW()
+           client_name=$6, active=$7, must_change_password=$8, updated_at=NOW()
        WHERE id=$1 RETURNING *`,
       [
         id,
@@ -310,6 +369,7 @@ class PostgresStore {
         next.role,
         next.clientName || "",
         next.active,
+        next.mustChangePassword ?? false,
       ],
     );
     return mapUser(result.rows[0]);
@@ -476,7 +536,11 @@ class MemoryStore {
       error.code = "23505";
       throw error;
     }
-    const record = { ...user, createdAt: new Date().toISOString() };
+    const record = {
+      mustChangePassword: false,
+      ...user,
+      createdAt: new Date().toISOString(),
+    };
     this.users.set(record.id, record);
     return record;
   }
@@ -726,6 +790,20 @@ export async function createApplication({ store, useMemory = false } = {}) {
     const session = await database.getSession(hashToken(token));
     if (!session) return response.status(401).json({ error: "Sesión vencida." });
     request.auth = { ...session, rawToken: token };
+    const passwordChangeAllowed = new Set([
+      "/api/auth/me",
+      "/api/auth/logout",
+      "/api/auth/change-password",
+    ]);
+    if (
+      session.user.mustChangePassword &&
+      !passwordChangeAllowed.has(request.path)
+    ) {
+      return response.status(403).json({
+        error: "Debes cambiar tu clave temporal antes de continuar.",
+        code: "PASSWORD_CHANGE_REQUIRED",
+      });
+    }
     return next();
   };
 
@@ -789,6 +867,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
       role: "admin",
       clientName: "",
       active: true,
+      mustChangePassword: false,
     });
     const csrfToken = await createSession(response, user);
     return response.status(201).json({ user: publicUser(user), csrfToken });
@@ -813,6 +892,30 @@ export async function createApplication({ store, useMemory = false } = {}) {
     });
   });
 
+  app.post(
+    "/api/auth/change-password",
+    authenticate,
+    csrf,
+    async (request, response) => {
+      const password = String(request.body.password || "");
+      if (password.length < 10) {
+        return response
+          .status(400)
+          .json({ error: "La nueva clave requiere al menos 10 caracteres." });
+      }
+      if (await bcrypt.compare(password, request.auth.user.passwordHash)) {
+        return response.status(400).json({
+          error: "La nueva clave debe ser diferente de la clave temporal.",
+        });
+      }
+      const user = await database.updateUser(request.auth.user.id, {
+        passwordHash: await bcrypt.hash(password, 12),
+        mustChangePassword: false,
+      });
+      return response.json({ user: publicUser(user) });
+    },
+  );
+
   app.post("/api/auth/logout", authenticate, csrf, async (request, response) => {
     await database.deleteSession(request.auth.tokenHash);
     response.clearCookie("casa_session", {
@@ -829,27 +932,21 @@ export async function createApplication({ store, useMemory = false } = {}) {
   });
 
   app.post("/api/users", authenticate, csrf, adminOnly, async (request, response) => {
-    const email = normalizeEmail(request.body.email);
-    const fullName = String(request.body.fullName || "").trim();
-    const password = String(request.body.password || "");
-    const role = String(request.body.role || "");
-    if (
-      !email.includes("@") ||
-      fullName.length < 2 ||
-      password.length < 10 ||
-      !validRoles.has(role)
-    ) {
-      return response.status(400).json({ error: "Revisa los datos del usuario." });
+    const input = normalizeUserInput(request.body);
+    const validationError = userInputError(input);
+    if (validationError) {
+      return response.status(400).json({ error: validationError });
     }
     try {
       const user = await database.createUser({
         id: randomUUID(),
-        email,
-        passwordHash: await bcrypt.hash(password, 12),
-        fullName,
-        role,
-        clientName: String(request.body.clientName || "").trim(),
-        active: true,
+        email: input.email,
+        passwordHash: await bcrypt.hash(input.password, 12),
+        fullName: input.fullName,
+        role: input.role,
+        clientName: input.clientName,
+        active: input.active,
+        mustChangePassword: true,
       });
       return response.status(201).json({ user: publicUser(user) });
     } catch (error) {
@@ -859,6 +956,95 @@ export async function createApplication({ store, useMemory = false } = {}) {
       throw error;
     }
   });
+
+  app.post(
+    "/api/users/bulk",
+    authenticate,
+    csrf,
+    adminOnly,
+    async (request, response) => {
+      const entries = Array.isArray(request.body.users)
+        ? request.body.users
+        : [];
+      if (!entries.length || entries.length > 200) {
+        return response.status(400).json({
+          error: "La importación debe contener entre 1 y 200 usuarios.",
+        });
+      }
+
+      const created = [];
+      const errors = [];
+      const batchEmails = new Set();
+      const validEntries = [];
+      entries.forEach((entry, index) => {
+        const sourceRow =
+          Number.isInteger(Number(entry?.sourceRow)) && Number(entry.sourceRow) >= 2
+            ? Number(entry.sourceRow)
+            : index + 2;
+        const input = normalizeUserInput(entry);
+        const validationError = userInputError(input);
+        if (validationError) {
+          errors.push({ row: sourceRow, email: input.email, error: validationError });
+          return;
+        }
+        if (batchEmails.has(input.email)) {
+          errors.push({
+            row: sourceRow,
+            email: input.email,
+            error: "El correo está repetido dentro del archivo.",
+          });
+          return;
+        }
+        batchEmails.add(input.email);
+        validEntries.push({ row: sourceRow, input });
+      });
+
+      for (let start = 0; start < validEntries.length; start += 8) {
+        const chunk = validEntries.slice(start, start + 8);
+        const prepared = await Promise.all(
+          chunk.map(async ({ row, input }) => ({
+            row,
+            input,
+            passwordHash: await bcrypt.hash(input.password, 12),
+          })),
+        );
+        for (const item of prepared) {
+          if (await database.findUserByEmail(item.input.email)) {
+            errors.push({
+              row: item.row,
+              email: item.input.email,
+              error: "Ese correo ya está registrado.",
+            });
+            continue;
+          }
+          try {
+            const user = await database.createUser({
+              id: randomUUID(),
+              email: item.input.email,
+              passwordHash: item.passwordHash,
+              fullName: item.input.fullName,
+              role: item.input.role,
+              clientName: item.input.clientName,
+              active: item.input.active,
+              mustChangePassword: true,
+            });
+            created.push(publicUser(user));
+          } catch (error) {
+            errors.push({
+              row: item.row,
+              email: item.input.email,
+              error:
+                error.code === "23505"
+                  ? "Ese correo ya está registrado."
+                  : "No fue posible crear el usuario.",
+            });
+          }
+        }
+      }
+
+      return response.json({ created, errors });
+    },
+  );
 
   app.patch(
     "/api/users/:id",
@@ -884,6 +1070,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
           return response.status(400).json({ error: "La clave requiere 10 caracteres." });
         }
         changes.passwordHash = await bcrypt.hash(String(request.body.password), 12);
+        changes.mustChangePassword = true;
       }
       const user = await database.updateUser(current.id, changes);
       return response.json({ user: publicUser(user) });
@@ -965,7 +1152,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
       });
     }
     sendQuoteEmail(
-      admins.map((admin) => admin.email),
+      quoteEmailRecipients(admins),
       saved,
       request.auth.user,
     ).catch((error) => {

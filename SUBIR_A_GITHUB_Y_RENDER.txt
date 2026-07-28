@@ -1,4 +1,4 @@
-COTIZADOR CASA DISEÑO V2.3.0 — ACTUALIZACIÓN
+COTIZADOR CASA DISEÑO V2.4.0 — ACTUALIZACIÓN
 
 1. Descomprime este paquete.
 2. Reemplaza el contenido del repositorio GitHub con todos estos archivos.
@@ -32,6 +32,9 @@ IMPORTANTE
 - Un proyecto puede incluir varios tableros y cada pieza queda asignada a uno.
 - La plantilla Excel acepta codigo_material_opcional para esa asignación.
 - Todos los perfiles pueden guardar los proyectos que les corresponden.
+- El Administrador puede crear hasta 200 usuarios desde la plantilla Excel.
+- Cada usuario nuevo debe cambiar su clave temporal en el primer ingreso.
+- La pantalla Usuarios incluye la matriz de accesos de cada perfil.
 - Los tapacantos se identifican con T1/T2/T3, colores y patrones diferentes.
 - Las cotas interiores quedan separadas de las líneas de tapacanto.
 - El largo, ancho y cantidad se pueden editar directamente en el listado.
@@ -40,5 +43,8 @@ IMPORTANTE
 - Para enviar correos, agrega en Render:
   RESEND_API_KEY=<clave API>
   NOTIFICATION_FROM_EMAIL=Casa Diseño <cotizaciones@tu-dominio.cl>
+  NOTIFICATION_TO_EMAIL=contacto@cdchile.cl
+- El correo de cada nueva cotización se dirige a contacto@cdchile.cl y a los
+  Administradores activos.
 
 Si prefieres configuración manual, revisa README.md.
