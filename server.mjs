@@ -10,7 +10,7 @@ import helmet from "helmet";
 import pg from "pg";
 import unzipper from "unzipper";
 
-import { materials } from "./src/data.js";
+import { edgeBands, materials } from "./src/data.js";
 import { pieceFitsMaterial, validateRut } from "./src/logic.js";
 
 const { Pool } = pg;
@@ -20,7 +20,12 @@ const port = Number(process.env.PORT || 10000);
 const isProduction = process.env.NODE_ENV === "production";
 const sessionHours = 8;
 const validRoles = new Set(["admin", "comercial", "produccion", "cliente"]);
-const validStatuses = new Set(["cotizacion", "venta", "produccion"]);
+const validStatuses = new Set([
+  "cotizacion",
+  "facturacion",
+  "produccion",
+  "despacho",
+]);
 
 const hashToken = (token) =>
   createHash("sha256").update(String(token)).digest("hex");
@@ -132,6 +137,8 @@ function mapProject(row) {
     },
     ...row.payload,
     summary: row.summary || row.payload?.summary || null,
+    executionDate: row.execution_date || null,
+    deliveryDate: row.delivery_date || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     ownerName: row.owner_name || "",
@@ -161,6 +168,66 @@ function normalizeImageKey(value = "") {
     .toLowerCase()
     .replace(/[^a-z0-9._-]+/g, "-")
     .replace(/^-+|-+$/g, "");
+}
+
+const imageCatalogAliases = new Map();
+for (const item of [...materials, ...edgeBands]) {
+  for (const alias of [item.sku, item.id, item.supplierCode]) {
+    const key = normalizeImageKey(alias);
+    if (key && !imageCatalogAliases.has(key)) {
+      imageCatalogAliases.set(key, normalizeImageKey(item.sku || item.id));
+    }
+  }
+}
+
+function resolveCatalogImageKey(value = "") {
+  const key = normalizeImageKey(value);
+  const withoutCopySuffix = key.replace(/_[0-9]+$/, "");
+  return (
+    imageCatalogAliases.get(key) ||
+    imageCatalogAliases.get(withoutCopySuffix) ||
+    key
+  );
+}
+
+async function importBundledMaterialImages(pool) {
+  const archivePath = join(root, "catalog", "IMAGENES_PRODUCTOS_V3.zip");
+  if (!existsSync(archivePath)) return;
+  const existingResult = await pool.query("SELECT sku FROM material_images");
+  const existing = new Set(existingResult.rows.map((row) => row.sku));
+  const archive = await unzipper.Open.file(archivePath);
+  const candidates = archive.files.filter(
+    (file) =>
+      file.type === "File" &&
+      [".jpg", ".jpeg", ".png", ".webp"].includes(
+        extname(file.path).toLowerCase(),
+      ),
+  );
+  let imported = 0;
+  for (const file of candidates) {
+    const sku = resolveCatalogImageKey(file.path);
+    if (!sku || existing.has(sku)) continue;
+    const data = await file.buffer();
+    if (data.length > 2_500_000) continue;
+    const extension = extname(file.path).toLowerCase();
+    const mimeType =
+      extension === ".png"
+        ? "image/png"
+        : extension === ".webp"
+          ? "image/webp"
+          : "image/jpeg";
+    await pool.query(
+      `INSERT INTO material_images (sku, mime_type, data)
+       VALUES ($1,$2,$3)
+       ON CONFLICT (sku) DO NOTHING`,
+      [sku, mimeType, data],
+    );
+    existing.add(sku);
+    imported += 1;
+  }
+  if (imported) {
+    console.log(`Catálogo visual V3: ${imported} imagen(es) incorporada(s).`);
+  }
 }
 
 function html(value) {
@@ -277,9 +344,11 @@ class PostgresStore {
         project_name TEXT NOT NULL DEFAULT '',
         client_name TEXT NOT NULL,
         rut TEXT NOT NULL DEFAULT '',
-        status TEXT NOT NULL CHECK (status IN ('cotizacion','venta','produccion')),
+        status TEXT NOT NULL CHECK (status IN ('cotizacion','facturacion','produccion','despacho')),
         payload JSONB NOT NULL DEFAULT '{}'::jsonb,
         summary JSONB,
+        execution_date DATE,
+        delivery_date DATE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
@@ -312,7 +381,19 @@ class PostgresStore {
         ADD COLUMN IF NOT EXISTS rut TEXT NOT NULL DEFAULT '';
       ALTER TABLE app_users
         ADD COLUMN IF NOT EXISTS location TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects
+        ADD COLUMN IF NOT EXISTS execution_date DATE;
+      ALTER TABLE projects
+        ADD COLUMN IF NOT EXISTS delivery_date DATE;
     `);
+    await this.pool.query(`
+      ALTER TABLE projects DROP CONSTRAINT IF EXISTS projects_status_check;
+      UPDATE projects SET status = 'facturacion' WHERE status = 'venta';
+      ALTER TABLE projects
+        ADD CONSTRAINT projects_status_check
+        CHECK (status IN ('cotizacion','facturacion','produccion','despacho'));
+    `);
+    await importBundledMaterialImages(this.pool);
     // La versión 2.0.1 ejecutó accidentalmente la prueba de integración contra
     // DATABASE_URL durante el build de Render. Se eliminan únicamente esos
     // registros de prueba conocidos para devolver la base a su estado inicial.
@@ -574,6 +655,19 @@ class PostgresStore {
     );
     return mapProject(result.rows[0]);
   }
+
+  async updateProjectSchedule(id, executionDate, deliveryDate) {
+    const result = await this.pool.query(
+      `UPDATE projects
+       SET execution_date=$2::date,
+           delivery_date=$3::date,
+           updated_at=NOW()
+       WHERE id=$1
+       RETURNING *`,
+      [id, executionDate || null, deliveryDate || null],
+    );
+    return mapProject(result.rows[0]);
+  }
 }
 
 export function projectVisibility(user) {
@@ -581,7 +675,7 @@ export function projectVisibility(user) {
       user.role === "admin"
         ? "TRUE"
         : user.role === "produccion"
-          ? "(p.status='produccion' OR p.owner_id=$1)"
+          ? "(p.status IN ('facturacion','produccion','despacho') OR p.owner_id=$1)"
           : user.role === "comercial"
             ? "(p.owner_id=$1 OR p.assigned_to=$1)"
             : "p.owner_id=$1";
@@ -695,7 +789,9 @@ class MemoryStore {
         if (user.role === "produccion") {
           return (
             project.ownerId === user.id ||
-            project.project.status === "produccion"
+            ["facturacion", "produccion", "despacho"].includes(
+              project.project.status,
+            )
           );
         }
         if (user.role === "comercial") {
@@ -724,6 +820,19 @@ class MemoryStore {
     this.projects.set(saved.id, saved);
     return saved;
   }
+
+  async updateProjectSchedule(id, executionDate, deliveryDate) {
+    const current = this.projects.get(id);
+    if (!current) return null;
+    const saved = {
+      ...current,
+      executionDate: executionDate || null,
+      deliveryDate: deliveryDate || null,
+      updatedAt: new Date().toISOString(),
+    };
+    this.projects.set(id, saved);
+    return saved;
+  }
 }
 
 export function canReadProject(user, project) {
@@ -731,7 +840,9 @@ export function canReadProject(user, project) {
   if (user.role === "produccion") {
     return (
       project.ownerId === user.id ||
-      project.project.status === "produccion"
+      ["facturacion", "produccion", "despacho"].includes(
+        project.project.status,
+      )
     );
   }
   if (user.role === "comercial") {
@@ -741,12 +852,14 @@ export function canReadProject(user, project) {
 }
 
 export function canEditProject(user, project) {
-  if (user.role === "admin") return true;
+  if (user.role === "admin") {
+    return !["produccion", "despacho"].includes(project.project.status);
+  }
   if (user.role === "produccion") {
-    return (
-      project.ownerId === user.id &&
-      project.project.status === "cotizacion"
-    );
+    if (["produccion", "despacho"].includes(project.project.status)) {
+      return true;
+    }
+    return project.ownerId === user.id;
   }
   if (user.role === "comercial") {
     return (
@@ -755,6 +868,23 @@ export function canEditProject(user, project) {
     );
   }
   return project.ownerId === user.id && project.project.status === "cotizacion";
+}
+
+export function canTransitionProjectStatus(user, currentStatus, nextStatus) {
+  if (currentStatus === nextStatus) return true;
+  if (nextStatus === "facturacion") {
+    return user.role !== "cliente" && currentStatus === "cotizacion";
+  }
+  if (nextStatus === "produccion") {
+    return (
+      ["admin", "comercial"].includes(user.role) &&
+      currentStatus === "facturacion"
+    );
+  }
+  if (nextStatus === "despacho") {
+    return user.role === "produccion" && currentStatus === "produccion";
+  }
+  return false;
 }
 
 function projectRecord(body, ownerId, current = null) {
@@ -1311,7 +1441,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
       const rejected = [];
       for (const file of candidates) {
         const data = await file.buffer();
-        const sku = normalizeImageKey(file.path);
+        const sku = resolveCatalogImageKey(file.path);
         if (!sku || data.length > 2_500_000) {
           rejected.push(file.path);
           continue;
@@ -1375,6 +1505,19 @@ export async function createApplication({ store, useMemory = false } = {}) {
         }
         record.project.status = "cotizacion";
       }
+      if (
+        request.auth.user.role === "produccion" &&
+        ["produccion", "despacho"].includes(record.project.status)
+      ) {
+        return response.status(403).json({
+          error: "Producción puede crear en Cotización o Facturación.",
+        });
+      }
+    }
+    if (["produccion", "despacho"].includes(record.project.status)) {
+      return response.status(400).json({
+        error: "Un proyecto nuevo debe comenzar en Cotización o Facturación.",
+      });
     }
     const saved = await database.saveProject(record);
     const admins = await database.listActiveAdmins();
@@ -1423,6 +1566,22 @@ export async function createApplication({ store, useMemory = false } = {}) {
     if (!canEditProject(request.auth.user, current)) {
       return response.status(403).json({ error: "No puedes modificar este proyecto." });
     }
+    const requestedStatus = String(
+      request.body.project?.status || current.project.status,
+    );
+    if (
+      !validStatuses.has(requestedStatus) ||
+      !canTransitionProjectStatus(
+        request.auth.user,
+        current.project.status,
+        requestedStatus,
+      )
+    ) {
+      return response.status(403).json({
+        error:
+          "Cambio de estado no autorizado. Sigue el flujo Cotización, Facturación, Producción y Despacho.",
+      });
+    }
     const record = projectRecord(request.body, current.ownerId, current);
     if (!record.project.clientName) {
       return response.status(400).json({ error: "El nombre del cliente es obligatorio." });
@@ -1465,8 +1624,82 @@ export async function createApplication({ store, useMemory = false } = {}) {
         });
       }
     }
+    if (
+      current.project.status !== "despacho" &&
+      saved.project.status === "despacho"
+    ) {
+      const recipients = await database.listActiveAdmins();
+      const assigned = saved.assignedTo
+        ? await database.getUser(saved.assignedTo)
+        : null;
+      if (
+        assigned?.active &&
+        !recipients.some((user) => user.id === assigned.id)
+      ) {
+        recipients.push(assigned);
+      }
+      for (const user of recipients) {
+        await database.createNotification({
+          id: randomUUID(),
+          userId: user.id,
+          projectId: saved.id,
+          type: "dispatch_ready",
+          title: "Pedido listo para despacho",
+          message: `${saved.project.clientName} · ${
+            saved.project.projectName || "Proyecto sin nombre"
+          } · actualizado por ${request.auth.user.fullName}`,
+        });
+      }
+    }
     return response.json({ project: saved });
   });
+
+  app.patch(
+    "/api/projects/:id/schedule",
+    authenticate,
+    csrf,
+    async (request, response) => {
+      if (!["admin", "produccion"].includes(request.auth.user.role)) {
+        return response.status(403).json({
+          error: "Solo Administración o Producción pueden ajustar la agenda.",
+        });
+      }
+      const current = await database.getProject(request.params.id);
+      if (!current || !canReadProject(request.auth.user, current)) {
+        return response.status(404).json({ error: "Proyecto no encontrado." });
+      }
+      const normalizeDate = (value) => {
+        const text = String(value || "").trim();
+        if (!text) return "";
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
+        const date = new Date(`${text}T12:00:00Z`);
+        return Number.isNaN(date.getTime()) ? null : text;
+      };
+      const executionDate = normalizeDate(request.body.executionDate);
+      const deliveryDate = normalizeDate(request.body.deliveryDate);
+      if (executionDate === null || deliveryDate === null) {
+        return response.status(400).json({
+          error: "Las fechas de agenda no son válidas.",
+        });
+      }
+      if (
+        executionDate &&
+        deliveryDate &&
+        deliveryDate < executionDate
+      ) {
+        return response.status(400).json({
+          error: "La fecha de entrega no puede ser anterior a la ejecución.",
+        });
+      }
+      await database.updateProjectSchedule(
+        current.id,
+        executionDate,
+        deliveryDate,
+      );
+      const project = await database.getProject(current.id);
+      return response.json({ project });
+    },
+  );
 
   app.use("/api", (_request, response) => {
     response.status(404).json({ error: "Ruta no encontrada." });

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   canEditProject,
+  canTransitionProjectStatus,
   createApplication,
   projectVisibility,
   quoteEmailRecipients,
@@ -132,7 +133,7 @@ test("protege acceso, crea perfiles y permite guardar proyectos por perfil", asy
           projectName: "",
           clientName: "Cliente obligatorio",
           rut: "",
-          status: "venta",
+          status: "facturacion",
         },
         materialId: "62-egger-1502-1",
         pieces: [
@@ -150,6 +151,7 @@ test("protege acceso, crea perfiles y permite guardar proyectos por perfil", asy
     });
     assert.equal(project.response.status, 201);
     assert.equal(project.body.project.project.clientName, "Cliente obligatorio");
+    assert.equal(project.body.project.project.status, "facturacion");
     assert.equal(project.body.project.pieces[0].name, "");
 
     const notifications = await request(base, "/api/notifications", {
@@ -218,7 +220,7 @@ test("protege acceso, crea perfiles y permite guardar proyectos por perfil", asy
     const visible = await request(base, "/api/projects", {
       headers: { cookie: productionCookie },
     });
-    assert.equal(visible.body.projects.length, 0);
+    assert.equal(visible.body.projects.length, 1);
 
     const productionProject = await request(base, "/api/projects", {
       method: "POST",
@@ -258,11 +260,31 @@ test("protege acceso, crea perfiles y permite guardar proyectos por perfil", asy
       productionProject.body.project.pieces[1].materialId,
       "62-egger-1501-2",
     );
+    const productionBilling = await request(
+      base,
+      `/api/projects/${productionProject.body.project.id}`,
+      {
+        method: "PATCH",
+        headers: productionHeaders,
+        body: JSON.stringify({
+          ...productionProject.body.project,
+          project: {
+            ...productionProject.body.project.project,
+            status: "facturacion",
+          },
+        }),
+      },
+    );
+    assert.equal(productionBilling.response.status, 200);
+    assert.equal(
+      productionBilling.body.project.project.status,
+      "facturacion",
+    );
 
     const visibleAfterSave = await request(base, "/api/projects", {
       headers: { cookie: productionCookie },
     });
-    assert.equal(visibleAfterSave.body.projects.length, 1);
+    assert.equal(visibleAfterSave.body.projects.length, 2);
 
     const advanced = await request(
       base,
@@ -305,7 +327,52 @@ test("protege acceso, crea perfiles y permite guardar proyectos por perfil", asy
         body: JSON.stringify(advanced.body.project),
       },
     );
-    assert.equal(blockedProductionEdit.response.status, 403);
+    assert.equal(blockedProductionEdit.response.status, 200);
+
+    const scheduled = await request(
+      base,
+      `/api/projects/${project.body.project.id}/schedule`,
+      {
+        method: "PATCH",
+        headers: productionHeaders,
+        body: JSON.stringify({
+          executionDate: "2026-08-03",
+          deliveryDate: "2026-08-05",
+        }),
+      },
+    );
+    assert.equal(scheduled.response.status, 200);
+    assert.equal(scheduled.body.project.executionDate, "2026-08-03");
+    assert.equal(scheduled.body.project.deliveryDate, "2026-08-05");
+
+    const dispatched = await request(
+      base,
+      `/api/projects/${project.body.project.id}`,
+      {
+        method: "PATCH",
+        headers: productionHeaders,
+        body: JSON.stringify({
+          ...blockedProductionEdit.body.project,
+          project: {
+            ...blockedProductionEdit.body.project.project,
+            status: "despacho",
+          },
+        }),
+      },
+    );
+    assert.equal(dispatched.response.status, 200);
+    assert.equal(dispatched.body.project.project.status, "despacho");
+
+    const blockedAdminEdit = await request(
+      base,
+      `/api/projects/${project.body.project.id}`,
+      {
+        method: "PATCH",
+        headers: adminHeaders,
+        body: JSON.stringify(dispatched.body.project),
+      },
+    );
+    assert.equal(blockedAdminEdit.response.status, 403);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
@@ -364,6 +431,13 @@ test("respeta edición por rol y bloquea pedidos enviados a producción", () => 
     true,
   );
   assert.equal(
+    canEditProject(
+      { id: "usuario-1", role: "produccion" },
+      { ...ownQuote, project: { status: "facturacion" } },
+    ),
+    true,
+  );
+  assert.equal(
     canEditProject({ id: "usuario-1", role: "cliente" }, ownQuote),
     true,
   );
@@ -371,6 +445,71 @@ test("respeta edición por rol y bloquea pedidos enviados a producción", () => 
     canEditProject(
       { id: "comercial-1", role: "comercial" },
       { ...ownQuote, project: { status: "produccion" } },
+    ),
+    false,
+  );
+  assert.equal(
+    canEditProject(
+      { id: "admin-1", role: "admin" },
+      { ...ownQuote, project: { status: "produccion" } },
+    ),
+    false,
+  );
+  assert.equal(
+    canEditProject(
+      { id: "produccion-2", role: "produccion" },
+      { ...ownQuote, project: { status: "produccion" } },
+    ),
+    true,
+  );
+});
+
+test("aplica el flujo de estados y reserva Despacho para Producción", () => {
+  assert.equal(
+    canTransitionProjectStatus(
+      { role: "cliente" },
+      "cotizacion",
+      "facturacion",
+    ),
+    false,
+  );
+  assert.equal(
+    canTransitionProjectStatus(
+      { role: "comercial" },
+      "cotizacion",
+      "facturacion",
+    ),
+    true,
+  );
+  assert.equal(
+    canTransitionProjectStatus(
+      { role: "comercial" },
+      "facturacion",
+      "produccion",
+    ),
+    true,
+  );
+  assert.equal(
+    canTransitionProjectStatus(
+      { role: "admin" },
+      "facturacion",
+      "produccion",
+    ),
+    true,
+  );
+  assert.equal(
+    canTransitionProjectStatus(
+      { role: "produccion" },
+      "produccion",
+      "despacho",
+    ),
+    true,
+  );
+  assert.equal(
+    canTransitionProjectStatus(
+      { role: "admin" },
+      "produccion",
+      "despacho",
     ),
     false,
   );
@@ -458,7 +597,7 @@ test("permite autoregistro de clientes y exige sus datos obligatorios", async ()
         assignedTo: commercial.body.user.id,
         project: {
           clientName: "Empresa opcional",
-          status: "produccion",
+          status: "facturacion",
         },
         materialId: "62-egger-1502-1",
         pieces: [

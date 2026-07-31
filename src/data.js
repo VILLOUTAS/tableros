@@ -7,8 +7,9 @@ export {
 
 export const statusLabels = {
   cotizacion: "Cotización",
-  venta: "Venta",
+  facturacion: "Facturación",
   produccion: "Producción",
+  despacho: "Despacho",
 };
 
 export const grainLabels = {

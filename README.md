@@ -1,6 +1,6 @@
 # Cotizador online — Casa Diseño Multiespacio
 
-Versión 2.6.0 del cotizador y optimizador de cortes. Incluye acceso seguro con
+Versión 3.0.0 del cotizador y optimizador de cortes. Incluye acceso seguro con
 usuarios diferenciados, base PostgreSQL, catálogo completo importado desde
 Excel y persistencia de proyectos.
 
@@ -21,7 +21,12 @@ Excel y persistencia de proyectos.
 - Matriz de permisos visible en el módulo Usuarios y cambio de perfil reservado
   al Administrador.
 - Proyectos con nombre de cliente como único dato obligatorio.
-- Estados Cotización, Venta y Producción.
+- Flujo de estados Cotización, Facturación, Producción y Despacho.
+- Todos los perfiles crean Cotizaciones; Facturación está disponible para
+  Administrador, Comercial y Producción; Administración o Comercial envían a
+  Producción y solo Producción puede cerrar en Despacho.
+- Una orden en Producción o Despacho solo admite cambios de fabricación desde
+  el perfil Producción.
 - 145 tableros y 121 tapacantos del Excel entregado.
 - Selección progresiva por categoría y búsqueda por código, nombre o marca.
 - Selección de múltiples tipos de tablero dentro de un mismo proyecto.
@@ -46,10 +51,8 @@ Excel y persistencia de proyectos.
   derecho.
 - Optimización longitudinal prioritaria o sin prioridad de eje.
 - Optimización, planos de corte y subtotales separados por cada tablero.
-- Listado general de piezas optimizadas con medida terminada, medida de corte,
-  cantidad solicitada, cantidad optimizada y placas asignadas.
-- Listado específico en cada hoja de corte con las piezas que se fabrican desde
-  esa placa.
+- Listado específico en la misma hoja de cada plano de corte, con todas las
+  piezas y retazos que se obtienen de esa placa.
 - Corte cobrado automáticamente por tablero: Melamina 15/18 mm a $7.500 neto y
   EGR/u otros tableros a $10.500 neto.
 - Servicio de tapacanto por metro lineal: 0,4 mm $500; 1,0 mm $600;
@@ -73,12 +76,18 @@ Excel y persistencia de proyectos.
 - Aviso por correo de nuevas
   cotizaciones a `contacto@cdchile.cl` y a los Administradores activos, cuando
   el servicio de correo está configurado.
-- PDF de fabricación con listado general al inicio, plano de cada placa y
-  listado completo de piezas asociado a cada hoja de corte.
+- PDF de fabricación con una hoja inseparable por placa: plano, lista completa
+  de piezas y retazos, y casillas impresas para Corte, Enchape y
+  Supervisión/Despacho.
 - Retazos reutilizables codificados en el plano y en los listados.
-- Etiquetas térmicas PDF de 50 × 70 mm y listado CSV editable para
-  Administrador y Producción.
-- Carga masiva de imágenes desde un único ZIP, almacenadas en PostgreSQL.
+- Etiquetas térmicas PDF de 50 × 70 mm para Administrador y Producción.
+- Catálogo visual V3 con 273 imágenes incorporadas desde un único ZIP. Render
+  las carga automáticamente en PostgreSQL sin sobrescribir imágenes
+  personalizadas; el Administrador también puede importar otro ZIP.
+- CRM de fábrica para Administrador y Producción con fechas de ejecución y
+  entrega, columnas de Facturación/Producción/Despacho y reportes diarios,
+  semanales y mensuales de carga, tableros completados y metros lineales
+  enchapados.
 
 ## Publicar en Render
 

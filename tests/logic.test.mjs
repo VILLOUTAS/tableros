@@ -5,6 +5,7 @@ import {
   assignPieceCodes,
   cutRateForMaterial,
   cutDimensions,
+  drawCutPlan,
   edgeImportLabel,
   isBlankPieceImportRow,
   materialImportLabel,
@@ -298,4 +299,76 @@ test("agrupa las repeticiones de una pieza dentro de cada placa", () => {
   assert.equal(rows.length, 1);
   assert.equal(rows[0].code, "P-001");
   assert.equal(rows[0].quantity, 3);
+});
+
+test("la hoja de producción mantiene plano, listado, retazos y controles C/E/S", () => {
+  const board = {
+    ...material,
+    id: "tablero-qa",
+    sku: "QA-001",
+    brand: "CASA DISEÑO",
+    name: "TABLERO DE PRUEBA",
+    thickness: 18,
+  };
+  const result = optimize(board, [piece({ quantity: 2 })], edges, {
+    kerf: 2,
+    optimizationMode: "longitudinal",
+  });
+  const plate = {
+    ...result.plates[0],
+    materialPlateIndex: 1,
+    leftovers: [
+      {
+        code: "RET-QA-001",
+        x: 1500,
+        y: 1200,
+        width: 300,
+        height: 250,
+      },
+    ],
+  };
+  const drawnText = [];
+  const context = new Proxy(
+    {
+      measureText(value) {
+        return { width: String(value).length * 5.5 };
+      },
+      fillText(value) {
+        drawnText.push(String(value));
+      },
+    },
+    {
+      get(target, property) {
+        if (property in target) return target[property];
+        return () => {};
+      },
+      set(target, property, value) {
+        target[property] = value;
+        return true;
+      },
+    },
+  );
+  const canvas = {
+    width: 0,
+    height: 0,
+    getContext: () => context,
+  };
+  drawCutPlan(canvas, plate, board, edges, null, {
+    projectId: "COT-QA",
+    project: {
+      projectName: "Cocina QA",
+      clientName: "Cliente QA",
+      status: "produccion",
+    },
+    statusLabel: "Producción",
+    createdBy: "Operador QA",
+    generatedAt: "31-07-2026",
+  });
+  assert.ok(drawnText.includes("PIEZAS Y RETAZOS DE ESTA PLACA"));
+  assert.ok(drawnText.includes("C"));
+  assert.ok(drawnText.includes("E"));
+  assert.ok(drawnText.includes("S"));
+  assert.ok(drawnText.some((value) => value.includes("RET-QA-001")));
+  assert.ok(canvas.width >= 1400);
+  assert.ok(canvas.height >= 900);
 });

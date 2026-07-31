@@ -1,4 +1,4 @@
-COTIZADOR CASA DISEÑO V2.6.0 — ACTUALIZACIÓN
+COTIZADOR CASA DISEÑO V3.0.0 — ACTUALIZACIÓN
 
 1. Descomprime este paquete.
 2. Reemplaza el contenido del repositorio GitHub con todos estos archivos.
@@ -46,17 +46,24 @@ IMPORTANTE
 - Los tapacantos se identifican con T1/T2/T3, colores y patrones diferentes.
 - Las cotas interiores quedan separadas de las líneas de tapacanto.
 - El largo, ancho y cantidad se pueden editar directamente en el listado.
-- El paso 5 muestra el listado general optimizado y el listado de cada placa.
-- El PDF incluye listado general, planos y listados completos por placa.
+- El paso 5 muestra la optimización y el listado de cada placa.
+- Cada hoja del PDF mantiene unidos el plano, el listado de esa placa y las
+  casillas de control para Corte, Enchape y Supervisión/Despacho.
 - Los códigos de pieza se asignan al generar la hoja de corte.
 - Los retazos se codifican y figuran en plano, listado y PDF.
-- Administrador y Producción pueden descargar etiquetas térmicas de 50 mm y
-  un CSV editable.
+- Administrador y Producción pueden descargar etiquetas térmicas de 50 mm.
 - Los Clientes pueden autoregistrarse, elegir Comercial y solo ven sus pedidos.
 - Al enviar un pedido a Producción, el Comercial queda bloqueado para editar y
   Producción recibe una alerta en el dashboard.
 - Las imágenes se cargan como un único ZIP desde Usuarios y se guardan en
   PostgreSQL; no es necesario subir 200 archivos a GitHub.
+- Esta versión ya incluye catalog/IMAGENES_PRODUCTOS_V3.zip con 273 imágenes;
+  Render las importa automáticamente al iniciar y conserva imágenes
+  personalizadas existentes.
+- El flujo es Cotización > Facturación > Producción > Despacho. Solo Producción
+  modifica órdenes en fábrica y solo ese perfil puede pasarlas a Despacho.
+- Administrador y Producción disponen de un CRM con agenda, fechas de ejecución
+  y entrega, carga diaria/semanal/mensual, tableros completados y ML enchapados.
 - Para enviar correos, agrega en Render:
   RESEND_API_KEY=<clave API>
   NOTIFICATION_FROM_EMAIL=Casa Diseño <cotizaciones@tu-dominio.cl>

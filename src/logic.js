@@ -852,8 +852,30 @@ export function drawCutPlan(
   context = {},
 ) {
   const ctx = canvas.getContext("2d");
+  const usedEdgeIds = [
+    ...new Set(
+      plate.pieces
+        .flatMap((piece) => Object.values(piece.edges ?? {}))
+        .filter(Boolean),
+    ),
+  ];
+  const platePieceRows = summarizePlatePieces(plate);
+  const plateLeftoverRows = summarizePlateLeftovers(plate).map((leftover) => ({
+    code: leftover.code,
+    name: "Retazo reutilizable",
+    cutLength: leftover.width,
+    cutWidth: leftover.height,
+    quantity: 1,
+    leftover: true,
+  }));
+  const workflowRows = [...platePieceRows, ...plateLeftoverRows];
   const width = 1400;
-  const height = 900;
+  const estimatedListTop =
+    188 + Math.max(94, 78 + Math.max(1, usedEdgeIds.length) * 42);
+  const height = Math.max(
+    900,
+    estimatedListTop + 76 + workflowRows.length * 19 + 62,
+  );
   const margin = { left: 115, top: 188, right: 350, bottom: 82 };
   canvas.width = width;
   canvas.height = height;
@@ -865,13 +887,6 @@ export function drawCutPlan(
   const plateH = material.plateWidth * scale;
   const ox = margin.left;
   const oy = margin.top;
-  const usedEdgeIds = [
-    ...new Set(
-      plate.pieces
-        .flatMap((piece) => Object.values(piece.edges ?? {}))
-        .filter(Boolean),
-    ),
-  ];
   const edgeVisuals = edgeVisualMap(usedEdgeIds);
 
   ctx.fillStyle = "#f6f5f2";
@@ -1256,39 +1271,47 @@ export function drawCutPlan(
     ctx.fillText("Sin tapacantos asignados", legendX, oy + 52);
   }
 
-  const platePieceRows = summarizePlatePieces(plate);
   const listTop =
     oy + Math.max(94, 78 + Math.max(1, usedEdgeIds.length) * 42);
   ctx.fillStyle = "#101820";
   ctx.font = "700 14px Arial";
   ctx.textAlign = "left";
-  ctx.fillText("PIEZAS DE ESTA PLACA", legendX, listTop);
+  ctx.fillText("PIEZAS Y RETAZOS DE ESTA PLACA", legendX, listTop);
   ctx.fillStyle = "#59636d";
   ctx.font = "10px Arial";
   ctx.fillText(
-    `${plate.pieces.length} pieza(s) · ${platePieceRows.length} línea(s)`,
+    `${plate.pieces.length} pieza(s) · ${plateLeftoverRows.length} retazo(s) · ${workflowRows.length} línea(s)`,
     legendX,
     listTop + 17,
   );
+  const listWidth = margin.right - 56;
+  const listRight = legendX + listWidth;
+  const measureX = listRight - 113;
+  const quantityX = listRight - 74;
+  const checkCenters = [listRight - 51, listRight - 31, listRight - 11];
+  ctx.fillText(
+    "Controles: C corte · E enchape · S supervisión/despacho",
+    legendX,
+    listTop + 30,
+  );
   ctx.fillStyle = "#e1e4e6";
-  ctx.fillRect(legendX, listTop + 26, margin.right - 56, 20);
+  ctx.fillRect(legendX, listTop + 38, listWidth, 20);
   ctx.fillStyle = "#303a44";
   ctx.font = "700 9px Arial";
-  ctx.fillText("CÓDIGO / ELEMENTO", legendX + 5, listTop + 40);
+  ctx.fillText("CÓDIGO / ELEMENTO", legendX + 5, listTop + 52);
   ctx.textAlign = "right";
-  ctx.fillText("CORTE", width - 83, listTop + 40);
-  ctx.fillText("CANT.", width - 42, listTop + 40);
+  ctx.fillText("MEDIDA", measureX, listTop + 52);
+  ctx.fillText("UD.", quantityX, listTop + 52);
+  ctx.textAlign = "center";
+  ["C", "E", "S"].forEach((label, index) => {
+    ctx.fillText(label, checkCenters[index], listTop + 52);
+  });
   ctx.textAlign = "left";
-  const availableRows = Math.max(
-    0,
-    Math.floor((height - 62 - (listTop + 50)) / 19),
-  );
-  const visibleRows = platePieceRows.slice(0, availableRows);
-  visibleRows.forEach((row, index) => {
-    const y = listTop + 64 + index * 19;
+  workflowRows.forEach((row, index) => {
+    const y = listTop + 76 + index * 19;
     if (index % 2) {
       ctx.fillStyle = "rgba(255,255,255,.58)";
-      ctx.fillRect(legendX, y - 13, margin.right - 56, 18);
+      ctx.fillRect(legendX, y - 13, listWidth, 18);
     }
     ctx.fillStyle = "#303a44";
     ctx.font = "700 9px Arial";
@@ -1297,7 +1320,7 @@ export function drawCutPlan(
       fittedText(
         ctx,
         `${row.code}${row.name ? ` · ${row.name}` : ""}`,
-        margin.right - 190,
+        measureX - legendX - 16,
       ),
       legendX + 5,
       y,
@@ -1306,27 +1329,23 @@ export function drawCutPlan(
     ctx.textAlign = "right";
     ctx.fillText(
       `${Math.round(row.cutLength)}×${Math.round(row.cutWidth)}`,
-      width - 83,
+      measureX,
       y,
     );
-    ctx.fillText(`${row.quantity}`, width - 42, y);
+    ctx.fillText(`${row.quantity}`, quantityX, y);
+    ctx.strokeStyle = "#101820";
+    ctx.lineWidth = 1.2;
+    ctx.setLineDash([]);
+    checkCenters.forEach((center) => {
+      ctx.strokeRect(center - 5, y - 9, 10, 10);
+    });
   });
-  if (visibleRows.length < platePieceRows.length) {
-    ctx.fillStyle = "#58636d";
-    ctx.font = "700 9px Arial";
-    ctx.textAlign = "left";
-    ctx.fillText(
-      `+ ${platePieceRows.length - visibleRows.length} línea(s) · listado completo adjunto`,
-      legendX + 5,
-      listTop + 64 + visibleRows.length * 19,
-    );
-  }
 
   ctx.fillStyle = "#58636d";
   ctx.font = "11px Arial";
   ctx.textAlign = "left";
   ctx.fillText(
-    "Medidas interiores: parciales · Exteriores: acumuladas · T1/T2/T3: tapacanto por lado · RET: retazo reutilizable · Unidades en mm.",
+    "Medidas interiores: parciales · Exteriores: acumuladas · T1/T2/T3: tapacanto por lado · RET: retazo reutilizable · C/E/S: controles de producción · Unidades en mm.",
     39,
     height - 28,
   );

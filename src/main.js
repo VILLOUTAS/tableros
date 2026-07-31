@@ -42,6 +42,7 @@ function emptyState() {
   return {
     view: "quote",
     step: 0,
+    productionPeriod: "week",
     projectId: crypto.randomUUID(),
     project: {
       projectName: "",
@@ -178,15 +179,16 @@ function newQuoteState() {
 
 function canEditCurrent() {
   if (!auth.user) return false;
+  if (auth.user.role === "admin") {
+    return !["produccion", "despacho"].includes(state.project.status);
+  }
   if (auth.user.role === "produccion") {
-    return (
-      (!state.ownerId || state.ownerId === auth.user.id) &&
-      state.project.status === "cotizacion"
-    );
+    if (["produccion", "despacho"].includes(state.project.status)) return true;
+    return !state.ownerId || state.ownerId === auth.user.id;
   }
   if (
     auth.user.role === "comercial" &&
-    state.project.status === "produccion"
+    ["produccion", "despacho"].includes(state.project.status)
   ) {
     return false;
   }
@@ -194,6 +196,27 @@ function canEditCurrent() {
     return false;
   }
   return true;
+}
+
+function statusEntriesForRole(
+  role = auth.user?.role,
+  currentStatus = state.project.status,
+) {
+  const entries = Object.entries(statusLabels);
+  let allowed;
+  if (role === "cliente") allowed = ["cotizacion"];
+  else if (role === "produccion") {
+    if (currentStatus === "cotizacion") allowed = ["cotizacion", "facturacion"];
+    else if (currentStatus === "produccion") allowed = ["produccion", "despacho"];
+    else allowed = [currentStatus];
+  } else if (currentStatus === "cotizacion") {
+    allowed = ["cotizacion", "facturacion"];
+  } else if (currentStatus === "facturacion") {
+    allowed = ["facturacion", "produccion"];
+  } else {
+    allowed = [currentStatus];
+  }
+  return entries.filter(([value]) => allowed.includes(value));
 }
 
 function notify(text, type = "success") {
@@ -452,6 +475,13 @@ function shell(content) {
           <span>⌂</span><b>Proyectos<small>Control y estados</small></b>
         </button>
         ${
+          ["admin", "produccion"].includes(auth.user?.role)
+            ? `<button class="step-link ${state.view === "production" ? "active" : ""}" data-action="production-dashboard">
+                <span>▥</span><b>Producción<small>Agenda e indicadores</small></b>
+              </button>`
+            : ""
+        }
+        ${
           ["admin", "comercial", "produccion"].includes(auth.user?.role)
             ? `<button class="step-link ${state.view === "notifications" ? "active" : ""}" data-action="notifications">
                 <span>♢</span><b>Notificaciones<small><i class="notification-badge" ${unreadNotifications() ? "" : "hidden"}>${unreadNotifications()}</i> Alertas</small></b>
@@ -477,6 +507,8 @@ function shell(content) {
             <p class="eyebrow">${
               state.view === "projects"
                 ? "SEGUIMIENTO"
+                : state.view === "production"
+                  ? "CONTROL DE FÁBRICA"
                 : state.view === "notifications"
                   ? "MONITOREO COMERCIAL"
                 : state.view === "users"
@@ -486,6 +518,8 @@ function shell(content) {
             <h1>${
               state.view === "projects"
                 ? "Proyectos"
+                : state.view === "production"
+                  ? "Agenda de producción"
                 : state.view === "notifications"
                   ? "Notificaciones"
                 : state.view === "users"
@@ -510,9 +544,11 @@ function shell(content) {
 }
 
 function projectStep() {
+  const availableStatusEntries = statusEntriesForRole();
   const statusEditable =
-    ["admin", "comercial"].includes(auth.user?.role) &&
-    state.project.status !== "produccion";
+    auth.user?.role !== "cliente" &&
+    canEditCurrent() &&
+    availableStatusEntries.length > 1;
   const commercialRequired = auth.user?.role === "cliente";
   return `
     <section class="hero-card">
@@ -524,7 +560,7 @@ function projectStep() {
       <div class="hero-mark">01</div>
     </section>
     <section class="card form-card">
-      <div class="section-title"><span>1</span><div><h3>Datos del proyecto</h3><p>Selecciona la etapa actual: Cotización, Venta o Producción.</p></div></div>
+      <div class="section-title"><span>1</span><div><h3>Datos del proyecto</h3><p>Flujo autorizado: Cotización, Facturación, Producción y Despacho.</p></div></div>
       <div class="form-grid">
         <label>Nombre del proyecto
           <input data-project="projectName" value="${safe(state.project.projectName)}" placeholder="Ej. Cocina departamento Ñuñoa" />
@@ -538,7 +574,7 @@ function projectStep() {
         </label>
         <label>Estado
           <select data-project="status" ${statusEditable ? "" : "disabled"}>
-            ${Object.entries(statusLabels)
+            ${availableStatusEntries
               .map(
                 ([value, label]) =>
                   `<option value="${value}" ${value === state.project.status ? "selected" : ""}>${label}</option>`,
@@ -984,8 +1020,7 @@ function optimizeStep() {
         <button class="secondary" data-action="pdf">↓ Descargar PDF</button>
         ${
           ["admin", "produccion"].includes(auth.user?.role)
-            ? `<button class="secondary" data-action="labels-pdf">↓ Etiquetas 50 mm</button>
-               <button class="secondary" data-action="labels-csv">↓ Etiquetas editables</button>`
+            ? `<button class="secondary" data-action="labels-pdf">↓ Etiquetas 50 mm</button>`
             : ""
         }
         ${
@@ -1092,7 +1127,7 @@ function projectsView() {
     }</section>`);
   }
   return shell(`
-    <section class="intro-row"><div><p class="eyebrow">SEGUIMIENTO</p><h2>Cotización → Venta → Producción</h2><p>Cada perfil ve y modifica únicamente los proyectos que le corresponden.</p></div>${
+    <section class="intro-row"><div><p class="eyebrow">SEGUIMIENTO</p><h2>Cotización → Facturación → Producción → Despacho</h2><p>Cada perfil ve y modifica únicamente los proyectos que le corresponden.</p></div>${
       canCreateQuote()
         ? `<button class="primary" data-action="new">＋ Nueva cotización</button>`
         : ""
@@ -1112,21 +1147,26 @@ function projectsView() {
             }</small></p>
             <div><span>Total</span><b>${clp(item.summary?.total)}</b></div>
             ${
-              ["admin", "comercial"].includes(auth.user?.role)
+              ((["admin", "comercial"].includes(auth.user?.role) &&
+                ["cotizacion", "facturacion"].includes(item.project.status)) ||
+                (auth.user?.role === "produccion" &&
+                  (item.project.status === "produccion" ||
+                    (item.ownerId === auth.user.id &&
+                      ["cotizacion", "facturacion"].includes(
+                        item.project.status,
+                      )))))
                 ? `<label>Estado<select data-project-status="${item.id}">
-                    ${
-                      auth.user?.role === "comercial" &&
-                      item.project.status === "produccion"
-                        ? `<option value="produccion" selected>Producción · pedido bloqueado</option>`
-                        : Object.entries(statusLabels)
-                            .map(
-                              ([value, label]) =>
-                                `<option value="${value}" ${
-                                  value === item.project.status ? "selected" : ""
-                                }>${label}</option>`,
-                            )
-                            .join("")
-                    }
+                    ${statusEntriesForRole(
+                      auth.user?.role,
+                      item.project.status,
+                    )
+                      .map(
+                        ([value, label]) =>
+                          `<option value="${value}" ${
+                            value === item.project.status ? "selected" : ""
+                          }>${label}</option>`,
+                      )
+                      .join("")}
                   </select></label>`
                 : ""
             }
@@ -1135,6 +1175,231 @@ function projectsView() {
         )
         .join("")}
     </section>`);
+}
+
+function localIsoDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function dateInputValue(value) {
+  if (!value) return "";
+  return String(value).slice(0, 10);
+}
+
+function displayScheduleDate(value) {
+  const date = dateInputValue(value);
+  if (!date) return "Sin fecha";
+  const [year, month, day] = date.split("-");
+  return `${day}-${month}-${year}`;
+}
+
+function productionPeriodRange(period) {
+  const today = new Date();
+  today.setHours(12, 0, 0, 0);
+  if (period === "day") {
+    const date = localIsoDate(today);
+    return { start: date, end: date, label: "Hoy" };
+  }
+  if (period === "month") {
+    const start = new Date(today.getFullYear(), today.getMonth(), 1, 12);
+    const end = new Date(today.getFullYear(), today.getMonth() + 1, 0, 12);
+    return {
+      start: localIsoDate(start),
+      end: localIsoDate(end),
+      label: start.toLocaleDateString("es-CL", {
+        month: "long",
+        year: "numeric",
+      }),
+    };
+  }
+  const monday = new Date(today);
+  const weekday = (today.getDay() + 6) % 7;
+  monday.setDate(today.getDate() - weekday);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  return {
+    start: localIsoDate(monday),
+    end: localIsoDate(sunday),
+    label: `${displayScheduleDate(localIsoDate(monday))} al ${displayScheduleDate(
+      localIsoDate(sunday),
+    )}`,
+  };
+}
+
+function productionDashboardView() {
+  const period = state.productionPeriod || "week";
+  const range = productionPeriodRange(period);
+  const pipelineStatuses = ["facturacion", "produccion", "despacho"];
+  const pipeline = projectsCache
+    .filter((item) => pipelineStatuses.includes(item.project.status))
+    .sort((a, b) =>
+      `${dateInputValue(a.executionDate) || "9999"}${a.project.clientName}`.localeCompare(
+        `${dateInputValue(b.executionDate) || "9999"}${b.project.clientName}`,
+        "es",
+      ),
+    );
+  const reportProjects = pipeline.filter((item) => {
+    const date = dateInputValue(item.executionDate);
+    return date && date >= range.start && date <= range.end;
+  });
+  const completed = reportProjects.filter(
+    (item) => item.project.status === "despacho",
+  );
+  const completedBoards = completed.reduce(
+    (sum, item) => sum + Number(item.summary?.boardCount || 0),
+    0,
+  );
+  const completedEdgeMeters = completed.reduce(
+    (sum, item) => sum + Number(item.summary?.edgeMeters || 0),
+    0,
+  );
+  const deliveries = pipeline.filter((item) => {
+    const date = dateInputValue(item.deliveryDate);
+    return date && date >= range.start && date <= range.end;
+  }).length;
+  const unscheduled = pipeline.filter(
+    (item) => !item.executionDate || !item.deliveryDate,
+  ).length;
+  const statusColumns = [
+    ["facturacion", "Facturación", "Pedidos por programar o confirmar"],
+    ["produccion", "Producción", "Órdenes actualmente en fábrica"],
+    ["despacho", "Despacho", "Pedidos terminados y listos"],
+  ];
+  return shell(`
+    <section class="intro-row production-intro">
+      <div>
+        <p class="eyebrow">CRM DE PRODUCCIÓN</p>
+        <h2>Agenda, carga y cumplimiento</h2>
+        <p>Administra fechas de ejecución y entrega. Los indicadores se calculan desde los proyectos programados y cerrados en Despacho.</p>
+      </div>
+      <div class="period-switch" aria-label="Período del reporte">
+        ${[
+          ["day", "Diario"],
+          ["week", "Semanal"],
+          ["month", "Mensual"],
+        ]
+          .map(
+            ([value, label]) =>
+              `<button class="${period === value ? "active" : ""}" data-action="production-period" data-period="${value}">${label}</button>`,
+          )
+          .join("")}
+      </div>
+    </section>
+    <section class="production-metrics">
+      <article><span>PERÍODO</span><b>${safe(range.label)}</b><small>${reportProjects.length} orden(es) programada(s)</small></article>
+      <article><span>TABLEROS COMPLETADOS</span><b>${completedBoards.toLocaleString("es-CL")}</b><small>Proyectos en Despacho</small></article>
+      <article><span>ML ENCHAPADOS</span><b>${completedEdgeMeters.toLocaleString("es-CL", {
+        maximumFractionDigits: 1,
+      })}</b><small>Proyectos en Despacho</small></article>
+      <article><span>ENTREGAS DEL PERÍODO</span><b>${deliveries}</b><small>Según fecha comprometida</small></article>
+      <article class="${unscheduled ? "attention" : ""}"><span>SIN AGENDA COMPLETA</span><b>${unscheduled}</b><small>Requieren ejecución y entrega</small></article>
+    </section>
+    <section class="crm-board">
+      ${statusColumns
+        .map(([status, title, subtitle]) => {
+          const items = pipeline.filter((item) => item.project.status === status);
+          return `<div class="crm-column status-${status}">
+            <header><div><span class="status-dot ${status}"></span><b>${title}</b></div><strong>${items.length}</strong><small>${subtitle}</small></header>
+            <div class="crm-stack">
+              ${
+                items.length
+                  ? items
+                      .map((item) => {
+                        const canMoveStatus =
+                          (auth.user?.role === "admin" &&
+                            status === "facturacion") ||
+                          (auth.user?.role === "produccion" &&
+                            status === "produccion");
+                        return `<article class="crm-card">
+                          <div class="crm-card-title">
+                            <div><small>${safe(projectCode(item.id))}</small><h3>${safe(
+                              item.project.clientName,
+                            )}</h3></div>
+                            <span>${Number(item.summary?.boardCount || 0)} tab. · ${Number(
+                              item.summary?.edgeMeters || 0,
+                            ).toLocaleString("es-CL", {
+                              maximumFractionDigits: 1,
+                            })} ml</span>
+                          </div>
+                          <p>${safe(item.project.projectName || "Proyecto sin nombre")}${
+                            item.assignedName
+                              ? ` · ${safe(item.assignedName)}`
+                              : ""
+                          }</p>
+                          <form class="schedule-form" data-project-id="${item.id}">
+                            <label>Ejecución<input type="date" name="executionDate" value="${safe(
+                              dateInputValue(item.executionDate),
+                            )}" /></label>
+                            <label>Entrega<input type="date" name="deliveryDate" value="${safe(
+                              dateInputValue(item.deliveryDate),
+                            )}" /></label>
+                            <button class="secondary small" type="submit">Guardar agenda</button>
+                          </form>
+                          ${
+                            canMoveStatus
+                              ? `<label class="crm-status-control">Cambiar etapa<select data-project-status="${item.id}">
+                                  ${statusEntriesForRole(
+                                    auth.user?.role,
+                                    item.project.status,
+                                  )
+                                    .map(
+                                      ([value, label]) =>
+                                        `<option value="${value}" ${
+                                          value === item.project.status
+                                            ? "selected"
+                                            : ""
+                                        }>${label}</option>`,
+                                    )
+                                    .join("")}
+                                </select></label>`
+                              : ""
+                          }
+                          <button class="ghost small" data-action="open-project" data-id="${item.id}">Abrir orden</button>
+                        </article>`;
+                      })
+                      .join("")
+                  : `<div class="crm-empty">No hay proyectos en esta etapa.</div>`
+              }
+            </div>
+          </div>`;
+        })
+        .join("")}
+    </section>
+    <section class="card production-report">
+      <div class="section-title"><span>▤</span><div><h3>Reporte ${safe(
+        period === "day" ? "diario" : period === "month" ? "mensual" : "semanal",
+      )}</h3><p>${safe(range.label)} · carga programada y cumplimiento por orden.</p></div></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Ejecución</th><th>Entrega</th><th>Proyecto</th><th>Estado</th><th>Tableros</th><th>ML tapacanto</th></tr></thead>
+        <tbody>${
+          reportProjects.length
+            ? reportProjects
+                .map(
+                  (item) => `<tr>
+                    <td>${displayScheduleDate(item.executionDate)}</td>
+                    <td>${displayScheduleDate(item.deliveryDate)}</td>
+                    <td><b>${safe(item.project.clientName)}</b><span>${safe(
+                      item.project.projectName || projectCode(item.id),
+                    )}</span></td>
+                    <td>${safe(statusLabels[item.project.status])}</td>
+                    <td>${Number(item.summary?.boardCount || 0).toLocaleString(
+                      "es-CL",
+                    )}</td>
+                    <td>${Number(item.summary?.edgeMeters || 0).toLocaleString(
+                      "es-CL",
+                      { maximumFractionDigits: 1 },
+                    )}</td>
+                  </tr>`,
+                )
+                .join("")
+            : `<tr><td colspan="6" class="report-empty">No hay órdenes con fecha de ejecución dentro de este período.</td></tr>`
+        }</tbody>
+      </table></div>
+    </section>
+  `);
 }
 
 function notificationsView() {
@@ -1334,10 +1599,10 @@ function usersView() {
         <div class="table-wrap"><table>
           <thead><tr><th>Perfil</th><th>Proyectos visibles</th><th>Acciones principales</th></tr></thead>
           <tbody>
-            <tr><td><b>Administrador</b></td><td>Todos</td><td>Usuarios, precios, descuentos, estados y notificaciones.</td></tr>
-            <tr><td><b>Comercial</b></td><td>Propios y asignados</td><td>Crea, cotiza, guarda y gestiona estados.</td></tr>
-            <tr><td><b>Producción</b></td><td>Órdenes en Producción y borradores propios</td><td>Revisa planos, descarga etiquetas y guarda solo sus cotizaciones propias.</td></tr>
-            <tr><td><b>Cliente</b></td><td>Solo sus cotizaciones</td><td>Crea, guarda y consulta sin cambiar a Venta o Producción.</td></tr>
+            <tr><td><b>Administrador</b></td><td>Todos</td><td>Usuarios, cotizaciones, agenda CRM e indicadores; no altera una orden ya enviada a Producción.</td></tr>
+            <tr><td><b>Comercial</b></td><td>Propios y asignados</td><td>Pasa de Cotización a Facturación y luego a Producción.</td></tr>
+            <tr><td><b>Producción</b></td><td>Facturación, Producción, Despacho y borradores propios</td><td>Edita órdenes en fábrica, agenda fechas, descarga etiquetas y pasa a Despacho.</td></tr>
+            <tr><td><b>Cliente</b></td><td>Solo sus cotizaciones</td><td>Crea, guarda y consulta sin cambiar a Facturación, Producción o Despacho.</td></tr>
           </tbody>
         </table></div>
       </section>
@@ -1394,6 +1659,11 @@ function render() {
   }
   if (state.view === "projects") {
     app.innerHTML = projectsView();
+    renderEnhancements();
+    return;
+  }
+  if (state.view === "production") {
+    app.innerHTML = productionDashboardView();
     renderEnhancements();
     return;
   }
@@ -1555,46 +1825,6 @@ function exportLabelsPdf() {
     pdf.text("Formato térmico 50 × 70 mm", 4, 66);
   });
   pdf.save(`Etiquetas_${projectCode()}.pdf`);
-}
-
-function exportLabelsCsv() {
-  const headers = [
-    "cliente",
-    "codigo_proyecto",
-    "codigo_pieza",
-    "unidad",
-    "nombre_elemento",
-    "largo_mm",
-    "ancho_mm",
-    "tapacantos",
-  ];
-  const escapeCsv = (value) =>
-    `"${String(value ?? "").replaceAll('"', '""')}"`;
-  const lines = [
-    headers.join(";"),
-    ...labelRows().map((piece) =>
-      [
-        state.project.clientName,
-        projectCode(),
-        piece.code,
-        `${piece.unit}/${piece.quantity}`,
-        piece.name,
-        piece.length,
-        piece.width,
-        piece.edgeDescription,
-      ]
-        .map(escapeCsv)
-        .join(";"),
-    ),
-  ];
-  const blob = new Blob([`\uFEFF${lines.join("\r\n")}`], {
-    type: "text/csv;charset=utf-8",
-  });
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(blob);
-  link.download = `Etiquetas_editables_${projectCode()}.csv`;
-  link.click();
-  URL.revokeObjectURL(link.href);
 }
 
 function dimensionLimits(grain, material = selectedMaterial()) {
@@ -2197,119 +2427,39 @@ function exportPdf() {
   const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   pdf.setProperties({
     title: `Plano de corte · ${state.project.projectName || state.project.clientName}`,
-    subject: "Listado de piezas optimizadas y planos de corte",
+    subject: "Plano, listado de piezas y controles de producción por tablero",
     author: "Casa Diseño Multiespacio",
-  });
-  const generalRows = optimizedPieceList().map((row) => {
-    const material = materials.find((item) => item.id === row.materialId);
-    return {
-      piece: `${row.code}${row.name ? ` · ${row.name}` : ""}`,
-      material: `${material?.sku || "S/I"} · ${material?.name || ""}`,
-      finished: `${millimeters(row.finishedLength)}×${millimeters(
-        row.finishedWidth,
-      )}`,
-      cut: `${millimeters(row.cutLength)}×${millimeters(row.cutWidth)}`,
-      requested: String(row.requestedQuantity),
-      optimized: String(row.optimizedQuantity),
-      plates: row.plates.join(" · ") || "Sin ubicación",
-    };
-  });
-  addPdfTable(pdf, {
-    title: "LISTADO GENERAL DE PIEZAS OPTIMIZADAS",
-    subtitle: `${generalRows.length} línea(s) · ${generalRows.reduce(
-      (sum, row) => sum + Number(row.optimized || 0),
-      0,
-    )} pieza(s) ubicadas · Medidas en mm`,
-    useCurrentPage: true,
-    columns: [
-      { title: "CÓDIGO / ELEMENTO", key: "piece", width: 58 },
-      { title: "TABLERO", key: "material", width: 52 },
-      { title: "TERMINADA", key: "finished", width: 28 },
-      { title: "CORTE", key: "cut", width: 28 },
-      {
-        title: "SOLIC.",
-        key: "requested",
-        width: 18,
-        align: "right",
-      },
-      {
-        title: "OPTIM.",
-        key: "optimized",
-        width: 18,
-        align: "right",
-      },
-      { title: "PLACA(S)", key: "plates", width: 71 },
-    ],
-    rows: generalRows,
   });
 
   latestResult.plates.forEach((plate, index) => {
-    pdf.addPage("a4", "landscape");
+    if (index) pdf.addPage("a4", "landscape");
     const canvas = document.querySelector(`#plan-${plate.index}`);
-    const imageWidth = 283;
-    const imageHeight = (canvas.height / canvas.width) * imageWidth;
+    if (!canvas) return;
+    const maximumWidth = 283;
+    const maximumHeight = 194;
+    const imageScale = Math.min(
+      maximumWidth / canvas.width,
+      maximumHeight / canvas.height,
+    );
+    const imageWidth = canvas.width * imageScale;
+    const imageHeight = canvas.height * imageScale;
     pdf.addImage(
       canvas.toDataURL("image/png"),
       "PNG",
-      7,
+      (297 - imageWidth) / 2,
       (210 - imageHeight) / 2,
       imageWidth,
       imageHeight,
     );
-    const plateRows = summarizePlatePieces(plate).map((row) => ({
-      piece: `${row.code}${row.name ? ` · ${row.name}` : ""}`,
-      finished: `${millimeters(row.finishedLength)}×${millimeters(
-        row.finishedWidth,
-      )}`,
-      cut: `${millimeters(row.cutLength)}×${millimeters(row.cutWidth)}`,
-      quantity: String(row.quantity),
-      grain: grainLabels[row.grain] || row.grain,
-    }));
-    addPdfTable(pdf, {
-      title: `PIEZAS DE PLACA ${plate.materialPlateIndex} · ${plate.material.sku}`,
-      subtitle: `${plate.material.brand} ${plate.material.name} · ${
-        plate.material.plateLength
-      }×${plate.material.plateWidth}×${
-        plate.material.thickness
-      } mm · ${plate.pieces.length} pieza(s)`,
-      columns: [
-        { title: "CÓDIGO / ELEMENTO", key: "piece", width: 91 },
-        { title: "MEDIDA TERMINADA", key: "finished", width: 48 },
-        { title: "MEDIDA DE CORTE", key: "cut", width: 48 },
-        {
-          title: "CANTIDAD",
-          key: "quantity",
-          width: 28,
-          align: "right",
-        },
-        { title: "VETA", key: "grain", width: 58 },
-      ],
-      rows: plateRows,
-    });
-    const leftoverRows = summarizePlateLeftovers(plate).map((leftover) => ({
-      code: leftover.code,
-      dimensions: `${millimeters(leftover.width)}×${millimeters(
-        leftover.height,
-      )}`,
-      area: `${leftover.area.toLocaleString("es-CL", {
-        maximumFractionDigits: 2,
-      })} m²`,
-      board: `${plate.material.sku} · Placa ${plate.materialPlateIndex}`,
-    }));
-    if (leftoverRows.length) {
-      addPdfTable(pdf, {
-        title: `RETAZOS DE PLACA ${plate.materialPlateIndex} · ${plate.material.sku}`,
-        subtitle:
-          "Retazos reutilizables codificados · medidas en mm · verificar dimensiones antes de almacenar",
-        columns: [
-          { title: "CÓDIGO RETAZO", key: "code", width: 65 },
-          { title: "MEDIDAS", key: "dimensions", width: 55 },
-          { title: "ÁREA", key: "area", width: 45 },
-          { title: "ORIGEN", key: "board", width: 108 },
-        ],
-        rows: leftoverRows,
-      });
-    }
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(6.5);
+    pdf.setTextColor(83, 94, 104);
+    pdf.text(
+      `Hoja ${index + 1} de ${latestResult.plates.length} · Plano y listado inseparables`,
+      290,
+      206,
+      { align: "right" },
+    );
   });
   pdf.save(
     `Plano_Corte_${state.project.projectName.replace(/[^a-z0-9]+/gi, "_") || "Proyecto"}.pdf`,
@@ -2319,6 +2469,30 @@ function exportPdf() {
 app.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.target;
+  if (form.classList.contains("schedule-form")) {
+    const data = Object.fromEntries(new FormData(form));
+    try {
+      const payload = await api(
+        `/api/projects/${form.dataset.projectId}/schedule`,
+        {
+          method: "PATCH",
+          body: {
+            executionDate: data.executionDate || "",
+            deliveryDate: data.deliveryDate || "",
+          },
+        },
+      );
+      projectsCache = projectsCache.map((item) =>
+        item.id === payload.project.id
+          ? { ...item, ...payload.project }
+          : item,
+      );
+      notify("Agenda de producción actualizada.");
+    } catch (error) {
+      notify(error.message, "error");
+    }
+    return;
+  }
   if (form.id === "piece-form") {
     addPiece(form);
     return;
@@ -2579,6 +2753,22 @@ app.addEventListener("click", async (event) => {
     state.view = "projects";
     render();
   }
+  if (
+    action === "production-dashboard" &&
+    ["admin", "produccion"].includes(auth.user?.role)
+  ) {
+    try {
+      await loadProjects();
+      state.view = "production";
+      render();
+    } catch (error) {
+      notify(error.message, "error");
+    }
+  }
+  if (action === "production-period") {
+    state.productionPeriod = button.dataset.period || "week";
+    render();
+  }
   if (action === "users" && auth.user?.role === "admin") {
     try {
       await loadUsers();
@@ -2683,7 +2873,6 @@ app.addEventListener("click", async (event) => {
   if (action === "save") await saveProject();
   if (action === "pdf") exportPdf();
   if (action === "labels-pdf") exportLabelsPdf();
-  if (action === "labels-csv") exportLabelsCsv();
   if (action === "open-project") {
     if (button.dataset.notificationId) {
       try {
