@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { basename, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import bcrypt from "bcryptjs";
@@ -8,9 +8,10 @@ import express from "express";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import pg from "pg";
+import unzipper from "unzipper";
 
 import { materials } from "./src/data.js";
-import { pieceFitsMaterial } from "./src/logic.js";
+import { pieceFitsMaterial, validateRut } from "./src/logic.js";
 
 const { Pool } = pg;
 const root = fileURLToPath(new URL(".", import.meta.url));
@@ -31,6 +32,9 @@ const publicUser = (user) =>
     fullName: user.fullName,
     role: user.role,
     clientName: user.clientName || "",
+    phone: user.phone || "",
+    rut: user.rut || "",
+    location: user.location || "",
     active: Boolean(user.active),
     mustChangePassword: Boolean(user.mustChangePassword),
     createdAt: user.createdAt,
@@ -55,6 +59,9 @@ function normalizeUserInput(body = {}) {
     password: String(body.password || ""),
     role: String(body.role || "").trim().toLowerCase(),
     clientName: String(body.clientName || "").trim(),
+    phone: String(body.phone || "").trim(),
+    rut: String(body.rut || "").trim(),
+    location: String(body.location || "").trim(),
     active: parseActive(body.active, true),
   };
 }
@@ -102,6 +109,9 @@ function mapUser(row) {
     fullName: row.full_name,
     role: row.role,
     clientName: row.client_name,
+    phone: row.phone,
+    rut: row.rut,
+    location: row.location,
     active: row.active,
     mustChangePassword: Boolean(row.must_change_password),
     createdAt: row.created_at,
@@ -141,6 +151,16 @@ function mapNotification(row) {
     readAt: row.read_at,
     createdAt: row.created_at,
   };
+}
+
+function normalizeImageKey(value = "") {
+  return basename(String(value || ""), extname(String(value || "")))
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 function html(value) {
@@ -235,6 +255,9 @@ class PostgresStore {
         full_name TEXT NOT NULL,
         role TEXT NOT NULL CHECK (role IN ('admin','comercial','produccion','cliente')),
         client_name TEXT NOT NULL DEFAULT '',
+        phone TEXT NOT NULL DEFAULT '',
+        rut TEXT NOT NULL DEFAULT '',
+        location TEXT NOT NULL DEFAULT '',
         active BOOLEAN NOT NULL DEFAULT TRUE,
         must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -270,6 +293,12 @@ class PostgresStore {
         read_at TIMESTAMPTZ,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+      CREATE TABLE IF NOT EXISTS material_images (
+        sku TEXT PRIMARY KEY,
+        mime_type TEXT NOT NULL,
+        data BYTEA NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
       CREATE INDEX IF NOT EXISTS projects_owner_idx ON projects(owner_id);
       CREATE INDEX IF NOT EXISTS projects_status_idx ON projects(status);
       CREATE INDEX IF NOT EXISTS sessions_expiry_idx ON app_sessions(expires_at);
@@ -277,6 +306,12 @@ class PostgresStore {
         ON app_notifications(user_id, created_at DESC);
       ALTER TABLE app_users
         ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE app_users
+        ADD COLUMN IF NOT EXISTS phone TEXT NOT NULL DEFAULT '';
+      ALTER TABLE app_users
+        ADD COLUMN IF NOT EXISTS rut TEXT NOT NULL DEFAULT '';
+      ALTER TABLE app_users
+        ADD COLUMN IF NOT EXISTS location TEXT NOT NULL DEFAULT '';
     `);
     // La versión 2.0.1 ejecutó accidentalmente la prueba de integración contra
     // DATABASE_URL durante el build de Render. Se eliminan únicamente esos
@@ -305,9 +340,9 @@ class PostgresStore {
   async createUser(user) {
     const result = await this.pool.query(
       `INSERT INTO app_users
-        (id, email, password_hash, full_name, role, client_name, active,
-         must_change_password)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+        (id, email, password_hash, full_name, role, client_name, phone, rut,
+         location, active, must_change_password)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
        RETURNING *`,
       [
         user.id,
@@ -316,6 +351,9 @@ class PostgresStore {
         user.fullName,
         user.role,
         user.clientName || "",
+        user.phone || "",
+        user.rut || "",
+        user.location || "",
         user.active ?? true,
         user.mustChangePassword ?? false,
       ],
@@ -352,6 +390,14 @@ class PostgresStore {
     return result.rows.map(mapUser);
   }
 
+  async listActiveUsersByRole(role) {
+    const result = await this.pool.query(
+      "SELECT * FROM app_users WHERE role=$1 AND active=TRUE ORDER BY full_name",
+      [role],
+    );
+    return result.rows.map(mapUser);
+  }
+
   async updateUser(id, changes) {
     const current = await this.getUser(id);
     if (!current) return null;
@@ -359,7 +405,8 @@ class PostgresStore {
     const result = await this.pool.query(
       `UPDATE app_users
        SET email=$2, password_hash=$3, full_name=$4, role=$5,
-           client_name=$6, active=$7, must_change_password=$8, updated_at=NOW()
+           client_name=$6, phone=$7, rut=$8, location=$9, active=$10,
+           must_change_password=$11, updated_at=NOW()
        WHERE id=$1 RETURNING *`,
       [
         id,
@@ -368,6 +415,9 @@ class PostgresStore {
         next.fullName,
         next.role,
         next.clientName || "",
+        next.phone || "",
+        next.rut || "",
+        next.location || "",
         next.active,
         next.mustChangePassword ?? false,
       ],
@@ -445,6 +495,28 @@ class PostgresStore {
     return mapNotification(result.rows[0]);
   }
 
+  async upsertMaterialImage(image) {
+    const result = await this.pool.query(
+      `INSERT INTO material_images (sku, mime_type, data)
+       VALUES ($1,$2,$3)
+       ON CONFLICT (sku) DO UPDATE SET
+         mime_type=EXCLUDED.mime_type,
+         data=EXCLUDED.data,
+         updated_at=NOW()
+       RETURNING sku, mime_type, updated_at`,
+      [image.sku, image.mimeType, image.data],
+    );
+    return result.rows[0];
+  }
+
+  async getMaterialImage(sku) {
+    const result = await this.pool.query(
+      "SELECT sku, mime_type, data, updated_at FROM material_images WHERE sku=$1",
+      [sku],
+    );
+    return result.rows[0] || null;
+  }
+
   async listProjects(user) {
     const { where, params } = projectVisibility(user);
     const result = await this.pool.query(
@@ -509,7 +581,7 @@ export function projectVisibility(user) {
       user.role === "admin"
         ? "TRUE"
         : user.role === "produccion"
-          ? "(p.status IN ('venta','produccion') OR p.owner_id=$1)"
+          ? "(p.status='produccion' OR p.owner_id=$1)"
           : user.role === "comercial"
             ? "(p.owner_id=$1 OR p.assigned_to=$1)"
             : "p.owner_id=$1";
@@ -525,6 +597,7 @@ class MemoryStore {
     this.sessions = new Map();
     this.projects = new Map();
     this.notifications = new Map();
+    this.materialImages = new Map();
   }
   async init() {}
   async countUsers() {
@@ -556,6 +629,11 @@ class MemoryStore {
   async listActiveAdmins() {
     return [...this.users.values()].filter(
       (user) => user.role === "admin" && user.active,
+    );
+  }
+  async listActiveUsersByRole(role) {
+    return [...this.users.values()].filter(
+      (user) => user.role === role && user.active,
     );
   }
   async updateUser(id, changes) {
@@ -602,6 +680,14 @@ class MemoryStore {
     this.notifications.set(id, saved);
     return saved;
   }
+  async upsertMaterialImage(image) {
+    const saved = { ...image, updatedAt: new Date().toISOString() };
+    this.materialImages.set(image.sku, saved);
+    return saved;
+  }
+  async getMaterialImage(sku) {
+    return this.materialImages.get(sku) || null;
+  }
   async listProjects(user) {
     return [...this.projects.values()]
       .filter((project) => {
@@ -609,7 +695,7 @@ class MemoryStore {
         if (user.role === "produccion") {
           return (
             project.ownerId === user.id ||
-            ["venta", "produccion"].includes(project.project.status)
+            project.project.status === "produccion"
           );
         }
         if (user.role === "comercial") {
@@ -645,7 +731,7 @@ export function canReadProject(user, project) {
   if (user.role === "produccion") {
     return (
       project.ownerId === user.id ||
-      ["venta", "produccion"].includes(project.project.status)
+      project.project.status === "produccion"
     );
   }
   if (user.role === "comercial") {
@@ -656,9 +742,17 @@ export function canReadProject(user, project) {
 
 export function canEditProject(user, project) {
   if (user.role === "admin") return true;
-  if (user.role === "produccion") return canReadProject(user, project);
+  if (user.role === "produccion") {
+    return (
+      project.ownerId === user.id &&
+      project.project.status === "cotizacion"
+    );
+  }
   if (user.role === "comercial") {
-    return project.ownerId === user.id || project.assignedTo === user.id;
+    return (
+      project.project.status !== "produccion" &&
+      (project.ownerId === user.id || project.assignedTo === user.id)
+    );
   }
   return project.ownerId === user.id && project.project.status === "cotizacion";
 }
@@ -783,6 +877,13 @@ export async function createApplication({ store, useMemory = false } = {}) {
     legacyHeaders: false,
     message: { error: "Demasiados intentos. Espera 15 minutos." },
   });
+  const registerLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    limit: 8,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    message: { error: "Demasiados registros. Intenta nuevamente más tarde." },
+  });
 
   const authenticate = async (request, response, next) => {
     const token = parseCookies(request.get("cookie")).casa_session;
@@ -885,6 +986,55 @@ export async function createApplication({ store, useMemory = false } = {}) {
     return response.json({ user: publicUser(user), csrfToken });
   });
 
+  app.post("/api/auth/register", registerLimiter, async (request, response) => {
+    if ((await database.countUsers()) === 0) {
+      return response.status(409).json({
+        error: "Primero debe crearse la cuenta administradora del sistema.",
+      });
+    }
+    const input = normalizeUserInput({
+      ...request.body,
+      role: "cliente",
+      active: true,
+    });
+    if (
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email) ||
+      input.fullName.length < 2 ||
+      input.phone.length < 7 ||
+      input.password.length < 10
+    ) {
+      return response.status(400).json({
+        error:
+          "Completa nombre, correo, teléfono y una clave de al menos 10 caracteres.",
+      });
+    }
+    if (input.rut && !validateRut(input.rut)) {
+      return response.status(400).json({ error: "El RUT ingresado no es válido." });
+    }
+    try {
+      const user = await database.createUser({
+        id: randomUUID(),
+        email: input.email,
+        passwordHash: await bcrypt.hash(input.password, 12),
+        fullName: input.fullName,
+        role: "cliente",
+        clientName: input.clientName,
+        phone: input.phone,
+        rut: input.rut,
+        location: input.location,
+        active: true,
+        mustChangePassword: false,
+      });
+      const csrfToken = await createSession(response, user);
+      return response.status(201).json({ user: publicUser(user), csrfToken });
+    } catch (error) {
+      if (error.code === "23505") {
+        return response.status(409).json({ error: "Ese correo ya está registrado." });
+      }
+      throw error;
+    }
+  });
+
   app.get("/api/auth/me", authenticate, (request, response) => {
     response.json({
       user: publicUser(request.auth.user),
@@ -931,6 +1081,16 @@ export async function createApplication({ store, useMemory = false } = {}) {
     response.json({ users: (await database.listUsers()).map(publicUser) });
   });
 
+  app.get("/api/commercials", authenticate, async (_request, response) => {
+    const commercials = await database.listActiveUsersByRole("comercial");
+    response.json({
+      commercials: commercials.map((user) => ({
+        id: user.id,
+        fullName: user.fullName,
+      })),
+    });
+  });
+
   app.post("/api/users", authenticate, csrf, adminOnly, async (request, response) => {
     const input = normalizeUserInput(request.body);
     const validationError = userInputError(input);
@@ -945,6 +1105,9 @@ export async function createApplication({ store, useMemory = false } = {}) {
         fullName: input.fullName,
         role: input.role,
         clientName: input.clientName,
+        phone: input.phone,
+        rut: input.rut,
+        location: input.location,
         active: input.active,
         mustChangePassword: true,
       });
@@ -1025,6 +1188,9 @@ export async function createApplication({ store, useMemory = false } = {}) {
               fullName: item.input.fullName,
               role: item.input.role,
               clientName: item.input.clientName,
+              phone: item.input.phone,
+              rut: item.input.rut,
+              location: item.input.location,
               active: item.input.active,
               mustChangePassword: true,
             });
@@ -1061,6 +1227,15 @@ export async function createApplication({ store, useMemory = false } = {}) {
       if (request.body.clientName !== undefined) {
         changes.clientName = String(request.body.clientName).trim();
       }
+      if (request.body.phone !== undefined) {
+        changes.phone = String(request.body.phone).trim();
+      }
+      if (request.body.rut !== undefined) {
+        changes.rut = String(request.body.rut).trim();
+      }
+      if (request.body.location !== undefined) {
+        changes.location = String(request.body.location).trim();
+      }
       if (request.body.role !== undefined && validRoles.has(request.body.role)) {
         changes.role = request.body.role;
       }
@@ -1080,7 +1255,6 @@ export async function createApplication({ store, useMemory = false } = {}) {
   app.get(
     "/api/notifications",
     authenticate,
-    adminOnly,
     async (request, response) => {
       const notifications = await database.listNotifications(
         request.auth.user.id,
@@ -1096,7 +1270,6 @@ export async function createApplication({ store, useMemory = false } = {}) {
     "/api/notifications/:id/read",
     authenticate,
     csrf,
-    adminOnly,
     async (request, response) => {
       const notification = await database.markNotificationRead(
         request.params.id,
@@ -1110,6 +1283,61 @@ export async function createApplication({ store, useMemory = false } = {}) {
       return response.json({ notification });
     },
   );
+
+  app.post(
+    "/api/material-images/import",
+    authenticate,
+    csrf,
+    adminOnly,
+    express.raw({ type: ["application/zip", "application/x-zip-compressed"], limit: "80mb" }),
+    async (request, response) => {
+      if (!Buffer.isBuffer(request.body) || !request.body.length) {
+        return response.status(400).json({ error: "Selecciona un archivo ZIP válido." });
+      }
+      const archive = await unzipper.Open.buffer(request.body);
+      const candidates = archive.files.filter(
+        (file) =>
+          file.type === "File" &&
+          [".jpg", ".jpeg", ".png", ".webp"].includes(
+            extname(file.path).toLowerCase(),
+          ),
+      );
+      if (!candidates.length || candidates.length > 500) {
+        return response.status(400).json({
+          error: "El ZIP debe contener entre 1 y 500 imágenes JPG, PNG o WEBP.",
+        });
+      }
+      const imported = [];
+      const rejected = [];
+      for (const file of candidates) {
+        const data = await file.buffer();
+        const sku = normalizeImageKey(file.path);
+        if (!sku || data.length > 2_500_000) {
+          rejected.push(file.path);
+          continue;
+        }
+        const extension = extname(file.path).toLowerCase();
+        const mimeType =
+          extension === ".png"
+            ? "image/png"
+            : extension === ".webp"
+              ? "image/webp"
+              : "image/jpeg";
+        await database.upsertMaterialImage({ sku, mimeType, data });
+        imported.push(sku);
+      }
+      return response.json({ imported, rejected });
+    },
+  );
+
+  app.get("/api/material-images/:sku", authenticate, async (request, response) => {
+    const sku = normalizeImageKey(request.params.sku);
+    const image = await database.getMaterialImage(sku);
+    if (!image) return response.status(404).end();
+    response.set("content-type", image.mime_type || image.mimeType);
+    response.set("cache-control", "public, max-age=86400");
+    return response.send(image.data);
+  });
 
   app.get("/api/projects", authenticate, async (request, response) => {
     response.json({ projects: await database.listProjects(request.auth.user) });
@@ -1133,9 +1361,20 @@ export async function createApplication({ store, useMemory = false } = {}) {
       return response.status(400).json({ error: dimensionError });
     }
     if (request.auth.user.role !== "admin") {
-      record.assignedTo =
-        request.auth.user.role === "comercial" ? request.auth.user.id : null;
-      if (request.auth.user.role === "cliente") record.project.status = "cotizacion";
+      if (request.auth.user.role === "comercial") {
+        record.assignedTo = request.auth.user.id;
+      }
+      if (request.auth.user.role === "cliente") {
+        const commercial = record.assignedTo
+          ? await database.getUser(record.assignedTo)
+          : null;
+        if (!commercial?.active || commercial.role !== "comercial") {
+          return response.status(400).json({
+            error: "Selecciona el comercial que atenderá esta cotización.",
+          });
+        }
+        record.project.status = "cotizacion";
+      }
     }
     const saved = await database.saveProject(record);
     const admins = await database.listActiveAdmins();
@@ -1149,6 +1388,21 @@ export async function createApplication({ store, useMemory = false } = {}) {
         message: `${saved.project.clientName} · ${
           saved.project.projectName || "Proyecto sin nombre"
         } · creada por ${request.auth.user.fullName}`,
+      });
+    }
+    if (
+      saved.assignedTo &&
+      !admins.some((admin) => admin.id === saved.assignedTo)
+    ) {
+      await database.createNotification({
+        id: randomUUID(),
+        userId: saved.assignedTo,
+        projectId: saved.id,
+        type: "assigned_quote",
+        title: "Cotización asignada",
+        message: `${saved.project.clientName} · ${
+          saved.project.projectName || "Proyecto sin nombre"
+        }`,
       });
     }
     sendQuoteEmail(
@@ -1177,9 +1431,40 @@ export async function createApplication({ store, useMemory = false } = {}) {
     if (dimensionError) {
       return response.status(400).json({ error: dimensionError });
     }
-    if (request.auth.user.role === "cliente") record.project.status = "cotizacion";
-    if (request.auth.user.role !== "admin") record.assignedTo = current.assignedTo;
+    if (request.auth.user.role === "cliente") {
+      record.project.status = "cotizacion";
+      record.assignedTo = current.assignedTo;
+    }
+    if (request.auth.user.role === "comercial") {
+      record.assignedTo = current.assignedTo || request.auth.user.id;
+    }
+    const enteredProduction =
+      current.project.status !== "produccion" &&
+      record.project.status === "produccion";
+    if (
+      enteredProduction &&
+      !["admin", "comercial"].includes(request.auth.user.role)
+    ) {
+      return response.status(403).json({
+        error: "Solo Administración o Comercial pueden enviar a Producción.",
+      });
+    }
     const saved = await database.saveProject(record);
+    if (enteredProduction) {
+      const productionUsers = await database.listActiveUsersByRole("produccion");
+      for (const user of productionUsers) {
+        await database.createNotification({
+          id: randomUUID(),
+          userId: user.id,
+          projectId: saved.id,
+          type: "production_order",
+          title: "Nueva orden de producción",
+          message: `${saved.project.clientName} · ${
+            saved.project.projectName || "Proyecto sin nombre"
+          } · enviada por ${request.auth.user.fullName}`,
+        });
+      }
+    }
     return response.json({ project: saved });
   });
 

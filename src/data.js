@@ -18,8 +18,8 @@ export const grainLabels = {
 };
 
 export const sides = [
-  ["top", "Superior"],
-  ["right", "Derecho"],
-  ["bottom", "Inferior"],
-  ["left", "Izquierdo"],
+  ["top", "L1 · Superior"],
+  ["bottom", "L2 · Inferior"],
+  ["left", "A1 · Izquierdo"],
+  ["right", "A2 · Derecho"],
 ];

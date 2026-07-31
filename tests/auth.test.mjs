@@ -218,7 +218,7 @@ test("protege acceso, crea perfiles y permite guardar proyectos por perfil", asy
     const visible = await request(base, "/api/projects", {
       headers: { cookie: productionCookie },
     });
-    assert.equal(visible.body.projects.length, 1);
+    assert.equal(visible.body.projects.length, 0);
 
     const productionProject = await request(base, "/api/projects", {
       method: "POST",
@@ -262,14 +262,14 @@ test("protege acceso, crea perfiles y permite guardar proyectos por perfil", asy
     const visibleAfterSave = await request(base, "/api/projects", {
       headers: { cookie: productionCookie },
     });
-    assert.equal(visibleAfterSave.body.projects.length, 2);
+    assert.equal(visibleAfterSave.body.projects.length, 1);
 
     const advanced = await request(
       base,
       `/api/projects/${project.body.project.id}`,
       {
         method: "PATCH",
-        headers: productionHeaders,
+        headers: adminHeaders,
         body: JSON.stringify({
           ...project.body.project,
           project: {
@@ -281,6 +281,31 @@ test("protege acceso, crea perfiles y permite guardar proyectos por perfil", asy
     );
     assert.equal(advanced.response.status, 200);
     assert.equal(advanced.body.project.project.status, "produccion");
+
+    const visibleInProduction = await request(base, "/api/projects", {
+      headers: { cookie: productionCookie },
+    });
+    assert.equal(visibleInProduction.body.projects.length, 2);
+    const productionNotifications = await request(base, "/api/notifications", {
+      headers: { cookie: productionCookie },
+    });
+    assert.equal(productionNotifications.response.status, 200);
+    assert.equal(productionNotifications.body.notifications.length, 1);
+    assert.equal(
+      productionNotifications.body.notifications[0].type,
+      "production_order",
+    );
+
+    const blockedProductionEdit = await request(
+      base,
+      `/api/projects/${project.body.project.id}`,
+      {
+        method: "PATCH",
+        headers: productionHeaders,
+        body: JSON.stringify(advanced.body.project),
+      },
+    );
+    assert.equal(blockedProductionEdit.response.status, 403);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
@@ -320,7 +345,7 @@ test("notifica nuevas cotizaciones a contacto y evita destinatarios repetidos", 
   );
 });
 
-test("todos los perfiles pueden guardar los proyectos que les corresponden", () => {
+test("respeta edición por rol y bloquea pedidos enviados a producción", () => {
   const ownQuote = {
     ownerId: "usuario-1",
     assignedTo: "comercial-1",
@@ -342,4 +367,123 @@ test("todos los perfiles pueden guardar los proyectos que les corresponden", () 
     canEditProject({ id: "usuario-1", role: "cliente" }, ownQuote),
     true,
   );
+  assert.equal(
+    canEditProject(
+      { id: "comercial-1", role: "comercial" },
+      { ...ownQuote, project: { status: "produccion" } },
+    ),
+    false,
+  );
+});
+
+test("permite autoregistro de clientes y exige sus datos obligatorios", async () => {
+  const { app } = await createApplication({ useMemory: true });
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise((resolve) => server.once("listening", resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const setup = await request(base, "/api/auth/setup", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        fullName: "Administración",
+        email: "admin@example.cl",
+        password: "ClaveAdmin123",
+      }),
+    });
+    assert.equal(setup.response.status, 201);
+    const adminCookie = setup.response.headers.get("set-cookie").split(";")[0];
+    const commercial = await request(base, "/api/users", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: adminCookie,
+        "x-csrf-token": setup.body.csrfToken,
+      },
+      body: JSON.stringify({
+        fullName: "Comercial Asignable",
+        email: "comercial@example.cl",
+        password: "TemporalComercial123",
+        role: "comercial",
+      }),
+    });
+    assert.equal(commercial.response.status, 201);
+
+    const invalid = await request(base, "/api/auth/register", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        fullName: "Cliente",
+        email: "cliente@example.cl",
+        password: "ClaveSegura123",
+      }),
+    });
+    assert.equal(invalid.response.status, 400);
+
+    const registered = await request(base, "/api/auth/register", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        fullName: "Cliente Autoregistrado",
+        email: "cliente@example.cl",
+        phone: "+56 9 1234 5678",
+        password: "ClaveSegura123",
+        clientName: "Empresa opcional",
+        location: "Santiago",
+      }),
+    });
+    assert.equal(registered.response.status, 201);
+    assert.equal(registered.body.user.role, "cliente");
+    assert.equal(registered.body.user.phone, "+56 9 1234 5678");
+    assert.equal(registered.body.user.clientName, "Empresa opcional");
+    const clientCookie = registered.response.headers.get("set-cookie").split(";")[0];
+    const clientHeaders = {
+      "content-type": "application/json",
+      cookie: clientCookie,
+      "x-csrf-token": registered.body.csrfToken,
+    };
+    const commercials = await request(base, "/api/commercials", {
+      headers: { cookie: clientCookie },
+    });
+    assert.equal(commercials.body.commercials.length, 1);
+    assert.equal(
+      commercials.body.commercials[0].id,
+      commercial.body.user.id,
+    );
+
+    const quote = await request(base, "/api/projects", {
+      method: "POST",
+      headers: clientHeaders,
+      body: JSON.stringify({
+        assignedTo: commercial.body.user.id,
+        project: {
+          clientName: "Empresa opcional",
+          status: "produccion",
+        },
+        materialId: "62-egger-1502-1",
+        pieces: [
+          {
+            id: "pieza-cliente",
+            code: "",
+            name: "",
+            materialId: "62-egger-1502-1",
+            length: 500,
+            width: 400,
+            quantity: 1,
+            grain: "longitudinal",
+            edges: {},
+          },
+        ],
+      }),
+    });
+    assert.equal(quote.response.status, 201);
+    assert.equal(quote.body.project.project.status, "cotizacion");
+    assert.equal(quote.body.project.assignedTo, commercial.body.user.id);
+    const ownProjects = await request(base, "/api/projects", {
+      headers: { cookie: clientCookie },
+    });
+    assert.equal(ownProjects.body.projects.length, 1);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });

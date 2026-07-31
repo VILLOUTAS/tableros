@@ -11,8 +11,10 @@ import {
   statusLabels,
 } from "./data.js";
 import {
+  assignPieceCodes,
   clp,
   cutDimensions,
+  cutRateForMaterial,
   drawCutPlan,
   edgeImportLabel,
   formatRut,
@@ -22,6 +24,7 @@ import {
   pieceFitsMaterial,
   resolveCatalogReference,
   summarizeOptimizedPieces,
+  summarizePlateLeftovers,
   summarizePlatePieces,
   validateRut,
 } from "./logic.js";
@@ -46,6 +49,7 @@ function emptyState() {
       rut: "",
       status: "cotizacion",
     },
+    assignedTo: "",
     categoryId: "",
     materialId: "",
     materialIds: [],
@@ -54,7 +58,8 @@ function emptyState() {
     pieces: [],
     settings: {
       kerf: 2,
-      cutRatePerBoard: 900,
+      melamineCutRate: 7500,
+      specialCutRate: 10500,
       optimizationMode: "longitudinal",
       boardDiscount: 0,
       edgeDiscount: 0,
@@ -70,13 +75,16 @@ let latestResult = null;
 let projectsCache = [];
 let usersCache = [];
 let notificationsCache = [];
+let commercialsCache = [];
 let bulkUserPreview = null;
+let imageImportResult = null;
 const auth = {
   user: null,
   csrfToken: "",
   needsSetup: null,
   loading: true,
   error: "",
+  mode: "login",
 };
 
 const safe = (value = "") =>
@@ -99,6 +107,9 @@ const selectedMaterials = () => {
 
 const selectedMaterial = (id = state.materialId) =>
   materials.find((item) => item.id === id) || selectedMaterials()[0];
+
+const materialImageUrl = (material) =>
+  `/api/material-images/${encodeURIComponent(material?.sku || material?.id || "")}`;
 
 async function api(path, options = {}) {
   const headers = { ...(options.headers || {}) };
@@ -131,8 +142,14 @@ async function loadUsers() {
   usersCache = payload.users || [];
 }
 
+async function loadCommercials() {
+  if (!auth.user) return;
+  const payload = await api("/api/commercials");
+  commercialsCache = payload.commercials || [];
+}
+
 async function loadNotifications() {
-  if (auth.user?.role !== "admin") return;
+  if (!["admin", "comercial", "produccion"].includes(auth.user?.role)) return;
   const payload = await api("/api/notifications");
   notificationsCache = payload.notifications || [];
 }
@@ -146,8 +163,33 @@ function canCreateQuote() {
   return Boolean(auth.user);
 }
 
+function newQuoteState() {
+  const fresh = emptyState();
+  if (auth.user?.role === "cliente") {
+    fresh.project.clientName =
+      auth.user.clientName || auth.user.fullName || "";
+    fresh.project.rut = auth.user.rut || "";
+  }
+  if (auth.user?.role === "comercial") {
+    fresh.assignedTo = auth.user.id;
+  }
+  return fresh;
+}
+
 function canEditCurrent() {
   if (!auth.user) return false;
+  if (auth.user.role === "produccion") {
+    return (
+      (!state.ownerId || state.ownerId === auth.user.id) &&
+      state.project.status === "cotizacion"
+    );
+  }
+  if (
+    auth.user.role === "comercial" &&
+    state.project.status === "produccion"
+  ) {
+    return false;
+  }
   if (auth.user.role === "cliente" && state.project.status !== "cotizacion") {
     return false;
   }
@@ -173,6 +215,10 @@ function validateCurrentStep() {
     }
     if (state.project.rut.trim() && !validateRut(state.project.rut)) {
       notify("Ingresa un RUT chileno válido.", "error");
+      return false;
+    }
+    if (auth.user?.role === "cliente" && !state.assignedTo) {
+      notify("Selecciona el comercial que atenderá tu cotización.", "error");
       return false;
     }
   }
@@ -203,6 +249,10 @@ async function saveProject(showMessage = true) {
     notify("Faltan datos obligatorios para guardar el proyecto.", "error");
     return false;
   }
+  if (auth.user?.role === "cliente" && !state.assignedTo) {
+    notify("Selecciona un comercial antes de guardar.", "error");
+    return false;
+  }
   const result = optimizeProject(
     selectedMaterials(),
     state.pieces,
@@ -218,6 +268,7 @@ async function saveProject(showMessage = true) {
     defaultGrain: state.defaultGrain,
     pieces: state.pieces,
     settings: state.settings,
+    assignedTo: state.assignedTo || null,
     summary: result.summary,
   };
   try {
@@ -230,7 +281,9 @@ async function saveProject(showMessage = true) {
     const index = projectsCache.findIndex((item) => item.id === state.projectId);
     if (index >= 0) projectsCache[index] = payload.project;
     else projectsCache.unshift(payload.project);
-    if (!exists && auth.user?.role === "admin") await loadNotifications();
+    if (!exists && ["admin", "comercial"].includes(auth.user?.role)) {
+      await loadNotifications();
+    }
     if (showMessage) notify("Proyecto guardado correctamente.");
     return true;
   } catch (error) {
@@ -271,6 +324,7 @@ const roleLabels = {
 
 function accessView() {
   const setup = auth.needsSetup;
+  const registering = !setup && auth.mode === "register";
   return `
     <main class="access-page">
       <section class="access-brand">
@@ -278,24 +332,69 @@ function accessView() {
         <p>Cotizador, optimizador y gestión de proyectos</p>
       </section>
       <section class="card access-card">
-        <p class="eyebrow">${setup ? "CONFIGURACIÓN INICIAL" : "ACCESO SEGURO"}</p>
-        <h1>${setup ? "Crear administrador" : "Iniciar sesión"}</h1>
+        <p class="eyebrow">${
+          setup
+            ? "CONFIGURACIÓN INICIAL"
+            : registering
+              ? "AUTOREGISTRO DE CLIENTE"
+              : "ACCESO SEGURO"
+        }</p>
+        <h1>${
+          setup
+            ? "Crear administrador"
+            : registering
+              ? "Crear mi cuenta"
+              : "Iniciar sesión"
+        }</h1>
         <p>${
           setup
             ? "Esta cuenta controlará usuarios, cotizaciones y producción."
-            : "Ingresa con el usuario asignado por el administrador."
+            : registering
+              ? "Regístrate para crear, guardar y consultar únicamente tus propias cotizaciones."
+              : "Ingresa con tu cuenta o crea un acceso como cliente."
         }</p>
-        <form id="${setup ? "setup-form" : "login-form"}" class="access-form">
+        <form id="${
+          setup ? "setup-form" : registering ? "register-form" : "login-form"
+        }" class="access-form">
           ${
-            setup
+            setup || registering
               ? `<label>Nombre completo <em>*</em><input name="fullName" required autocomplete="name" /></label>`
               : ""
           }
           <label>Correo <em>*</em><input name="email" type="email" required autocomplete="username" /></label>
-          <label>Clave <em>*</em><input name="password" type="password" minlength="10" required autocomplete="${setup ? "new-password" : "current-password"}" /></label>
-          <small>${setup ? "Usa al menos 10 caracteres." : "La sesión se mantiene por 8 horas."}</small>
+          ${
+            registering
+              ? `<label>Teléfono <em>*</em><input name="phone" type="tel" minlength="7" required autocomplete="tel" /></label>
+                <label>Empresa <small>Opcional</small><input name="clientName" autocomplete="organization" /></label>
+                <label>RUT <small>Opcional</small><input name="rut" /></label>
+                <label>Ubicación <small>Opcional</small><input name="location" autocomplete="address-level2" /></label>`
+              : ""
+          }
+          <label>Clave <em>*</em><input name="password" type="password" minlength="10" required autocomplete="${
+            setup || registering ? "new-password" : "current-password"
+          }" /></label>
+          <small>${
+            setup || registering
+              ? "Usa al menos 10 caracteres."
+              : "La sesión se mantiene por 8 horas."
+          }</small>
           ${auth.error ? `<div class="form-error">${safe(auth.error)}</div>` : ""}
-          <button class="primary" type="submit">${setup ? "Crear cuenta y continuar" : "Ingresar"}</button>
+          <button class="primary" type="submit">${
+            setup
+              ? "Crear cuenta y continuar"
+              : registering
+                ? "Registrarme y continuar"
+                : "Ingresar"
+          }</button>
+          ${
+            setup
+              ? ""
+              : `<button class="ghost" type="button" data-action="toggle-access">${
+                  registering
+                    ? "Ya tengo una cuenta"
+                    : "Soy cliente nuevo: crear cuenta"
+                }</button>`
+          }
         </form>
       </section>
     </main>`;
@@ -342,7 +441,7 @@ function shell(content) {
             .map(
               ([title, subtitle], index) => `
                 <button class="step-link ${state.view === "quote" && state.step === index ? "active" : ""}"
-                  data-action="step" data-step="${index}" ${index > state.step ? "disabled" : ""}>
+                  data-action="step" data-step="${index}">
                   <span>${index + 1}</span>
                   <b>${title}<small>${subtitle}</small></b>
                 </button>`,
@@ -353,13 +452,17 @@ function shell(content) {
           <span>⌂</span><b>Proyectos<small>Control y estados</small></b>
         </button>
         ${
-          auth.user?.role === "admin"
+          ["admin", "comercial", "produccion"].includes(auth.user?.role)
             ? `<button class="step-link ${state.view === "notifications" ? "active" : ""}" data-action="notifications">
-                <span>♢</span><b>Notificaciones<small><i class="notification-badge" ${unreadNotifications() ? "" : "hidden"}>${unreadNotifications()}</i> Nuevas cotizaciones</small></b>
+                <span>♢</span><b>Notificaciones<small><i class="notification-badge" ${unreadNotifications() ? "" : "hidden"}>${unreadNotifications()}</i> Alertas</small></b>
               </button>
-              <button class="step-link ${state.view === "users" ? "active" : ""}" data-action="users">
-                <span>♙</span><b>Usuarios<small>Perfiles y accesos</small></b>
-              </button>`
+              ${
+                auth.user?.role === "admin"
+                  ? `<button class="step-link ${state.view === "users" ? "active" : ""}" data-action="users">
+                      <span>♙</span><b>Usuarios<small>Perfiles y accesos</small></b>
+                    </button>`
+                  : ""
+              }`
             : ""
         }
         <div class="sidebar-user">
@@ -407,6 +510,10 @@ function shell(content) {
 }
 
 function projectStep() {
+  const statusEditable =
+    ["admin", "comercial"].includes(auth.user?.role) &&
+    state.project.status !== "produccion";
+  const commercialRequired = auth.user?.role === "cliente";
   return `
     <section class="hero-card">
       <div>
@@ -430,9 +537,7 @@ function projectStep() {
           <small>Opcional; si se ingresa, se valida módulo 11.</small>
         </label>
         <label>Estado
-          <select data-project="status" ${
-            auth.user?.role === "cliente" ? "disabled" : ""
-          }>
+          <select data-project="status" ${statusEditable ? "" : "disabled"}>
             ${Object.entries(statusLabels)
               .map(
                 ([value, label]) =>
@@ -440,6 +545,24 @@ function projectStep() {
               )
               .join("")}
           </select>
+        </label>
+        <label>Comercial responsable ${commercialRequired ? "<em>*</em>" : ""}
+          <select data-assigned-to ${commercialRequired ? "required" : ""} ${
+            ["comercial", "produccion"].includes(auth.user?.role)
+              ? "disabled"
+              : ""
+          }>
+            <option value="">Seleccionar comercial</option>
+            ${commercialsCache
+              .map(
+                (commercial) =>
+                  `<option value="${commercial.id}" ${
+                    commercial.id === state.assignedTo ? "selected" : ""
+                  }>${safe(commercial.fullName)}</option>`,
+              )
+              .join("")}
+          </select>
+          <small>El comercial recibirá la cotización en su panel.</small>
         </label>
       </div>
     </section>
@@ -461,7 +584,7 @@ function materialStep() {
             ${chosenMaterials
               .map(
                 (material) => `<article>
-                  <span class="sample" style="background:${material.texture}"><img class="material-image" src="${safe(material.image)}" alt="" /></span>
+                  <span class="sample" style="background:${material.texture}"><img class="material-image" src="${materialImageUrl(material)}" data-fallback="${safe(material.image)}" alt="" /></span>
                   <div><small>${safe(material.sku)}</small><b>${safe(material.name)}</b></div>
                   <button class="icon danger" data-action="remove-material" data-id="${material.id}" aria-label="Quitar ${safe(material.name)}">×</button>
                 </article>`,
@@ -500,7 +623,7 @@ function materialStep() {
                   return `
                   <button class="product ${isSelected ? "selected" : ""}" data-material="${material.id}" data-search-text="${safe(`${material.sku} ${material.name} ${material.brand}`.toLowerCase())}">
                     <span class="sample" style="background:${material.texture}">
-                      <img class="material-image" src="${safe(material.image)}" alt="" loading="lazy" />
+                      <img class="material-image" src="${materialImageUrl(material)}" data-fallback="${safe(material.image)}" alt="" loading="lazy" />
                     </span>
                     <span class="product-copy"><small>${safe(material.brand)} · ${safe(material.sku)}</small><b>${safe(material.name)}</b><em>${material.plateLength} × ${material.plateWidth} × ${material.thickness} mm</em><strong>${clp(material.netPrice)} neto</strong>
                     ${
@@ -531,10 +654,10 @@ function piecesStep() {
     </section>
     <div class="two-columns">
       <section class="card">
-        <div class="section-title"><span>＋</span><div><h3>Agregar pieza</h3><p>El nombre es opcional; el código se genera automáticamente.</p></div></div>
+        <div class="section-title"><span>＋</span><div><h3>Agregar pieza</h3><p>El nombre es opcional; el código se asignará al generar la hoja de corte.</p></div></div>
         <form id="piece-form" class="piece-form">
-          <label>Código autogenerado
-            <div class="locked-field">${nextPieceCode()} <span>Automático</span></div>
+          <label>Código de producción
+            <div class="locked-field">Pendiente <span>Se genera al optimizar</span></div>
           </label>
           <label>Nombre del elemento <small>Opcional</small><input name="name" placeholder="Costado izquierdo" /></label>
           <label class="piece-material-field">Tablero de esta pieza <em>*</em>
@@ -566,7 +689,7 @@ function piecesStep() {
         </form>
       </section>
       <section class="card import-card">
-        <div class="section-title"><span>⇧</span><div><h3>Importar Excel</h3><p>Indica el código de material por fila; si queda vacío se usará el tablero activo.</p></div></div>
+        <div class="section-title"><span>⇧</span><div><h3>Importar Excel</h3><p>Selecciona el tablero y los tapacantos por fila desde listas dinámicas.</p></div></div>
         <label class="dropzone">
           <input type="file" id="excel-file" accept=".xlsx" />
           <strong>Seleccionar archivo</strong>
@@ -576,7 +699,7 @@ function piecesStep() {
         ${
           state.importPreview
             ? `<div class="import-result ${state.importPreview.errors.length ? "warning" : ""}">
-                <b>${state.importPreview.rows.length} filas válidas</b>
+                <b>${safe(state.importPreview.fileName || "Archivo seleccionado")} · ${state.importPreview.rows.length} filas válidas</b>
                 <span>${state.importPreview.errors.length} observaciones</span>
                 ${
                   state.importPreview.errors.length
@@ -602,13 +725,26 @@ function piecesTable() {
     <div class="section-title"><span>▦</span><div><h3>Listado de piezas</h3><p>${state.pieces.length} líneas ingresadas.</p></div></div>
     <div class="table-wrap"><table>
       <thead><tr><th>Código · elemento</th><th>Tablero</th><th>Terminada</th><th>Cant.</th><th>Veta</th><th></th></tr></thead>
-      <tbody>${state.pieces
-        .map((piece) => {
+      <tbody>${selectedMaterials()
+        .flatMap((groupMaterial) => {
+          const groupPieces = state.pieces.filter(
+            (piece) => piece.materialId === groupMaterial.id,
+          );
+          if (!groupPieces.length) return [];
+          return [
+            `<tr class="material-group-row"><td colspan="6"><b>${safe(
+              groupMaterial.sku,
+            )} · ${safe(groupMaterial.name)}</b><span>${
+              groupPieces.length
+            } línea(s)</span></td></tr>`,
+            ...groupPieces.map((piece) => {
           const material = selectedMaterial(piece.materialId);
           const limits = dimensionLimits(piece.grain, material);
           const editable = canEditCurrent();
           return `<tr>
-            <td><b>${safe(piece.code)}</b><span>${safe(piece.name)}</span></td>
+            <td><b>${safe(piece.code || "Pendiente")}</b><span>${safe(
+              piece.name || "Sin nombre",
+            )}</span></td>
             <td><b>${safe(material?.sku || "Sin asignar")}</b><span>${safe(material?.name || "")}</span></td>
             <td>${
               editable
@@ -632,6 +768,8 @@ function piecesTable() {
                 : ""
             }</td>
           </tr>`;
+            }),
+          ];
         })
         .join("")}</tbody>
     </table></div>
@@ -661,11 +799,32 @@ function edgeStep() {
               <div><small>${safe(piece.code)} · ${safe(pieceMaterial?.sku || "Sin tablero")}</small><h3>${safe(piece.name || "Pieza sin nombre")}</h3><p>${safe(pieceMaterial?.name || "")} · Terminada: ${piece.length} × ${piece.width} mm · Cantidad: ${piece.quantity}</p></div>
               <div class="cut-size"><span>MEDIDA DE CORTE</span><b>${cut.cutLength} × ${cut.cutWidth} mm</b></div>
             </div>
-            <div class="edge-sides">
+            <div class="edge-diagram" aria-label="Tapacantos por posición">
+              <div class="edge-piece-shape">
+                <span>${piece.length} × ${piece.width} mm</span>
+                <small>L1 superior · L2 inferior · A1 izquierdo · A2 derecho</small>
+              </div>
               ${sides
-                .map(
-                  ([side, label]) => `<label><span>${label}</span><select data-piece-edge="${piece.id}" data-side="${side}">${edgeOptions(piece.edges[side])}</select></label>`,
-                )
+                .map(([side, label]) => {
+                  const edge = edgeBands.find(
+                    (item) => item.id === piece.edges?.[side],
+                  );
+                  return `<label class="edge-control edge-${side}">
+                    <span>${label}</span>
+                    <span class="edge-selector-row">
+                      ${
+                        edge
+                          ? `<img class="material-image edge-product-image" src="${materialImageUrl(
+                              edge,
+                            )}" alt="" />`
+                          : `<i class="edge-empty-swatch" aria-hidden="true"></i>`
+                      }
+                      <select data-piece-edge="${piece.id}" data-side="${side}">${edgeOptions(
+                        piece.edges[side],
+                      )}</select>
+                    </span>
+                  </label>`;
+                })
                 .join("")}
             </div>
           </article>`;
@@ -730,8 +889,19 @@ function optimizedPiecesTable() {
     </div>
     <div class="table-wrap"><table class="result-piece-table">
       <thead><tr><th>Código · elemento</th><th>Tablero</th><th>Terminada</th><th>Corte</th><th>Solic.</th><th>Optim.</th><th>Placa(s)</th></tr></thead>
-      <tbody>${rows
-        .map((row) => {
+      <tbody>${selectedMaterials()
+        .flatMap((groupMaterial) => {
+          const groupRows = rows.filter(
+            (row) => row.materialId === groupMaterial.id,
+          );
+          if (!groupRows.length) return [];
+          return [
+            `<tr class="material-group-row"><td colspan="7"><b>${safe(
+              groupMaterial.sku,
+            )} · ${safe(groupMaterial.name)}</b><span>${
+              groupRows.length
+            } línea(s) optimizada(s)</span></td></tr>`,
+            ...groupRows.map((row) => {
           const material = materials.find((item) => item.id === row.materialId);
           const incomplete = row.optimizedQuantity !== row.requestedQuantity;
           return `<tr class="${incomplete ? "row-warning" : ""}">
@@ -743,6 +913,8 @@ function optimizedPiecesTable() {
             <td><b>${row.optimizedQuantity}</b>${incomplete ? `<span>Revisar</span>` : ""}</td>
             <td><span class="plate-references">${safe(row.plates.join(" · ") || "Sin ubicación")}</span></td>
           </tr>`;
+            }),
+          ];
         })
         .join("")}</tbody>
     </table></div>
@@ -751,6 +923,7 @@ function optimizedPiecesTable() {
 
 function platePiecesTable(plate) {
   const rows = summarizePlatePieces(plate);
+  const leftovers = summarizePlateLeftovers(plate);
   return `<section class="plate-piece-list">
     <div>
       <b>Piezas generadas en esta placa</b>
@@ -770,10 +943,33 @@ function platePiecesTable(plate) {
         )
         .join("")}</tbody>
     </table></div>
+    <div class="leftover-list-title">
+      <b>Retazos identificados</b>
+      <span>${leftovers.length} retazo(s) reutilizable(s)</span>
+    </div>
+    ${
+      leftovers.length
+        ? `<div class="table-wrap"><table class="result-piece-table compact leftover-table">
+            <thead><tr><th>Código de retazo</th><th>Medidas</th><th>Área aproximada</th></tr></thead>
+            <tbody>${leftovers
+              .map(
+                (leftover) => `<tr>
+                  <td><b>${safe(leftover.code)}</b></td>
+                  <td>${millimeters(leftover.width)} × ${millimeters(leftover.height)} mm</td>
+                  <td>${leftover.area.toLocaleString("es-CL", {
+                    maximumFractionDigits: 2,
+                  })} m²</td>
+                </tr>`,
+              )
+              .join("")}</tbody>
+          </table></div>`
+        : `<small class="muted-note">No se generaron retazos reutilizables de al menos 50 × 50 mm.</small>`
+    }
   </section>`;
 }
 
 function optimizeStep() {
+  assignPieceCodes(state.pieces);
   latestResult = optimizeProject(
     selectedMaterials(),
     state.pieces,
@@ -787,6 +983,12 @@ function optimizeStep() {
       <div class="actions">
         <button class="secondary" data-action="pdf">↓ Descargar PDF</button>
         ${
+          ["admin", "produccion"].includes(auth.user?.role)
+            ? `<button class="secondary" data-action="labels-pdf">↓ Etiquetas 50 mm</button>
+               <button class="secondary" data-action="labels-csv">↓ Etiquetas editables</button>`
+            : ""
+        }
+        ${
           canEditCurrent()
             ? `<button class="primary" data-action="save">Guardar proyecto</button>`
             : ""
@@ -799,6 +1001,15 @@ function optimizeStep() {
       <div><span>DESPERDICIO</span><b>${summary.waste.toFixed(1)} %</b></div>
       <div><span>SIERRA</span><b>${state.settings.kerf} mm</b></div>
     </div>
+    ${
+      !canEditCurrent()
+        ? `<div class="alert"><b>Pedido de solo lectura:</b> ${
+            auth.user?.role === "comercial"
+              ? "ya fue enviado a Producción y no admite cambios comerciales."
+              : "puedes revisar planos y descargar documentos sin alterar el pedido."
+          }</div>`
+        : ""
+    }
     ${
       latestResult.warnings.length
         ? `<div class="alert"><b>Revisar piezas:</b> ${latestResult.warnings.map(safe).join(" · ")}</div>`
@@ -822,7 +1033,13 @@ function optimizeStep() {
           <div class="material-summary-list">
             ${latestResult.materialSummaries
               .map(
-                (item) => `<div><span><b>${safe(item.sku)}</b><small>${safe(item.name)} · ${item.boardCount} placa(s)</small></span><strong>${clp(item.boardSubtotal)}</strong></div>`,
+                (item) => `<div><span><b>${safe(item.sku)}</b><small>${safe(
+                  item.name,
+                )} · ${item.boardCount} placa(s) · corte ${clp(
+                  item.cutRatePerBoard,
+                )}/placa</small></span><strong>${clp(
+                  item.boardSubtotal + item.cuttingSubtotal,
+                )}</strong></div>`,
               )
               .join("")}
           </div>
@@ -835,7 +1052,15 @@ function optimizeStep() {
             <option value="longitudinal" ${state.settings.optimizationMode === "longitudinal" ? "selected" : ""}>Priorizar primer corte longitudinal</option>
             <option value="free" ${state.settings.optimizationMode === "free" ? "selected" : ""}>Sin priorizar</option>
           </select></label>
-          <label>Valor de corte por tablero<input type="number" min="0" data-setting="cutRatePerBoard" value="${state.settings.cutRatePerBoard}" /></label>
+          <div class="rate-table">
+            <b>Corte automático por tablero</b>
+            <span>Melamina 15/18 mm <strong>${clp(
+              state.settings.melamineCutRate,
+            )}</strong></span>
+            <span>EGR y otros <strong>${clp(
+              state.settings.specialCutRate,
+            )}</strong></span>
+          </div>
           <div class="rate-table">
             <b>Servicio tapacanto / ml</b>
             <span>0,4 mm <strong>${clp(500)}</strong></span>
@@ -878,17 +1103,32 @@ function projectsView() {
           (item) => `<article class="card project-card">
             <header><span class="status-dot ${item.project.status}"></span><small>${statusLabels[item.project.status]}</small><time>${new Date(item.updatedAt).toLocaleDateString("es-CL")}</time></header>
             <h3>${safe(item.project.projectName || "Proyecto sin nombre")}</h3>
-            <p>${safe(item.project.clientName)}${item.project.rut ? ` · ${safe(item.project.rut)}` : ""}</p>
+            <p>${safe(item.project.clientName)}${
+              item.project.rut ? ` · ${safe(item.project.rut)}` : ""
+            }<br><small>Código: ${safe(projectCode(item.id))}${
+              item.assignedName
+                ? ` · Comercial: ${safe(item.assignedName)}`
+                : ""
+            }</small></p>
             <div><span>Total</span><b>${clp(item.summary?.total)}</b></div>
             ${
               ["admin", "comercial"].includes(auth.user?.role)
                 ? `<label>Estado<select data-project-status="${item.id}">
-                    ${Object.entries(statusLabels).map(([value, label]) => `<option value="${value}" ${value === item.project.status ? "selected" : ""}>${label}</option>`).join("")}
+                    ${
+                      auth.user?.role === "comercial" &&
+                      item.project.status === "produccion"
+                        ? `<option value="produccion" selected>Producción · pedido bloqueado</option>`
+                        : Object.entries(statusLabels)
+                            .map(
+                              ([value, label]) =>
+                                `<option value="${value}" ${
+                                  value === item.project.status ? "selected" : ""
+                                }>${label}</option>`,
+                            )
+                            .join("")
+                    }
                   </select></label>`
-                : auth.user?.role === "produccion" &&
-                    item.project.status === "venta"
-                  ? `<button class="primary small" data-action="mark-production" data-id="${item.id}">Marcar en Producción</button>`
-                  : ""
+                : ""
             }
             <button class="secondary" data-action="open-project" data-id="${item.id}">Abrir proyecto</button>
           </article>`,
@@ -905,8 +1145,8 @@ function notificationsView() {
     <section class="intro-row notification-intro">
       <div>
         <p class="eyebrow">MONITOREO COMERCIAL</p>
-        <h2>Nuevas cotizaciones</h2>
-        <p>Las alertas quedan registradas aquí. Cuando el correo está configurado, el aviso se envía a contacto@cdchile.cl y a los administradores activos.</p>
+        <h2>Alertas de cotización y producción</h2>
+        <p>Administración recibe nuevas cotizaciones; el Comercial ve las asignadas y Producción recibe las órdenes que fueron enviadas a fabricar.</p>
       </div>
       <div class="notification-summary">
         <strong>${unreadNotifications()}</strong>
@@ -1010,6 +1250,7 @@ function usersView() {
               .join("")}
           </select></label>
           <label>Cliente o empresa<small>Útil para el perfil Cliente.</small><input name="clientName" /></label>
+          <label>Teléfono<small>Obligatorio solo para autoregistro de Cliente.</small><input name="phone" type="tel" /></label>
           <label>Clave inicial <em>*</em><input name="password" type="password" minlength="10" required /></label>
           <button class="primary" type="submit">Crear usuario</button>
         </form>
@@ -1065,6 +1306,28 @@ function usersView() {
       </section>
       <section class="card role-access-card">
         <div class="section-title">
+          <span>▧</span>
+          <div><h3>Imágenes masivas de productos</h3><p>Sube un solo ZIP con hasta 500 imágenes nombradas con el código del tablero o tapacanto.</p></div>
+        </div>
+        <div class="bulk-import-layout">
+          <label class="dropzone compact-dropzone">
+            <input type="file" id="product-images-zip" accept=".zip,application/zip" />
+            <strong>Seleccionar ZIP de imágenes</strong>
+            <span>Ejemplo: 2-EGGER-1504.jpg · máximo 2,5 MB por imagen</span>
+          </label>
+          <div class="bulk-import-help">
+            <b>Ya no debes cargar 200 archivos en GitHub</b>
+            <span>El administrador carga un único ZIP aquí y las imágenes quedan guardadas en PostgreSQL.</span>
+            ${
+              imageImportResult
+                ? `<strong>${imageImportResult.imported} imagen(es) incorporada(s) · ${imageImportResult.rejected} rechazada(s)</strong>`
+                : ""
+            }
+          </div>
+        </div>
+      </section>
+      <section class="card role-access-card">
+        <div class="section-title">
           <span>⌘</span>
           <div><h3>Accesos definidos por perfil</h3><p>El Administrador puede cambiar el perfil desde el listado superior.</p></div>
         </div>
@@ -1073,7 +1336,7 @@ function usersView() {
           <tbody>
             <tr><td><b>Administrador</b></td><td>Todos</td><td>Usuarios, precios, descuentos, estados y notificaciones.</td></tr>
             <tr><td><b>Comercial</b></td><td>Propios y asignados</td><td>Crea, cotiza, guarda y gestiona estados.</td></tr>
-            <tr><td><b>Producción</b></td><td>Propios, Venta y Producción</td><td>Revisa planos, órdenes y guarda proyectos autorizados.</td></tr>
+            <tr><td><b>Producción</b></td><td>Órdenes en Producción y borradores propios</td><td>Revisa planos, descarga etiquetas y guarda solo sus cotizaciones propias.</td></tr>
             <tr><td><b>Cliente</b></td><td>Solo sus cotizaciones</td><td>Crea, guarda y consulta sin cambiar a Venta o Producción.</td></tr>
           </tbody>
         </table></div>
@@ -1098,9 +1361,20 @@ function applyProductFilter(value = "") {
 
 function renderEnhancements() {
   document.querySelectorAll(".material-image").forEach((image) => {
-    const hideMissing = () => image.classList.add("missing");
-    image.addEventListener("error", hideMissing, { once: true });
-    if (image.complete && !image.naturalWidth) hideMissing();
+    const fallback = () => {
+      if (
+        image.dataset.fallback &&
+        !image.dataset.fallbackUsed &&
+        image.src !== new URL(image.dataset.fallback, window.location.href).href
+      ) {
+        image.dataset.fallbackUsed = "true";
+        image.src = image.dataset.fallback;
+        return;
+      }
+      image.classList.add("missing");
+    };
+    image.addEventListener("error", fallback);
+    if (image.complete && !image.naturalWidth) fallback();
   });
   applyProductFilter(state.productSearch);
 }
@@ -1166,6 +1440,161 @@ function nextPieceCode(pieces = state.pieces) {
     return Math.max(max, match ? Number(match[1]) : 0);
   }, 0);
   return `P-${String(highest + 1).padStart(3, "0")}`;
+}
+
+function projectCode(id = state.projectId) {
+  return `COT-${String(id || "")
+    .replaceAll("-", "")
+    .slice(0, 8)
+    .toUpperCase()}`;
+}
+
+function pieceEdgeDescription(piece) {
+  const positions = [
+    ["top", "L1"],
+    ["bottom", "L2"],
+    ["left", "A1"],
+    ["right", "A2"],
+  ];
+  return positions
+    .map(([side, label]) => {
+      const edge = edgeBands.find((item) => item.id === piece.edges?.[side]);
+      return edge
+        ? `${label}: ${edge.sku} · ${String(edge.thickness).replace(".", ",")} mm`
+        : `${label}: sin tapacanto`;
+    })
+    .join(" | ");
+}
+
+function labelRows() {
+  assignPieceCodes(state.pieces);
+  return state.pieces.flatMap((piece) =>
+    Array.from({ length: Math.max(1, Number(piece.quantity) || 1) }, (_, index) => ({
+      ...piece,
+      unit: index + 1,
+      edgeDescription: pieceEdgeDescription(piece),
+    })),
+  );
+}
+
+function exportLabelsPdf() {
+  const rows = labelRows();
+  if (!rows.length) {
+    notify("No hay piezas para generar etiquetas.", "error");
+    return;
+  }
+  const pdf = new jsPDF({
+    orientation: "portrait",
+    unit: "mm",
+    format: [50, 70],
+  });
+  rows.forEach((piece, index) => {
+    if (index) pdf.addPage([50, 70], "portrait");
+    pdf.setDrawColor(20, 32, 45);
+    pdf.setLineWidth(0.4);
+    pdf.rect(2, 2, 46, 66);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(7);
+    pdf.text("CASA DISEÑO MULTIESPACIO", 4, 6);
+    pdf.setLineWidth(0.2);
+    pdf.line(4, 8, 46, 8);
+    pdf.setFontSize(8.5);
+    pdf.text(fittedPdfText(pdf, state.project.clientName, 42), 4, 13);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(6);
+    pdf.text(`Proyecto: ${projectCode()}`, 4, 17);
+    pdf.text(`Pieza: ${piece.code} · ${piece.unit}/${piece.quantity}`, 4, 21);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(8);
+    pdf.text(
+      fittedPdfText(pdf, piece.name || "Elemento sin nombre", 42),
+      4,
+      26,
+    );
+    pdf.setFontSize(12);
+    pdf.text(`${millimeters(piece.length)} × ${millimeters(piece.width)} mm`, 4, 33);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(5.8);
+    const edgeLines = [
+      ["top", "L1 · Superior"],
+      ["bottom", "L2 · Inferior"],
+      ["left", "A1 · Izquierdo"],
+      ["right", "A2 · Derecho"],
+    ];
+    let y = 39;
+    edgeLines.forEach(([side, label]) => {
+      const edge = edgeBands.find((item) => item.id === piece.edges?.[side]);
+      pdf.setFont("helvetica", edge ? "bold" : "normal");
+      pdf.text(
+        fittedPdfText(
+          pdf,
+          `${label}: ${
+            edge
+              ? `${edge.sku} · ${String(edge.thickness).replace(".", ",")} mm`
+              : "sin tapacanto"
+          }`,
+          42,
+        ),
+        4,
+        y,
+      );
+      y += 5;
+    });
+    const material = materials.find((item) => item.id === piece.materialId);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(5.5);
+    pdf.text(
+      fittedPdfText(
+        pdf,
+        `Tablero: ${material?.sku || "S/I"} · ${material?.name || ""}`,
+        42,
+      ),
+      4,
+      62,
+    );
+    pdf.text("Formato térmico 50 × 70 mm", 4, 66);
+  });
+  pdf.save(`Etiquetas_${projectCode()}.pdf`);
+}
+
+function exportLabelsCsv() {
+  const headers = [
+    "cliente",
+    "codigo_proyecto",
+    "codigo_pieza",
+    "unidad",
+    "nombre_elemento",
+    "largo_mm",
+    "ancho_mm",
+    "tapacantos",
+  ];
+  const escapeCsv = (value) =>
+    `"${String(value ?? "").replaceAll('"', '""')}"`;
+  const lines = [
+    headers.join(";"),
+    ...labelRows().map((piece) =>
+      [
+        state.project.clientName,
+        projectCode(),
+        piece.code,
+        `${piece.unit}/${piece.quantity}`,
+        piece.name,
+        piece.length,
+        piece.width,
+        piece.edgeDescription,
+      ]
+        .map(escapeCsv)
+        .join(";"),
+    ),
+  ];
+  const blob = new Blob([`\uFEFF${lines.join("\r\n")}`], {
+    type: "text/csv;charset=utf-8",
+  });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `Etiquetas_editables_${projectCode()}.csv`;
+  link.click();
+  URL.revokeObjectURL(link.href);
 }
 
 function dimensionLimits(grain, material = selectedMaterial()) {
@@ -1239,7 +1668,7 @@ function addPiece(form) {
   state.defaultGrain = grain;
   state.pieces.push({
     id: crypto.randomUUID(),
-    code: nextPieceCode(),
+    code: "",
     name: String(data.get("name")).trim(),
     length,
     width,
@@ -1290,8 +1719,8 @@ function updatePieceField(target) {
   latestResult = null;
   notify(
     isQuantity
-      ? `Cantidad de ${piece.code} actualizada.`
-      : `Dimensiones de ${piece.code} actualizadas.`,
+      ? `Cantidad de ${piece.code || piece.name || "la pieza"} actualizada.`
+      : `Dimensiones de ${piece.code || piece.name || "la pieza"} actualizadas.`,
   );
 }
 
@@ -1314,8 +1743,8 @@ function pick(row, names) {
 
 async function importExcel(file) {
   try {
-    const sheets = await readXlsxFile(file);
-    const table = sheets[0]?.data || [];
+    const table = await readXlsxFile(file);
+    if (!table.length) throw new Error("La hoja de piezas está vacía.");
     const headers = table[0].map((value) => String(value || ""));
     const rows = table.slice(1).map((row) =>
       Object.fromEntries(
@@ -1362,9 +1791,17 @@ async function importExcel(file) {
       const rawNotes = pick(row, ["notas", "nota", "notes"]);
       const rawEdgeTypes = {
         top: pick(row, ["l1 tipo tapacanto", "tipo tapacanto l1"]),
-        right: pick(row, ["l2 tipo tapacanto", "tipo tapacanto l2"]),
-        bottom: pick(row, ["l3 tipo tapacanto", "tipo tapacanto l3"]),
-        left: pick(row, ["l4 tipo tapacanto", "tipo tapacanto l4"]),
+        bottom: pick(row, ["l2 tipo tapacanto", "tipo tapacanto l2"]),
+        left: pick(row, [
+          "a1 tipo tapacanto",
+          "tipo tapacanto a1",
+          "l4 tipo tapacanto",
+        ]),
+        right: pick(row, [
+          "a2 tipo tapacanto",
+          "tipo tapacanto a2",
+          "l3 tipo tapacanto",
+        ]),
       };
       const rawEdgeSelections = {
         top: pick(row, [
@@ -1373,23 +1810,27 @@ async function importExcel(file) {
           "tapacanto lado l1",
           "tapacanto superior",
         ]),
-        right: pick(row, [
+        bottom: pick(row, [
           "l2 tapacanto",
           "tapacanto l2",
           "tapacanto lado l2",
-          "tapacanto derecho",
-        ]),
-        bottom: pick(row, [
-          "l3 tapacanto",
-          "tapacanto l3",
-          "tapacanto lado l3",
           "tapacanto inferior",
         ]),
         left: pick(row, [
+          "a1 tapacanto",
+          "tapacanto a1",
+          "tapacanto lado a1",
           "l4 tapacanto",
           "tapacanto l4",
-          "tapacanto lado l4",
           "tapacanto izquierdo",
+        ]),
+        right: pick(row, [
+          "a2 tapacanto",
+          "tapacanto a2",
+          "tapacanto lado a2",
+          "l3 tapacanto",
+          "tapacanto l3",
+          "tapacanto derecho",
         ]),
       };
       if (
@@ -1471,9 +1912,9 @@ async function importExcel(file) {
       if (incompleteEdge) {
         const sideLabels = {
           top: "L1",
-          right: "L2",
-          bottom: "L3",
-          left: "L4",
+          bottom: "L2",
+          left: "A1",
+          right: "A2",
         };
         errors.push(
           `Fila ${index + 2}: selecciona el producto de tapacanto ${sideLabels[incompleteEdge[0]]}.`,
@@ -1497,19 +1938,18 @@ async function importExcel(file) {
       if (invalidEdge) {
         const sideLabels = {
           top: "L1",
-          right: "L2",
-          bottom: "L3",
-          left: "L4",
+          bottom: "L2",
+          left: "A1",
+          right: "A2",
         };
         errors.push(
           `Fila ${index + 2}: el tapacanto ${sideLabels[invalidEdge[0]]} no existe en el catálogo.`,
         );
         return;
       }
-      const generatedCode = code || nextPieceCode([...state.pieces, ...valid]);
       valid.push({
         id: crypto.randomUUID(),
-        code: generatedCode,
+        code,
         name,
         length,
         width,
@@ -1520,10 +1960,13 @@ async function importExcel(file) {
         edges: importedEdges,
       });
     });
-    state.importPreview = { rows: valid, errors };
+    state.importPreview = { rows: valid, errors, fileName: file.name };
     render();
-  } catch {
-    notify("No fue posible leer el archivo. Revisa el formato.", "error");
+  } catch (error) {
+    notify(
+      error.message || "No fue posible leer el archivo. Revisa el formato.",
+      "error",
+    );
   }
 }
 
@@ -1549,8 +1992,7 @@ function parseImportedActive(value) {
 
 async function importUsersExcel(file) {
   try {
-    const sheets = await readXlsxFile(file);
-    const table = sheets[0]?.data || [];
+    const table = await readXlsxFile(file);
     if (!table.length) {
       throw new Error("La hoja Usuarios está vacía.");
     }
@@ -1844,6 +2286,30 @@ function exportPdf() {
       ],
       rows: plateRows,
     });
+    const leftoverRows = summarizePlateLeftovers(plate).map((leftover) => ({
+      code: leftover.code,
+      dimensions: `${millimeters(leftover.width)}×${millimeters(
+        leftover.height,
+      )}`,
+      area: `${leftover.area.toLocaleString("es-CL", {
+        maximumFractionDigits: 2,
+      })} m²`,
+      board: `${plate.material.sku} · Placa ${plate.materialPlateIndex}`,
+    }));
+    if (leftoverRows.length) {
+      addPdfTable(pdf, {
+        title: `RETAZOS DE PLACA ${plate.materialPlateIndex} · ${plate.material.sku}`,
+        subtitle:
+          "Retazos reutilizables codificados · medidas en mm · verificar dimensiones antes de almacenar",
+        columns: [
+          { title: "CÓDIGO RETAZO", key: "code", width: 65 },
+          { title: "MEDIDAS", key: "dimensions", width: 55 },
+          { title: "ÁREA", key: "area", width: 45 },
+          { title: "ORIGEN", key: "board", width: 108 },
+        ],
+        rows: leftoverRows,
+      });
+    }
   });
   pdf.save(
     `Plano_Corte_${state.project.projectName.replace(/[^a-z0-9]+/gi, "_") || "Proyecto"}.pdf`,
@@ -1871,11 +2337,13 @@ app.addEventListener("submit", async (event) => {
         body: { password: data.password },
       });
       auth.user = payload.user;
-      state = emptyState();
-      await loadProjects();
-      if (auth.user.role === "admin") {
-        await Promise.all([loadUsers(), loadNotifications()]);
-      }
+      state = newQuoteState();
+      await Promise.all([
+        loadProjects(),
+        loadCommercials(),
+        loadUsers(),
+        loadNotifications(),
+      ]);
       state.view = "projects";
     } catch (error) {
       auth.error = error.message;
@@ -1883,22 +2351,33 @@ app.addEventListener("submit", async (event) => {
     render();
     return;
   }
-  if (form.id === "login-form" || form.id === "setup-form") {
+  if (
+    form.id === "login-form" ||
+    form.id === "setup-form" ||
+    form.id === "register-form"
+  ) {
     const data = Object.fromEntries(new FormData(form));
     auth.error = "";
     try {
       const endpoint =
-        form.id === "setup-form" ? "/api/auth/setup" : "/api/auth/login";
+        form.id === "setup-form"
+          ? "/api/auth/setup"
+          : form.id === "register-form"
+            ? "/api/auth/register"
+            : "/api/auth/login";
       const payload = await api(endpoint, { method: "POST", body: data });
       auth.user = payload.user;
       auth.csrfToken = payload.csrfToken;
       auth.needsSetup = false;
-      state = emptyState();
+      auth.mode = "login";
+      state = newQuoteState();
       if (!auth.user.mustChangePassword) {
-        await loadProjects();
-        if (auth.user.role === "admin") {
-          await Promise.all([loadUsers(), loadNotifications()]);
-        }
+        await Promise.all([
+          loadProjects(),
+          loadCommercials(),
+          loadUsers(),
+          loadNotifications(),
+        ]);
         state.view = "projects";
       }
     } catch (error) {
@@ -1938,6 +2417,9 @@ app.addEventListener("input", (event) => {
   if (target.dataset.project) {
     state.project[target.dataset.project] = target.value;
   }
+  if (target.dataset.assignedTo !== undefined) {
+    state.assignedTo = target.value;
+  }
   if (target.id === "material-search") {
     state.productSearch = target.value;
     applyProductFilter(target.value);
@@ -1969,6 +2451,33 @@ app.addEventListener("change", async (event) => {
   }
   if (target.id === "user-excel-file" && target.files?.[0]) {
     await importUsersExcel(target.files[0]);
+  }
+  if (target.id === "product-images-zip" && target.files?.[0]) {
+    const file = target.files[0];
+    try {
+      const response = await fetch("/api/material-images/import", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "content-type": "application/zip",
+          "x-csrf-token": auth.csrfToken,
+        },
+        body: file,
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(payload?.error || "No fue posible cargar las imágenes.");
+      }
+      imageImportResult = {
+        imported: payload.imported?.length || 0,
+        rejected: payload.rejected?.length || 0,
+      };
+      notify(
+        `${imageImportResult.imported} imagen(es) de producto incorporada(s).`,
+      );
+    } catch (error) {
+      notify(error.message, "error");
+    }
   }
   if (target.dataset.pieceEdge) {
     const piece = state.pieces.find((item) => item.id === target.dataset.pieceEdge);
@@ -2053,7 +2562,12 @@ app.addEventListener("click", async (event) => {
   if (action === "next") moveStep(1);
   if (action === "back") moveStep(-1);
   if (action === "new") {
-    state = emptyState();
+    state = newQuoteState();
+    render();
+  }
+  if (action === "toggle-access") {
+    auth.mode = auth.mode === "register" ? "login" : "register";
+    auth.error = "";
     render();
   }
   if (action === "projects") {
@@ -2074,7 +2588,10 @@ app.addEventListener("click", async (event) => {
       notify(error.message, "error");
     }
   }
-  if (action === "notifications" && auth.user?.role === "admin") {
+  if (
+    action === "notifications" &&
+    ["admin", "comercial", "produccion"].includes(auth.user?.role)
+  ) {
     try {
       await Promise.all([loadNotifications(), loadProjects()]);
       state.view = "notifications";
@@ -2095,6 +2612,7 @@ app.addEventListener("click", async (event) => {
     projectsCache = [];
     usersCache = [];
     notificationsCache = [];
+    commercialsCache = [];
     bulkUserPreview = null;
     state = emptyState();
     render();
@@ -2164,6 +2682,8 @@ app.addEventListener("click", async (event) => {
   }
   if (action === "save") await saveProject();
   if (action === "pdf") exportPdf();
+  if (action === "labels-pdf") exportLabelsPdf();
+  if (action === "labels-csv") exportLabelsCsv();
   if (action === "open-project") {
     if (button.dataset.notificationId) {
       try {
@@ -2199,6 +2719,7 @@ app.addEventListener("click", async (event) => {
         ...defaults,
         ...item,
         project: { ...item.project },
+        assignedTo: item.assignedTo || "",
         materialId: primaryMaterialId || "",
         materialIds,
         settings: { ...defaults.settings, ...(item.settings || {}) },
@@ -2279,10 +2800,12 @@ async function initialize() {
         auth.user = session.user;
         auth.csrfToken = session.csrfToken;
         if (!auth.user.mustChangePassword) {
-          await loadProjects();
-          if (auth.user.role === "admin") {
-            await Promise.all([loadUsers(), loadNotifications()]);
-          }
+          await Promise.all([
+            loadProjects(),
+            loadCommercials(),
+            loadUsers(),
+            loadNotifications(),
+          ]);
           state.view = "projects";
         }
       } catch {
@@ -2301,7 +2824,7 @@ async function initialize() {
 initialize();
 
 window.setInterval(async () => {
-  if (auth.user?.role !== "admin") return;
+  if (!["admin", "comercial", "produccion"].includes(auth.user?.role)) return;
   try {
     await loadNotifications();
     if (state.view === "notifications") {

@@ -20,9 +20,6 @@ test("incluye una plantilla Excel descargable y compatible con la importación",
     "nombre_elemento_opcional",
     "tipo_tablero_filtro",
     "tablero_seleccion",
-    "codigo_material_auto",
-    "tipo_tablero_auto",
-    "tablero_autocompletado",
     "largo",
     "ancho",
     "cantidad",
@@ -32,10 +29,10 @@ test("incluye una plantilla Excel descargable y compatible con la importación",
     "L1_tapacanto",
     "L2_tipo_tapacanto",
     "L2_tapacanto",
-    "L3_tipo_tapacanto",
-    "L3_tapacanto",
-    "L4_tipo_tapacanto",
-    "L4_tapacanto",
+    "A1_tipo_tapacanto",
+    "A1_tapacanto",
+    "A2_tipo_tapacanto",
+    "A2_tapacanto",
     "largo_plancha_auto",
     "ancho_plancha_auto",
     "espesor_mm_auto",
@@ -43,8 +40,8 @@ test("incluye una plantilla Excel descargable y compatible con la importación",
     "fila_dinamica",
   ]);
   assert.equal(rows.length, 500);
-  assert.equal(rows[1][24], 1);
-  assert.equal(rows[499][24], 499);
+  assert.equal(rows[1][21], 1);
+  assert.equal(rows[499][21], 499);
 });
 
 test("incluye una plantilla Excel de usuarios para la carga masiva", async () => {

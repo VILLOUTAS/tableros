@@ -1,6 +1,6 @@
 # Cotizador online — Casa Diseño Multiespacio
 
-Versión 2.5.0 del cotizador y optimizador de cortes. Incluye acceso seguro con
+Versión 2.6.0 del cotizador y optimizador de cortes. Incluye acceso seguro con
 usuarios diferenciados, base PostgreSQL, catálogo completo importado desde
 Excel y persistencia de proyectos.
 
@@ -10,6 +10,10 @@ Excel y persistencia de proyectos.
 - Inicio de sesión real: claves cifradas con bcrypt, cookie `HttpOnly`, token
   CSRF y bloqueo temporal por intentos repetidos.
 - Perfiles Administrador, Comercial, Producción y Cliente.
+- Autoregistro de clientes con nombre, correo y teléfono obligatorios; empresa,
+  RUT y ubicación opcionales. Cada Cliente ve únicamente sus proyectos.
+- Los Clientes asignan su cotización a un Comercial activo, que la recibe en
+  su panel y puede enviarla a Producción después de confirmar el pago.
 - Creación masiva de hasta 200 usuarios desde una plantilla Excel, con
   validación previa de correo, perfil, estado, clave y duplicados.
 - Claves iniciales temporales: cada usuario nuevo debe reemplazarlas en su
@@ -24,7 +28,8 @@ Excel y persistencia de proyectos.
 - Asignación de cada pieza a uno de los tableros seleccionados, tanto en el
   ingreso manual como en la importación Excel.
 - Espacio para imágenes de materiales.
-- Código de pieza autogenerado y nombre del elemento opcional.
+- Código de pieza asignado recién al generar la optimización/hoja de corte y
+  nombre del elemento opcional.
 - Edición directa de largo, ancho y cantidad desde el listado de piezas, con
   validación inmediata contra las dimensiones del tablero y la veta.
 - Validación manual, Excel y servidor para impedir piezas mayores que el
@@ -35,15 +40,18 @@ Excel y persistencia de proyectos.
   autocompletado y 499 filas preparadas.
 - Cada fila del Excel puede utilizar un tablero distinto; la validación
   automática indica si la pieza cabe en la plancha según la veta.
-- Selección de tapacantos independientes para L1, L2, L3 y L4 mediante filtros
+- Selección de tapacantos independientes para L1, L2, A1 y A2 mediante filtros
   por tipo y producto; la asignación se incorpora automáticamente al proyecto.
+- Disposición gráfica de lados: L1 superior, L2 inferior, A1 izquierdo y A2
+  derecho.
 - Optimización longitudinal prioritaria o sin prioridad de eje.
 - Optimización, planos de corte y subtotales separados por cada tablero.
 - Listado general de piezas optimizadas con medida terminada, medida de corte,
   cantidad solicitada, cantidad optimizada y placas asignadas.
 - Listado específico en cada hoja de corte con las piezas que se fabrican desde
   esa placa.
-- Corte cobrado por tablero.
+- Corte cobrado automáticamente por tablero: Melamina 15/18 mm a $7.500 neto y
+  EGR/u otros tableros a $10.500 neto.
 - Servicio de tapacanto por metro lineal: 0,4 mm $500; 1,0 mm $600;
   1,5 mm $700; 2,0 mm $850.
 - Descuentos independientes para tableros, tapacantos y servicios.
@@ -56,13 +64,21 @@ Excel y persistencia de proyectos.
   llevan terminaciones distintas.
 - Cotas interiores desplazadas hacia el centro y con respaldo blanco para
   evitar que los tapacantos oculten sus valores.
+- Navegación directa entre las cinco secciones sin recorrerlas una por una.
 - Guardado de proyectos disponible para Administrador, Comercial, Producción
   y Cliente, respetando la visibilidad y estados autorizados para cada perfil.
-- Centro de notificaciones para Administradores y aviso por correo de nuevas
+- Centro de notificaciones para Administradores, Comerciales y Producción.
+- Al pasar una orden a Producción, el Comercial ya no puede modificarla y los
+  usuarios de Producción reciben una alerta visible.
+- Aviso por correo de nuevas
   cotizaciones a `contacto@cdchile.cl` y a los Administradores activos, cuando
   el servicio de correo está configurado.
 - PDF de fabricación con listado general al inicio, plano de cada placa y
   listado completo de piezas asociado a cada hoja de corte.
+- Retazos reutilizables codificados en el plano y en los listados.
+- Etiquetas térmicas PDF de 50 × 70 mm y listado CSV editable para
+  Administrador y Producción.
+- Carga masiva de imágenes desde un único ZIP, almacenadas en PostgreSQL.
 
 ## Publicar en Render
 
@@ -188,38 +204,42 @@ La importación usa la hoja `Sheet0`, “Precio base de venta neto” como preci
 cotizador y conserva precio mínimo y precio de compra como información visible
 solo para el Administrador.
 
-## Imágenes de materiales
+## Imágenes de tableros y tapacantos
 
-Agrega archivos JPG en `public/materiales/`. El nombre esperado es el código del
-producto en minúsculas, sin tildes ni símbolos, usando guiones. Ejemplo:
+No es necesario subir más de 200 archivos a GitHub. En **Usuarios → Imágenes
+masivas de productos**, el Administrador puede cargar un único ZIP con hasta
+500 imágenes JPG, PNG o WEBP. Cada archivo debe llamarse como el código del
+producto. Ejemplo:
 
 ```text
-Código: 62-EGGER-1502
-Archivo: public/materiales/62-egger-1502.jpg
+62-EGGER-1502.jpg
+70-EGR-0019.webp
 ```
 
-Mientras una imagen no exista, se muestra una muestra de color y la aplicación
-continúa funcionando.
+Las imágenes quedan guardadas en PostgreSQL y sobreviven a los despliegues de
+Render. La carpeta `public/materiales/` continúa funcionando como respaldo.
 
 ## Plantilla dinámica Excel de piezas
 
 La aplicación descarga una plantilla única para ingresar piezas de diferentes
 tableros. `tipo_tablero_filtro` es opcional: si queda vacío,
 `tablero_seleccion` muestra los 145 productos; al escoger una categoría, la
-lista se limita a los productos de ese tipo. Las columnas azules completan
-automáticamente código, tipo, nombre, largo, ancho y espesor de la plancha.
+lista se limita a los productos de ese tipo. Las antiguas columnas de
+autocompletado E–F–G ya no se muestran; largo, ancho y espesor de plancha se
+calculan al final de la fila.
 
 Cada lado puede recibir un tapacanto diferente. El tipo funciona como filtro y
 el producto seleccionado se importa directamente:
 
 ```text
 L1 = superior
-L2 = derecho
-L3 = inferior
-L4 = izquierdo
+L2 = inferior
+A1 = izquierdo
+A2 = derecho
 ```
 
 Si el código viene vacío, se genera automáticamente como `P-001`, `P-002`, etc.
+al crear la optimización/hoja de corte.
 Las filas dinámicas sin datos se ignoran durante la importación. Antes de subir
 el Excel, deben estar seleccionados en el paso Material todos los tableros
 utilizados en sus filas.
@@ -236,3 +256,9 @@ npm run build
 
 Las pruebas cubren catálogo, autenticación, permisos, notificaciones, tarifas,
 descuentos, límites de piezas, medidas de corte y modos de optimización.
+
+## Integración de pago (fase posterior)
+
+El carrito y pago en línea con Mercado Pago o Transbank queda definido como una
+fase posterior. No se activa en esta versión para evitar mezclar el cierre
+operativo de cotización/producción con credenciales y conciliación de pagos.

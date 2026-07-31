@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  assignPieceCodes,
+  cutRateForMaterial,
   cutDimensions,
   edgeImportLabel,
   isBlankPieceImportRow,
@@ -11,6 +13,7 @@ import {
   pieceFitsMaterial,
   resolveCatalogReference,
   summarizeOptimizedPieces,
+  summarizePlateLeftovers,
   summarizePlatePieces,
   validateRut,
 } from "../src/logic.js";
@@ -236,7 +239,7 @@ test("optimiza y subtotaliza por separado los tableros de un proyecto", () => {
   );
   assert.equal(result.summary.boardCount, 2);
   assert.equal(result.summary.boardSubtotal, 120000);
-  assert.equal(result.summary.cuttingSubtotal, 1800);
+  assert.equal(result.summary.cuttingSubtotal, 21000);
   assert.equal(
     result.summary.total,
     result.summary.net * 1.19,
@@ -253,6 +256,35 @@ test("optimiza y subtotaliza por separado los tableros de un proyecto", () => {
   assert.equal(optimizedPieces.length, 2);
   assert.equal(optimizedPieces[0].optimizedQuantity, 1);
   assert.match(optimizedPieces[0].plates[0], /A · Placa 1/);
+});
+
+test("asigna códigos al generar producción, calcula corte y codifica retazos", () => {
+  const pieces = [
+    piece({ id: "sin-codigo-1", code: "" }),
+    piece({ id: "existente", code: "P-010" }),
+    piece({ id: "sin-codigo-2", code: "" }),
+  ];
+  assignPieceCodes(pieces);
+  assert.deepEqual(
+    pieces.map((item) => item.code),
+    ["P-001", "P-010", "P-002"],
+  );
+  assert.equal(
+    cutRateForMaterial({ categoryId: "melamina-15" }),
+    7500,
+  );
+  assert.equal(cutRateForMaterial({ categoryId: "egr-17" }), 10500);
+
+  const result = optimizeProject(
+    [{ ...material, id: "tablero", sku: "TAB", categoryId: "melamina-15" }],
+    [piece({ id: "pieza", materialId: "tablero", edges: {} })],
+    [],
+    { kerf: 2 },
+  );
+  assert.equal(result.summary.cuttingSubtotal, 7500);
+  const leftovers = summarizePlateLeftovers(result.plates[0]);
+  assert.ok(leftovers.length > 0);
+  assert.match(leftovers[0].code, /^RET-01-/);
 });
 
 test("agrupa las repeticiones de una pieza dentro de cada placa", () => {

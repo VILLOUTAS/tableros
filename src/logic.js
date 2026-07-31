@@ -61,6 +61,37 @@ export function resolveCatalogReference(items = [], reference, labelBuilder) {
   );
 }
 
+export function assignPieceCodes(pieces = []) {
+  const used = new Set(
+    pieces
+      .map((piece) => String(piece.code || "").trim())
+      .filter(Boolean),
+  );
+  let sequence = 1;
+  pieces.forEach((piece) => {
+    if (String(piece.code || "").trim()) return;
+    let code = "";
+    do {
+      code = `P-${String(sequence).padStart(3, "0")}`;
+      sequence += 1;
+    } while (used.has(code));
+    piece.code = code;
+    used.add(code);
+  });
+  return pieces;
+}
+
+export function cutRateForMaterial(material = {}, settings = {}) {
+  const melamine = ["melamina-15", "melamina-18"].includes(
+    material.categoryId,
+  );
+  const configured = melamine
+    ? settings.melamineCutRate
+    : settings.specialCutRate;
+  const fallback = melamine ? 7500 : 10500;
+  return Math.max(0, Number(configured ?? fallback) || 0);
+}
+
 export function cleanRut(value = "") {
   return String(value).replace(/[^0-9kK]/g, "").toUpperCase();
 }
@@ -245,12 +276,95 @@ function packLayout(material, expanded, settings, cutAxis) {
   return { plates, warnings };
 }
 
+export function calculatePlateLeftovers(plate, material, kerf = 0) {
+  if (!plate || !material) return [];
+  const gap = Math.max(0, Number(kerf) || 0);
+  const leftovers = [];
+  const add = (x, y, width, height) => {
+    const normalized = {
+      x: Math.max(0, Number(x) || 0),
+      y: Math.max(0, Number(y) || 0),
+      width: Math.max(0, Number(width) || 0),
+      height: Math.max(0, Number(height) || 0),
+    };
+    if (
+      normalized.width < 50 ||
+      normalized.height < 50 ||
+      normalized.width * normalized.height < 10_000
+    ) {
+      return;
+    }
+    leftovers.push(normalized);
+  };
+
+  if (plate.cutAxis === "transversal") {
+    for (const strip of plate.strips || []) {
+      const stripPieces = plate.pieces.filter(
+        (piece) => piece.stripIndex === plate.strips.indexOf(strip),
+      );
+      const usedHeight = stripPieces.reduce(
+        (maximum, piece) => Math.max(maximum, piece.y + piece.drawHeight),
+        0,
+      );
+      const startY = Math.min(material.plateWidth, usedHeight + gap);
+      add(
+        strip.y,
+        startY,
+        strip.height,
+        material.plateWidth - startY,
+      );
+    }
+    const usedWidth = (plate.strips || []).reduce(
+      (maximum, strip) => Math.max(maximum, strip.y + strip.height),
+      0,
+    );
+    const startX = Math.min(material.plateLength, usedWidth + gap);
+    add(startX, 0, material.plateLength - startX, material.plateWidth);
+  } else {
+    for (const strip of plate.strips || []) {
+      const stripPieces = plate.pieces.filter(
+        (piece) => piece.stripIndex === plate.strips.indexOf(strip),
+      );
+      const usedWidth = stripPieces.reduce(
+        (maximum, piece) => Math.max(maximum, piece.x + piece.drawWidth),
+        0,
+      );
+      const startX = Math.min(material.plateLength, usedWidth + gap);
+      add(
+        startX,
+        strip.y,
+        material.plateLength - startX,
+        strip.height,
+      );
+    }
+    const usedHeight = (plate.strips || []).reduce(
+      (maximum, strip) => Math.max(maximum, strip.y + strip.height),
+      0,
+    );
+    const startY = Math.min(material.plateWidth, usedHeight + gap);
+    add(0, startY, material.plateLength, material.plateWidth - startY);
+  }
+
+  return leftovers
+    .sort((a, b) => b.width * b.height - a.width * a.height)
+    .map((leftover, index) => ({
+      ...leftover,
+      code: `RET-${String(plate.index || 1).padStart(2, "0")}-${String(
+        index + 1,
+      ).padStart(2, "0")}`,
+    }));
+}
+
 export function optimize(material, pieces, edgeBands, settings = {}) {
   const normalizedSettings = {
     kerf: Math.max(0, Number(settings.kerf) || 0),
     cutRatePerBoard: Math.max(
       0,
-      Number(settings.cutRatePerBoard ?? settings.cutRate) || 0,
+      Number(
+        settings.cutRatePerBoard ??
+          settings.cutRate ??
+          cutRateForMaterial(material, settings),
+      ) || 0,
     ),
     optimizationMode:
       settings.optimizationMode === "free" ? "free" : "longitudinal",
@@ -399,20 +513,31 @@ export function optimizeProject(
       if (!materialPieces.length) return null;
       return {
         material,
-        result: optimize(material, materialPieces, edgeBands, settings),
+        result: optimize(material, materialPieces, edgeBands, {
+          ...settings,
+          cutRatePerBoard: cutRateForMaterial(material, settings),
+        }),
       };
     })
     .filter(Boolean);
 
   let globalPlateIndex = 0;
   const plates = materialResults.flatMap(({ material, result }) =>
-    result.plates.map((plate) => ({
-      ...plate,
-      index: (globalPlateIndex += 1),
-      materialPlateIndex: plate.index,
-      materialId: material.id,
-      material,
-    })),
+    result.plates.map((plate) => {
+      const mapped = {
+        ...plate,
+        index: (globalPlateIndex += 1),
+        materialPlateIndex: plate.index,
+        materialId: material.id,
+        material,
+      };
+      mapped.leftovers = calculatePlateLeftovers(
+        mapped,
+        material,
+        settings.kerf,
+      );
+      return mapped;
+    }),
   );
   const warnings = materialResults.flatMap(({ material, result }) =>
     result.warnings.map((warning) => `${material.sku}: ${warning}`),
@@ -496,9 +621,24 @@ export function optimizeProject(
       brand: material.brand,
       boardCount: result.summary.boardCount,
       boardSubtotal: result.summary.boardSubtotal,
+      cuttingSubtotal: result.summary.cuttingSubtotal,
+      cutRatePerBoard:
+        result.summary.boardCount > 0
+          ? result.summary.cuttingSubtotal / result.summary.boardCount
+          : 0,
       utilization: 100 - result.summary.waste,
     })),
   };
+}
+
+export function summarizePlateLeftovers(plate) {
+  return (plate?.leftovers || []).map((leftover) => ({
+    code: leftover.code,
+    width: Number(leftover.width) || 0,
+    height: Number(leftover.height) || 0,
+    area: ((Number(leftover.width) || 0) * (Number(leftover.height) || 0)) /
+      1_000_000,
+  }));
 }
 
 export function summarizePlatePieces(plate) {
@@ -810,6 +950,37 @@ export function drawCutPlan(
   ctx.lineWidth = 3;
   ctx.fillRect(ox, oy, plateW, plateH);
   ctx.strokeRect(ox, oy, plateW, plateH);
+
+  (plate.leftovers || []).forEach((leftover) => {
+    const x = ox + leftover.x * scale;
+    const y = oy + leftover.y * scale;
+    const w = leftover.width * scale;
+    const h = leftover.height * scale;
+    ctx.save();
+    ctx.fillStyle = "rgba(255,255,255,.82)";
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = "#7a838b";
+    ctx.lineWidth = 1.4;
+    ctx.setLineDash([8, 5]);
+    ctx.strokeRect(x, y, w, h);
+    if (w > 70 && h > 34) {
+      ctx.fillStyle = "#4b555e";
+      ctx.textAlign = "center";
+      ctx.font = "700 10px Arial";
+      ctx.fillText(
+        fittedText(
+          ctx,
+          `${leftover.code} · ${Math.round(leftover.width)}×${Math.round(
+            leftover.height,
+          )}`,
+          w - 12,
+        ),
+        x + w / 2,
+        y + h / 2,
+      );
+    }
+    ctx.restore();
+  });
 
   plate.pieces.forEach((piece, index) => {
     const x = ox + piece.x * scale;
@@ -1155,7 +1326,7 @@ export function drawCutPlan(
   ctx.font = "11px Arial";
   ctx.textAlign = "left";
   ctx.fillText(
-    "Medidas interiores: parciales · Exteriores: acumuladas · T1/T2/T3: tapacanto por lado · Unidades en mm.",
+    "Medidas interiores: parciales · Exteriores: acumuladas · T1/T2/T3: tapacanto por lado · RET: retazo reutilizable · Unidades en mm.",
     39,
     height - 28,
   );
