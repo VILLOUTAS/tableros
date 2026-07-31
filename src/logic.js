@@ -61,6 +61,326 @@ export function resolveCatalogReference(items = [], reference, labelBuilder) {
   );
 }
 
+export function normalizeImportHeader(value) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function pickImportValue(row, names) {
+  const normalized = Object.fromEntries(
+    Object.entries(row).map(([key, value]) => [
+      normalizeImportHeader(key),
+      value,
+    ]),
+  );
+  return names
+    .map(normalizeImportHeader)
+    .map((name) => normalized[name])
+    .find((value) => value !== undefined);
+}
+
+function parseImportNumber(value) {
+  if (typeof value === "number") return value;
+  const text = String(value ?? "").trim().replace(/\s+/g, "");
+  if (!text) return Number.NaN;
+  if (/^-?\d{1,3}(\.\d{3})+$/.test(text)) {
+    return Number(text.replaceAll(".", ""));
+  }
+  if (/^-?\d{1,3}(,\d{3})+$/.test(text)) {
+    return Number(text.replaceAll(",", ""));
+  }
+  if (text.includes(",") && text.includes(".")) {
+    return Number(text.replaceAll(".", "").replace(",", "."));
+  }
+  return Number(text.replace(",", "."));
+}
+
+function defaultImportId() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return `pieza-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+export function parsePieceImportTable(
+  table = [],
+  {
+    catalogMaterials = [],
+    catalogEdges = [],
+    fallbackMaterialId = "",
+    idFactory = defaultImportId,
+  } = {},
+) {
+  if (!Array.isArray(table) || !table.length) {
+    return {
+      rows: [],
+      errors: ["La hoja de piezas está vacía."],
+      materialIds: [],
+    };
+  }
+
+  const headers = table[0].map((value) => String(value ?? ""));
+  const normalizedHeaders = new Set(headers.map(normalizeImportHeader));
+  const requiredGroups = [
+    ["largo", "length"],
+    ["ancho", "width"],
+    ["cantidad", "qty"],
+  ];
+  if (
+    requiredGroups.some(
+      (aliases) =>
+        !aliases.some((alias) =>
+          normalizedHeaders.has(normalizeImportHeader(alias)),
+        ),
+    )
+  ) {
+    return {
+      rows: [],
+      errors: [
+        "No se reconocen las columnas Largo, Ancho y Cantidad. Usa la plantilla descargada desde el cotizador.",
+      ],
+      materialIds: [],
+    };
+  }
+
+  const sourceRows = table.slice(1).map((row) =>
+    Object.fromEntries(
+      headers.map((header, index) => [header, row[index] ?? ""]),
+    ),
+  );
+  const rows = [];
+  const errors = [];
+  const importedMaterialIds = new Set();
+  const fallbackMaterial = catalogMaterials.find(
+    (item) => item.id === fallbackMaterialId,
+  );
+
+  sourceRows.forEach((row, index) => {
+    const rawCode = pickImportValue(row, [
+      "codigo",
+      "código",
+      "codigo opcional",
+      "code",
+    ]);
+    const rawName = pickImportValue(row, [
+      "nombre o codigo del elemento",
+      "nombre o código del elemento",
+      "nombre elemento opcional",
+      "nombre del elemento opcional",
+      "nombre opcional",
+      "nombre",
+      "pieza",
+      "name",
+    ]);
+    const rawLength = pickImportValue(row, ["largo", "length"]);
+    const rawWidth = pickImportValue(row, ["ancho", "width"]);
+    const rawQuantity = pickImportValue(row, ["cantidad", "qty"]);
+    const rawMaterialReference = pickImportValue(row, [
+      "codigo material auto",
+      "codigo material",
+      "código material",
+      "codigo material opcional",
+      "material",
+      "sku material",
+    ]);
+    const rawMaterialSelection = pickImportValue(row, [
+      "tablero seleccion",
+      "tablero seleccionado",
+      "seleccion tablero",
+      "producto tablero",
+    ]);
+    const rawGrain = pickImportValue(row, ["veta", "grain"]);
+    const rawNotes = pickImportValue(row, ["notas", "nota", "notes"]);
+    const rawEdgeTypes = {
+      top: pickImportValue(row, [
+        "l1 tipo tapacanto",
+        "tipo tapacanto l1",
+      ]),
+      bottom: pickImportValue(row, [
+        "l2 tipo tapacanto",
+        "tipo tapacanto l2",
+      ]),
+      left: pickImportValue(row, [
+        "a1 tipo tapacanto",
+        "tipo tapacanto a1",
+        "l4 tipo tapacanto",
+      ]),
+      right: pickImportValue(row, [
+        "a2 tipo tapacanto",
+        "tipo tapacanto a2",
+        "l3 tipo tapacanto",
+      ]),
+    };
+    const rawEdgeSelections = {
+      top: pickImportValue(row, [
+        "l1 tapacanto",
+        "tapacanto l1",
+        "tapacanto lado l1",
+        "tapacanto superior",
+      ]),
+      bottom: pickImportValue(row, [
+        "l2 tapacanto",
+        "tapacanto l2",
+        "tapacanto lado l2",
+        "tapacanto inferior",
+      ]),
+      left: pickImportValue(row, [
+        "a1 tapacanto",
+        "tapacanto a1",
+        "tapacanto lado a1",
+        "l4 tapacanto",
+        "tapacanto l4",
+        "tapacanto izquierdo",
+      ]),
+      right: pickImportValue(row, [
+        "a2 tapacanto",
+        "tapacanto a2",
+        "tapacanto lado a2",
+        "l3 tapacanto",
+        "tapacanto l3",
+        "tapacanto derecho",
+      ]),
+    };
+
+    if (
+      isBlankPieceImportRow([
+        rawCode,
+        rawName,
+        rawLength,
+        rawWidth,
+        rawQuantity,
+        rawMaterialReference,
+        rawMaterialSelection,
+        rawGrain,
+        rawNotes,
+        ...Object.values(rawEdgeTypes),
+        ...Object.values(rawEdgeSelections),
+      ])
+    ) {
+      return;
+    }
+
+    const code = String(rawCode ?? "").trim();
+    const name = String(rawName ?? "").trim();
+    const length = parseImportNumber(rawLength);
+    const width = parseImportNumber(rawWidth);
+    const quantity = parseImportNumber(rawQuantity);
+    const materialReference = String(rawMaterialReference ?? "").trim();
+    const materialSelection = String(rawMaterialSelection ?? "").trim();
+    const material =
+      resolveCatalogReference(
+        catalogMaterials,
+        materialSelection,
+        materialImportLabel,
+      ) ||
+      resolveCatalogReference(
+        catalogMaterials,
+        materialReference,
+        materialImportLabel,
+      ) ||
+      (!materialSelection && !materialReference ? fallbackMaterial : null);
+    const normalizedGrain = normalizeImportHeader(rawGrain || "sin-veta");
+    const grain = normalizedGrain.startsWith("long")
+      ? "longitudinal"
+      : normalizedGrain.startsWith("trans")
+        ? "transversal"
+        : "sin-veta";
+
+    if (
+      !Number.isFinite(length) ||
+      !Number.isFinite(width) ||
+      !Number.isInteger(quantity) ||
+      length <= 0 ||
+      width <= 0 ||
+      quantity <= 0
+    ) {
+      errors.push(
+        `Fila ${index + 2}: Largo, Ancho y Cantidad deben ser números positivos; Cantidad debe ser un entero.`,
+      );
+      return;
+    }
+    if (!material) {
+      errors.push(
+        `Fila ${index + 2}: el tablero indicado no existe en el catálogo. Selecciónalo desde la lista de la plantilla.`,
+      );
+      return;
+    }
+    if (!pieceFitsMaterial({ length, width, grain }, material)) {
+      errors.push(
+        `Fila ${index + 2}: la pieza excede la plancha ${material.plateLength} × ${material.plateWidth} mm para la veta indicada.`,
+      );
+      return;
+    }
+
+    const importedEdges = {
+      top: null,
+      right: null,
+      bottom: null,
+      left: null,
+    };
+    const incompleteEdge = Object.entries(rawEdgeTypes).find(
+      ([side, type]) =>
+        String(type ?? "").trim() &&
+        !String(rawEdgeSelections[side] ?? "").trim(),
+    );
+    const sideLabels = {
+      top: "L1",
+      bottom: "L2",
+      left: "A1",
+      right: "A2",
+    };
+    if (incompleteEdge) {
+      errors.push(
+        `Fila ${index + 2}: selecciona el producto de tapacanto ${sideLabels[incompleteEdge[0]]}.`,
+      );
+      return;
+    }
+    const invalidEdge = Object.entries(rawEdgeSelections).find(
+      ([side, reference]) => {
+        const value = String(reference ?? "").trim();
+        if (!value) return false;
+        const edge = resolveCatalogReference(
+          catalogEdges,
+          value,
+          edgeImportLabel,
+        );
+        if (!edge) return true;
+        importedEdges[side] = edge.id;
+        return false;
+      },
+    );
+    if (invalidEdge) {
+      errors.push(
+        `Fila ${index + 2}: el tapacanto ${sideLabels[invalidEdge[0]]} no existe en el catálogo.`,
+      );
+      return;
+    }
+
+    rows.push({
+      id: idFactory(),
+      code,
+      name,
+      length,
+      width,
+      quantity,
+      grain,
+      materialId: material.id,
+      notes: String(rawNotes ?? "").trim(),
+      edges: importedEdges,
+    });
+    importedMaterialIds.add(material.id);
+  });
+
+  return {
+    rows,
+    errors,
+    materialIds: [...importedMaterialIds],
+  };
+}
+
 export function assignPieceCodes(pieces = []) {
   const used = new Set(
     pieces

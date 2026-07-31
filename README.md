@@ -1,6 +1,6 @@
 # Cotizador online — Casa Diseño Multiespacio
 
-Versión 3.0.0 del cotizador y optimizador de cortes. Incluye acceso seguro con
+Versión 3.0.1 del cotizador y optimizador de cortes. Incluye acceso seguro con
 usuarios diferenciados, base PostgreSQL, catálogo completo importado desde
 Excel y persistencia de proyectos.
 
@@ -39,7 +39,11 @@ Excel y persistencia de proyectos.
   validación inmediata contra las dimensiones del tablero y la veta.
 - Validación manual, Excel y servidor para impedir piezas mayores que el
   tablero seleccionado, considerando el sentido de la veta.
-- Importación Excel de piezas con revisión previa.
+- Importación Excel de piezas inmediata: al seleccionar el archivo, las filas
+  válidas se incorporan al listado sin una segunda confirmación.
+- Los tableros utilizados en el Excel se buscan en el catálogo completo y se
+  agregan automáticamente al proyecto, aunque no estuvieran seleccionados en
+  la pantalla Material.
 - Plantilla Excel dinámica incluida como archivo descargable directo, con los
   145 tableros y 121 tapacantos del catálogo, filtros progresivos,
   autocompletado y 499 filas preparadas.

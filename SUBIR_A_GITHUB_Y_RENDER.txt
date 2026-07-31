@@ -1,4 +1,4 @@
-COTIZADOR CASA DISEÑO V3.0.0 — ACTUALIZACIÓN
+COTIZADOR CASA DISEÑO V3.0.1 — ACTUALIZACIÓN
 
 1. Descomprime este paquete.
 2. Reemplaza el contenido del repositorio GitHub con todos estos archivos.
@@ -36,6 +36,10 @@ IMPORTANTE
 - Permite seleccionar tapacantos distintos para L1, L2, A1 y A2, filtrando
   primero por tipo y luego por producto.
 - Las filas dinámicas todavía vacías se ignoran al importar.
+- Al seleccionar el Excel, las filas válidas se incorporan inmediatamente al
+  listado de piezas; ya no existe una segunda confirmación.
+- Los tableros indicados en el Excel se agregan automáticamente al proyecto,
+  incluso si no se seleccionaron antes en el paso Material.
 - Un proyecto puede incluir varios tableros y cada pieza queda asignada a uno.
 - La plantilla utiliza tablero_seleccion y elimina las antiguas columnas
   visibles de autocompletado E-F-G.

@@ -11,6 +11,7 @@ import {
   materialImportLabel,
   optimize,
   optimizeProject,
+  parsePieceImportTable,
   pieceFitsMaterial,
   resolveCatalogReference,
   summarizeOptimizedPieces,
@@ -102,6 +103,116 @@ test("resuelve tableros y tapacantos desde los selectores dinámicos de Excel", 
     edgeImportLabel,
   );
   assert.equal(importedEdge.id, "edge-1");
+});
+
+test("incorpora desde Excel piezas, medidas, cantidades, tableros y tapacantos", () => {
+  const boards = [
+    {
+      id: "tablero-1",
+      sku: "62-EGGER-1502",
+      brand: "EGGER",
+      name: "BLANCO LISA",
+      thickness: 15,
+      plateLength: 2600,
+      plateWidth: 1830,
+    },
+    {
+      id: "tablero-2",
+      sku: "62-EGGER-1503",
+      brand: "EGGER",
+      name: "GRIS CACHMIRA",
+      thickness: 15,
+      plateLength: 2600,
+      plateWidth: 1830,
+    },
+  ];
+  const catalogEdges = [
+    {
+      id: "edge-1",
+      sku: "67-D-0015",
+      group: "PVC 1,5 mm",
+      name: "BLANCO",
+      supplierCode: "BL15",
+    },
+  ];
+  const table = [
+    [
+      "codigo_opcional",
+      "nombre_elemento_opcional",
+      "tablero_seleccion",
+      "largo",
+      "ancho",
+      "cantidad",
+      "veta",
+      "L1_tipo_tapacanto",
+      "L1_tapacanto",
+    ],
+    [
+      "",
+      "Costado",
+      materialImportLabel(boards[1]),
+      "1.200",
+      450,
+      3,
+      "longitudinal",
+      "PVC 1,5 mm",
+      edgeImportLabel(catalogEdges[0]),
+    ],
+  ];
+
+  const imported = parsePieceImportTable(table, {
+    catalogMaterials: boards,
+    catalogEdges,
+    fallbackMaterialId: "tablero-1",
+    idFactory: () => "pieza-importada",
+  });
+
+  assert.deepEqual(imported.errors, []);
+  assert.deepEqual(imported.materialIds, ["tablero-2"]);
+  assert.equal(imported.rows.length, 1);
+  assert.deepEqual(imported.rows[0], {
+    id: "pieza-importada",
+    code: "",
+    name: "Costado",
+    length: 1200,
+    width: 450,
+    quantity: 3,
+    grain: "longitudinal",
+    materialId: "tablero-2",
+    notes: "",
+    edges: { top: "edge-1", right: null, bottom: null, left: null },
+  });
+});
+
+test("acepta piezas Excel sin nombre y explica filas inválidas", () => {
+  const boards = [
+    {
+      id: "tablero-1",
+      sku: "TAB-1",
+      brand: "MARCA",
+      name: "BLANCO",
+      thickness: 15,
+      plateLength: 2600,
+      plateWidth: 1830,
+    },
+  ];
+  const table = [
+    ["tablero_seleccion", "largo", "ancho", "cantidad"],
+    [materialImportLabel(boards[0]), 600, 400, 2],
+    [materialImportLabel(boards[0]), 9000, 400, 1],
+  ];
+  let sequence = 0;
+  const imported = parsePieceImportTable(table, {
+    catalogMaterials: boards,
+    idFactory: () => `pieza-${++sequence}`,
+  });
+
+  assert.equal(imported.rows.length, 1);
+  assert.equal(imported.rows[0].name, "");
+  assert.equal(imported.rows[0].length, 600);
+  assert.equal(imported.rows[0].width, 400);
+  assert.equal(imported.rows[0].quantity, 2);
+  assert.match(imported.errors[0], /Fila 3: la pieza excede la plancha/);
 });
 
 test("descuenta el tapacanto según el lado", () => {

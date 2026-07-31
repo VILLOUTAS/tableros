@@ -1,6 +1,6 @@
 import "./style.css";
 import { jsPDF } from "jspdf";
-import readXlsxFile from "read-excel-file/browser";
+import { readSheet } from "read-excel-file/browser";
 
 import {
   categories,
@@ -16,13 +16,10 @@ import {
   cutDimensions,
   cutRateForMaterial,
   drawCutPlan,
-  edgeImportLabel,
   formatRut,
-  isBlankPieceImportRow,
-  materialImportLabel,
+  parsePieceImportTable,
   optimizeProject,
   pieceFitsMaterial,
-  resolveCatalogReference,
   summarizeOptimizedPieces,
   summarizePlateLeftovers,
   summarizePlatePieces,
@@ -728,21 +725,20 @@ function piecesStep() {
         <div class="section-title"><span>⇧</span><div><h3>Importar Excel</h3><p>Selecciona el tablero y los tapacantos por fila desde listas dinámicas.</p></div></div>
         <label class="dropzone">
           <input type="file" id="excel-file" accept=".xlsx" />
-          <strong>Seleccionar archivo</strong>
-          <span>Excel .xlsx · máximo recomendado 1.000 filas</span>
+          <strong>Seleccionar e importar archivo</strong>
+          <span>Las filas válidas se incorporan automáticamente · máximo recomendado 1.000</span>
         </label>
         <a class="text-button" href="/Plantilla_Piezas_Casa_Diseno.xlsx" download="Plantilla_Piezas_Casa_Diseno.xlsx">↓ Descargar plantilla Excel</a>
         ${
           state.importPreview
             ? `<div class="import-result ${state.importPreview.errors.length ? "warning" : ""}">
-                <b>${safe(state.importPreview.fileName || "Archivo seleccionado")} · ${state.importPreview.rows.length} filas válidas</b>
+                <b>${safe(state.importPreview.fileName || "Archivo seleccionado")} · ${state.importPreview.importedCount || 0} filas incorporadas</b>
                 <span>${state.importPreview.errors.length} observaciones</span>
                 ${
                   state.importPreview.errors.length
                     ? `<ul>${state.importPreview.errors.slice(0, 4).map((error) => `<li>${safe(error)}</li>`).join("")}</ul>`
                     : ""
                 }
-                <button class="primary small" data-action="confirm-import" ${state.importPreview.rows.length ? "" : "disabled"}>Incorporar filas válidas</button>
               </div>`
             : ""
         }
@@ -1964,234 +1960,42 @@ function normalizeHeader(value) {
     .trim();
 }
 
-function pick(row, names) {
-  const normalized = Object.fromEntries(
-    Object.entries(row).map(([key, value]) => [normalizeHeader(key), value]),
-  );
-  return names.map(normalizeHeader).map((name) => normalized[name]).find((value) => value !== undefined);
-}
-
 async function importExcel(file) {
   try {
-    const table = await readXlsxFile(file);
-    if (!table.length) throw new Error("La hoja de piezas está vacía.");
-    const headers = table[0].map((value) => String(value || ""));
-    const rows = table.slice(1).map((row) =>
-      Object.fromEntries(
-        headers.map((header, index) => [header, row[index] ?? ""]),
-      ),
-    );
-    const valid = [];
-    const errors = [];
-    rows.forEach((row, index) => {
-      const rawCode = pick(row, [
-        "codigo",
-        "código",
-        "codigo opcional",
-        "code",
-      ]);
-      const rawName = pick(row, [
-        "nombre o codigo del elemento",
-        "nombre o código del elemento",
-        "nombre elemento opcional",
-        "nombre del elemento opcional",
-        "nombre opcional",
-        "nombre",
-        "pieza",
-        "name",
-      ]);
-      const rawLength = pick(row, ["largo", "length"]);
-      const rawWidth = pick(row, ["ancho", "width"]);
-      const rawQuantity = pick(row, ["cantidad", "qty"]);
-      const rawMaterialReference = pick(row, [
-        "codigo material auto",
-        "codigo material",
-        "código material",
-        "codigo material opcional",
-        "material",
-        "sku material",
-      ]);
-      const rawMaterialSelection = pick(row, [
-        "tablero seleccion",
-        "tablero seleccionado",
-        "seleccion tablero",
-        "producto tablero",
-      ]);
-      const rawGrain = pick(row, ["veta", "grain"]);
-      const rawNotes = pick(row, ["notas", "nota", "notes"]);
-      const rawEdgeTypes = {
-        top: pick(row, ["l1 tipo tapacanto", "tipo tapacanto l1"]),
-        bottom: pick(row, ["l2 tipo tapacanto", "tipo tapacanto l2"]),
-        left: pick(row, [
-          "a1 tipo tapacanto",
-          "tipo tapacanto a1",
-          "l4 tipo tapacanto",
-        ]),
-        right: pick(row, [
-          "a2 tipo tapacanto",
-          "tipo tapacanto a2",
-          "l3 tipo tapacanto",
-        ]),
-      };
-      const rawEdgeSelections = {
-        top: pick(row, [
-          "l1 tapacanto",
-          "tapacanto l1",
-          "tapacanto lado l1",
-          "tapacanto superior",
-        ]),
-        bottom: pick(row, [
-          "l2 tapacanto",
-          "tapacanto l2",
-          "tapacanto lado l2",
-          "tapacanto inferior",
-        ]),
-        left: pick(row, [
-          "a1 tapacanto",
-          "tapacanto a1",
-          "tapacanto lado a1",
-          "l4 tapacanto",
-          "tapacanto l4",
-          "tapacanto izquierdo",
-        ]),
-        right: pick(row, [
-          "a2 tapacanto",
-          "tapacanto a2",
-          "tapacanto lado a2",
-          "l3 tapacanto",
-          "tapacanto l3",
-          "tapacanto derecho",
-        ]),
-      };
-      if (
-        isBlankPieceImportRow([
-          rawCode,
-          rawName,
-          rawLength,
-          rawWidth,
-          rawQuantity,
-          rawMaterialReference,
-          rawMaterialSelection,
-          rawGrain,
-          rawNotes,
-          ...Object.values(rawEdgeTypes),
-          ...Object.values(rawEdgeSelections),
-        ])
-      ) {
-        return;
-      }
-      const code = String(
-        rawCode || "",
-      ).trim();
-      const name = String(
-        rawName || "",
-      ).trim();
-      const length = Number(rawLength);
-      const width = Number(rawWidth);
-      const quantity = Number(rawQuantity);
-      const materialReference = String(
-        rawMaterialReference || "",
-      ).trim();
-      const materialSelection = String(rawMaterialSelection || "").trim();
-      const chosenMaterials = selectedMaterials();
-      const material =
-        resolveCatalogReference(
-          chosenMaterials,
-          materialSelection,
-          materialImportLabel,
-        ) ||
-        resolveCatalogReference(
-          chosenMaterials,
-          materialReference,
-          materialImportLabel,
-        ) ||
-        (!materialSelection && !materialReference ? selectedMaterial() : null);
-      const normalizedGrain = normalizeHeader(rawGrain || "sin-veta");
-      const grain = normalizedGrain.startsWith("long")
-        ? "longitudinal"
-        : normalizedGrain.startsWith("trans")
-          ? "transversal"
-          : "sin-veta";
-      if (length <= 0 || width <= 0 || quantity <= 0) {
-        errors.push(`Fila ${index + 2}: faltan medidas o cantidad.`);
-        return;
-      }
-      if (!material) {
-        errors.push(
-          `Fila ${index + 2}: el código de material no corresponde a un tablero seleccionado.`,
-        );
-        return;
-      }
-      if (!pieceFitsMaterial({ length, width, grain }, material)) {
-        errors.push(
-          `Fila ${index + 2}: la pieza excede la plancha ${material.plateLength} × ${material.plateWidth} mm para la veta indicada.`,
-        );
-        return;
-      }
-      const importedEdges = {
-        top: null,
-        right: null,
-        bottom: null,
-        left: null,
-      };
-      const incompleteEdge = Object.entries(rawEdgeTypes).find(
-        ([side, type]) =>
-          String(type || "").trim() &&
-          !String(rawEdgeSelections[side] || "").trim(),
-      );
-      if (incompleteEdge) {
-        const sideLabels = {
-          top: "L1",
-          bottom: "L2",
-          left: "A1",
-          right: "A2",
-        };
-        errors.push(
-          `Fila ${index + 2}: selecciona el producto de tapacanto ${sideLabels[incompleteEdge[0]]}.`,
-        );
-        return;
-      }
-      const invalidEdge = Object.entries(rawEdgeSelections).find(
-        ([side, reference]) => {
-          const value = String(reference || "").trim();
-          if (!value) return false;
-          const edge = resolveCatalogReference(
-            edgeBands,
-            value,
-            edgeImportLabel,
-          );
-          if (!edge) return true;
-          importedEdges[side] = edge.id;
-          return false;
-        },
-      );
-      if (invalidEdge) {
-        const sideLabels = {
-          top: "L1",
-          bottom: "L2",
-          left: "A1",
-          right: "A2",
-        };
-        errors.push(
-          `Fila ${index + 2}: el tapacanto ${sideLabels[invalidEdge[0]]} no existe en el catálogo.`,
-        );
-        return;
-      }
-      valid.push({
-        id: crypto.randomUUID(),
-        code,
-        name,
-        length,
-        width,
-        quantity,
-        grain,
-        materialId: material.id,
-        notes: String(rawNotes || ""),
-        edges: importedEdges,
-      });
+    const table = await readSheet(file, "Piezas");
+    const imported = parsePieceImportTable(table, {
+      catalogMaterials: materials,
+      catalogEdges: edgeBands,
+      fallbackMaterialId: state.materialId,
+      idFactory: () => crypto.randomUUID(),
     });
-    state.importPreview = { rows: valid, errors, fileName: file.name };
-    render();
+
+    if (imported.rows.length) {
+      state.pieces.push(...imported.rows);
+      const selectedIds = new Set(state.materialIds || []);
+      imported.materialIds.forEach((id) => selectedIds.add(id));
+      state.materialIds = [...selectedIds];
+      if (!state.materialId) state.materialId = imported.materialIds[0] || "";
+      const firstImportedMaterial = materials.find(
+        (item) => item.id === imported.materialIds[0],
+      );
+      if (!state.categoryId && firstImportedMaterial) {
+        state.categoryId = firstImportedMaterial.categoryId;
+      }
+      latestResult = null;
+    }
+
+    state.importPreview = {
+      errors: imported.errors,
+      fileName: file.name,
+      importedCount: imported.rows.length,
+    };
+    notify(
+      imported.rows.length
+        ? `${imported.rows.length} filas incorporadas desde Excel${imported.errors.length ? `; ${imported.errors.length} con observaciones.` : "."}`
+        : "No se incorporaron piezas. Revisa las observaciones del archivo.",
+      imported.rows.length ? "success" : "error",
+    );
   } catch (error) {
     notify(
       error.message || "No fue posible leer el archivo. Revisa el formato.",
@@ -2222,7 +2026,7 @@ function parseImportedActive(value) {
 
 async function importUsersExcel(file) {
   try {
-    const table = await readXlsxFile(file);
+    const table = await readSheet(file, "Usuarios");
     if (!table.length) {
       throw new Error("La hoja Usuarios está vacía.");
     }
@@ -2827,11 +2631,6 @@ app.addEventListener("click", async (event) => {
       state.materialId = state.materialIds[0] || "";
     }
     render();
-  }
-  if (action === "confirm-import" && state.importPreview) {
-    state.pieces.push(...state.importPreview.rows);
-    state.importPreview = null;
-    notify("Filas válidas incorporadas.");
   }
   if (action === "confirm-user-import" && bulkUserPreview?.rows.length) {
     try {
