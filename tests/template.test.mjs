@@ -18,17 +18,33 @@ test("incluye una plantilla Excel descargable y compatible con la importación",
   assert.deepEqual(rows[0], [
     "codigo_opcional",
     "nombre_elemento_opcional",
-    "codigo_material_opcional",
+    "tipo_tablero_filtro",
+    "tablero_seleccion",
+    "codigo_material_auto",
+    "tipo_tablero_auto",
+    "tablero_autocompletado",
     "largo",
     "ancho",
     "cantidad",
     "veta",
     "notas",
+    "L1_tipo_tapacanto",
+    "L1_tapacanto",
+    "L2_tipo_tapacanto",
+    "L2_tapacanto",
+    "L3_tipo_tapacanto",
+    "L3_tapacanto",
+    "L4_tipo_tapacanto",
+    "L4_tapacanto",
+    "largo_plancha_auto",
+    "ancho_plancha_auto",
+    "espesor_mm_auto",
+    "validacion_automatica",
+    "fila_dinamica",
   ]);
-  assert.equal(rows[1][1], "Costado izquierdo");
-  assert.equal(rows[1][2], "62-EGGER-1502");
-  assert.equal(rows[1][3], 720);
-  assert.equal(rows[1][6], "longitudinal");
+  assert.equal(rows.length, 500);
+  assert.equal(rows[1][24], 1);
+  assert.equal(rows[499][24], 499);
 });
 
 test("incluye una plantilla Excel de usuarios para la carga masiva", async () => {

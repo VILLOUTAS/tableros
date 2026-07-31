@@ -1,6 +1,6 @@
 # Cotizador online — Casa Diseño Multiespacio
 
-Versión 2.4.0 del cotizador y optimizador de cortes. Incluye acceso seguro con
+Versión 2.5.0 del cotizador y optimizador de cortes. Incluye acceso seguro con
 usuarios diferenciados, base PostgreSQL, catálogo completo importado desde
 Excel y persistencia de proyectos.
 
@@ -30,8 +30,13 @@ Excel y persistencia de proyectos.
 - Validación manual, Excel y servidor para impedir piezas mayores que el
   tablero seleccionado, considerando el sentido de la veta.
 - Importación Excel de piezas con revisión previa.
-- Plantilla Excel incluida como archivo descargable directo, sin generación
-  dinámica en el navegador.
+- Plantilla Excel dinámica incluida como archivo descargable directo, con los
+  145 tableros y 121 tapacantos del catálogo, filtros progresivos,
+  autocompletado y 499 filas preparadas.
+- Cada fila del Excel puede utilizar un tablero distinto; la validación
+  automática indica si la pieza cabe en la plancha según la veta.
+- Selección de tapacantos independientes para L1, L2, L3 y L4 mediante filtros
+  por tipo y producto; la asignación se incorpora automáticamente al proyecto.
 - Optimización longitudinal prioritaria o sin prioridad de eje.
 - Optimización, planos de corte y subtotales separados por cada tablero.
 - Listado general de piezas optimizadas con medida terminada, medida de corte,
@@ -196,26 +201,31 @@ Archivo: public/materiales/62-egger-1502.jpg
 Mientras una imagen no exista, se muestra una muestra de color y la aplicación
 continúa funcionando.
 
-## Formato Excel de piezas
+## Plantilla dinámica Excel de piezas
 
-La aplicación descarga una plantilla y reconoce:
+La aplicación descarga una plantilla única para ingresar piezas de diferentes
+tableros. `tipo_tablero_filtro` es opcional: si queda vacío,
+`tablero_seleccion` muestra los 145 productos; al escoger una categoría, la
+lista se limita a los productos de ese tipo. Las columnas azules completan
+automáticamente código, tipo, nombre, largo, ancho y espesor de la plancha.
+
+Cada lado puede recibir un tapacanto diferente. El tipo funciona como filtro y
+el producto seleccionado se importa directamente:
 
 ```text
-codigo_opcional
-nombre_elemento_opcional
-codigo_material_opcional
-largo
-ancho
-cantidad
-veta
-notas
+L1 = superior
+L2 = derecho
+L3 = inferior
+L4 = izquierdo
 ```
 
 Si el código viene vacío, se genera automáticamente como `P-001`, `P-002`, etc.
-El nombre del elemento también puede quedar vacío. En
-`codigo_material_opcional` puedes escribir el código de uno de los tableros
-seleccionados, por ejemplo `62-EGGER-1502`. Si la celda queda vacía, la pieza
-se asigna al tablero activo en el formulario.
+Las filas dinámicas sin datos se ignoran durante la importación. Antes de subir
+el Excel, deben estar seleccionados en el paso Material todos los tableros
+utilizados en sus filas.
+El nombre del elemento también puede quedar vacío. Las selecciones de
+tapacantos permanecen opcionales; un lado sin producto seleccionado se importa
+sin tapacanto y puede completarse posteriormente en el paso Tapacantos.
 
 ## Verificación
 

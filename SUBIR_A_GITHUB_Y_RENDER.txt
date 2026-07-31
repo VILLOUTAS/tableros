@@ -1,4 +1,4 @@
-COTIZADOR CASA DISEÑO V2.4.0 — ACTUALIZACIÓN
+COTIZADOR CASA DISEÑO V2.5.0 — ACTUALIZACIÓN
 
 1. Descomprime este paquete.
 2. Reemplaza el contenido del repositorio GitHub con todos estos archivos.
@@ -28,9 +28,17 @@ IMPORTANTE
 - DATABASE_URL se configura automáticamente con el Blueprint.
 - No existe una clave predeterminada.
 - Las notificaciones internas funcionan sin configuración adicional.
-- La plantilla Excel se descarga directamente desde el botón del paso Piezas.
+- La plantilla Excel dinámica se descarga directamente desde el paso Piezas.
+- Incluye los 145 tableros y 121 tapacantos, autocompleta tipo, producto y
+  dimensiones, permite un material distinto por fila y dispone de 499 filas.
+- El tipo de tablero es un filtro opcional: vacío muestra todos los productos;
+  seleccionado limita la lista al tipo correspondiente.
+- Permite seleccionar tapacantos distintos para L1, L2, L3 y L4, filtrando
+  primero por tipo y luego por producto.
+- Las filas dinámicas todavía vacías se ignoran al importar.
 - Un proyecto puede incluir varios tableros y cada pieza queda asignada a uno.
-- La plantilla Excel acepta codigo_material_opcional para esa asignación.
+- La plantilla utiliza tablero_seleccion y conserva codigo_material_auto para
+  identificar correctamente los productos, incluso cuando se repite un SKU.
 - Todos los perfiles pueden guardar los proyectos que les corresponden.
 - El Administrador puede crear hasta 200 usuarios desde la plantilla Excel.
 - Cada usuario nuevo debe cambiar su clave temporal en el primer ingreso.

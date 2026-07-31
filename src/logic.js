@@ -1,5 +1,66 @@
 const sides = ["top", "right", "bottom", "left"];
 
+export function isBlankPieceImportRow(values = []) {
+  return values.every((value) => String(value ?? "").trim() === "");
+}
+
+function normalizeCatalogReference(value) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+export function materialImportLabel(material = {}) {
+  return [
+    material.sku,
+    material.brand,
+    material.name,
+    `${material.thickness} mm`,
+    `${material.plateLength}x${material.plateWidth}`,
+  ]
+    .filter((value) => value !== undefined && value !== null && value !== "")
+    .join(" · ");
+}
+
+export function edgeImportLabel(edge = {}) {
+  return [
+    edge.sku,
+    edge.group,
+    edge.name,
+    edge.supplierCode || edge.id,
+  ]
+    .filter((value) => value !== undefined && value !== null && value !== "")
+    .join(" · ");
+}
+
+export function resolveCatalogReference(items = [], reference, labelBuilder) {
+  const target = normalizeCatalogReference(reference);
+  if (!target) return null;
+
+  const exact = items.find((item) => {
+    const aliases = [
+      item.id,
+      item.sku,
+      item.name,
+      typeof labelBuilder === "function" ? labelBuilder(item) : "",
+    ];
+    return aliases.some(
+      (alias) => normalizeCatalogReference(alias) === target,
+    );
+  });
+  if (exact) return exact;
+
+  return (
+    items.find((item) => {
+      const sku = normalizeCatalogReference(item.sku);
+      return sku && target.startsWith(`${sku} · `);
+    }) || null
+  );
+}
+
 export function cleanRut(value = "") {
   return String(value).replace(/[^0-9kK]/g, "").toUpperCase();
 }

@@ -3,9 +3,13 @@ import assert from "node:assert/strict";
 
 import {
   cutDimensions,
+  edgeImportLabel,
+  isBlankPieceImportRow,
+  materialImportLabel,
   optimize,
   optimizeProject,
   pieceFitsMaterial,
+  resolveCatalogReference,
   summarizeOptimizedPieces,
   summarizePlatePieces,
   validateRut,
@@ -39,6 +43,61 @@ function piece(overrides = {}) {
 test("valida un RUT chileno con módulo 11", () => {
   assert.equal(validateRut("12.345.678-5"), true);
   assert.equal(validateRut("12.345.678-9"), false);
+});
+
+test("ignora filas dinámicas de Excel que todavía no tienen datos de pieza", () => {
+  assert.equal(
+    isBlankPieceImportRow([null, "", undefined, "  ", null, ""]),
+    true,
+  );
+  assert.equal(
+    isBlankPieceImportRow([null, "", "62-EGGER-1502", "", null]),
+    false,
+  );
+});
+
+test("resuelve tableros y tapacantos desde los selectores dinámicos de Excel", () => {
+  const boards = [
+    {
+      id: "tablero-1",
+      sku: "62-EGGER-1502",
+      brand: "EGGER",
+      name: "BLANCO LISA",
+      thickness: 15,
+      plateLength: 2600,
+      plateWidth: 1830,
+    },
+    {
+      id: "tablero-2",
+      sku: "62-EGGER-1502",
+      brand: "EGGER",
+      name: "PIETRA GRIGIA NEGRO",
+      thickness: 15,
+      plateLength: 2600,
+      plateWidth: 1830,
+    },
+  ];
+  const importedBoard = resolveCatalogReference(
+    boards,
+    materialImportLabel(boards[1]),
+    materialImportLabel,
+  );
+  assert.equal(importedBoard.id, "tablero-2");
+
+  const importedEdge = resolveCatalogReference(
+    [
+      {
+        id: "edge-1",
+        sku: "67-D-0015",
+        group: "PVC 1,5 mm",
+        name: "BLANCO",
+        supplierCode: "BL15",
+      },
+    ],
+    "67-D-0015 · PVC 1,5 mm · BLANCO · BL15",
+    edgeImportLabel,
+  );
+  assert.equal(importedEdge.id, "edge-1");
 });
 
 test("descuenta el tapacanto según el lado", () => {

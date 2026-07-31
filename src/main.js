@@ -14,9 +14,13 @@ import {
   clp,
   cutDimensions,
   drawCutPlan,
+  edgeImportLabel,
   formatRut,
+  isBlankPieceImportRow,
+  materialImportLabel,
   optimizeProject,
   pieceFitsMaterial,
+  resolveCatalogReference,
   summarizeOptimizedPieces,
   summarizePlatePieces,
   validateRut,
@@ -1321,44 +1325,120 @@ async function importExcel(file) {
     const valid = [];
     const errors = [];
     rows.forEach((row, index) => {
+      const rawCode = pick(row, [
+        "codigo",
+        "código",
+        "codigo opcional",
+        "code",
+      ]);
+      const rawName = pick(row, [
+        "nombre o codigo del elemento",
+        "nombre o código del elemento",
+        "nombre elemento opcional",
+        "nombre del elemento opcional",
+        "nombre opcional",
+        "nombre",
+        "pieza",
+        "name",
+      ]);
+      const rawLength = pick(row, ["largo", "length"]);
+      const rawWidth = pick(row, ["ancho", "width"]);
+      const rawQuantity = pick(row, ["cantidad", "qty"]);
+      const rawMaterialReference = pick(row, [
+        "codigo material auto",
+        "codigo material",
+        "código material",
+        "codigo material opcional",
+        "material",
+        "sku material",
+      ]);
+      const rawMaterialSelection = pick(row, [
+        "tablero seleccion",
+        "tablero seleccionado",
+        "seleccion tablero",
+        "producto tablero",
+      ]);
+      const rawGrain = pick(row, ["veta", "grain"]);
+      const rawNotes = pick(row, ["notas", "nota", "notes"]);
+      const rawEdgeTypes = {
+        top: pick(row, ["l1 tipo tapacanto", "tipo tapacanto l1"]),
+        right: pick(row, ["l2 tipo tapacanto", "tipo tapacanto l2"]),
+        bottom: pick(row, ["l3 tipo tapacanto", "tipo tapacanto l3"]),
+        left: pick(row, ["l4 tipo tapacanto", "tipo tapacanto l4"]),
+      };
+      const rawEdgeSelections = {
+        top: pick(row, [
+          "l1 tapacanto",
+          "tapacanto l1",
+          "tapacanto lado l1",
+          "tapacanto superior",
+        ]),
+        right: pick(row, [
+          "l2 tapacanto",
+          "tapacanto l2",
+          "tapacanto lado l2",
+          "tapacanto derecho",
+        ]),
+        bottom: pick(row, [
+          "l3 tapacanto",
+          "tapacanto l3",
+          "tapacanto lado l3",
+          "tapacanto inferior",
+        ]),
+        left: pick(row, [
+          "l4 tapacanto",
+          "tapacanto l4",
+          "tapacanto lado l4",
+          "tapacanto izquierdo",
+        ]),
+      };
+      if (
+        isBlankPieceImportRow([
+          rawCode,
+          rawName,
+          rawLength,
+          rawWidth,
+          rawQuantity,
+          rawMaterialReference,
+          rawMaterialSelection,
+          rawGrain,
+          rawNotes,
+          ...Object.values(rawEdgeTypes),
+          ...Object.values(rawEdgeSelections),
+        ])
+      ) {
+        return;
+      }
       const code = String(
-        pick(row, ["codigo", "código", "codigo opcional", "code"]) || "",
+        rawCode || "",
       ).trim();
       const name = String(
-        pick(row, [
-          "nombre o codigo del elemento",
-          "nombre o código del elemento",
-          "nombre elemento opcional",
-          "nombre del elemento opcional",
-          "nombre opcional",
-          "nombre",
-          "pieza",
-          "name",
-        ]) || "",
+        rawName || "",
       ).trim();
-      const length = Number(pick(row, ["largo", "length"]));
-      const width = Number(pick(row, ["ancho", "width"]));
-      const quantity = Number(pick(row, ["cantidad", "qty"]));
+      const length = Number(rawLength);
+      const width = Number(rawWidth);
+      const quantity = Number(rawQuantity);
       const materialReference = String(
-        pick(row, [
-          "codigo material",
-          "código material",
-          "codigo material opcional",
-          "material",
-          "sku material",
-        ]) || "",
+        rawMaterialReference || "",
       ).trim();
+      const materialSelection = String(rawMaterialSelection || "").trim();
       const chosenMaterials = selectedMaterials();
       const material =
-        chosenMaterials.find((item) =>
-          [item.id, item.sku, item.name]
-            .map((value) => normalizeHeader(value))
-            .includes(normalizeHeader(materialReference)),
-        ) || (!materialReference ? selectedMaterial() : null);
-      const rawGrain = normalizeHeader(pick(row, ["veta", "grain"]) || "sin-veta");
-      const grain = rawGrain.startsWith("long")
+        resolveCatalogReference(
+          chosenMaterials,
+          materialSelection,
+          materialImportLabel,
+        ) ||
+        resolveCatalogReference(
+          chosenMaterials,
+          materialReference,
+          materialImportLabel,
+        ) ||
+        (!materialSelection && !materialReference ? selectedMaterial() : null);
+      const normalizedGrain = normalizeHeader(rawGrain || "sin-veta");
+      const grain = normalizedGrain.startsWith("long")
         ? "longitudinal"
-        : rawGrain.startsWith("trans")
+        : normalizedGrain.startsWith("trans")
           ? "transversal"
           : "sin-veta";
       if (length <= 0 || width <= 0 || quantity <= 0) {
@@ -1377,6 +1457,55 @@ async function importExcel(file) {
         );
         return;
       }
+      const importedEdges = {
+        top: null,
+        right: null,
+        bottom: null,
+        left: null,
+      };
+      const incompleteEdge = Object.entries(rawEdgeTypes).find(
+        ([side, type]) =>
+          String(type || "").trim() &&
+          !String(rawEdgeSelections[side] || "").trim(),
+      );
+      if (incompleteEdge) {
+        const sideLabels = {
+          top: "L1",
+          right: "L2",
+          bottom: "L3",
+          left: "L4",
+        };
+        errors.push(
+          `Fila ${index + 2}: selecciona el producto de tapacanto ${sideLabels[incompleteEdge[0]]}.`,
+        );
+        return;
+      }
+      const invalidEdge = Object.entries(rawEdgeSelections).find(
+        ([side, reference]) => {
+          const value = String(reference || "").trim();
+          if (!value) return false;
+          const edge = resolveCatalogReference(
+            edgeBands,
+            value,
+            edgeImportLabel,
+          );
+          if (!edge) return true;
+          importedEdges[side] = edge.id;
+          return false;
+        },
+      );
+      if (invalidEdge) {
+        const sideLabels = {
+          top: "L1",
+          right: "L2",
+          bottom: "L3",
+          left: "L4",
+        };
+        errors.push(
+          `Fila ${index + 2}: el tapacanto ${sideLabels[invalidEdge[0]]} no existe en el catálogo.`,
+        );
+        return;
+      }
       const generatedCode = code || nextPieceCode([...state.pieces, ...valid]);
       valid.push({
         id: crypto.randomUUID(),
@@ -1387,8 +1516,8 @@ async function importExcel(file) {
         quantity,
         grain,
         materialId: material.id,
-        notes: String(pick(row, ["notas", "nota", "notes"]) || ""),
-        edges: { top: null, right: null, bottom: null, left: null },
+        notes: String(rawNotes || ""),
+        edges: importedEdges,
       });
     });
     state.importPreview = { rows: valid, errors };
