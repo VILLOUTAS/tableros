@@ -46,9 +46,21 @@ function emptyState() {
       clientName: "",
       rut: "",
       status: "cotizacion",
+      projectAddress: "",
     },
+    contact: {
+      name: "",
+      email: "",
+      phone: "",
+      city: "",
+    },
+    submissionSource: "usuario",
+    visitorSubmitted: false,
+    visitorQuoteId: "",
     assignedTo: "",
     categoryId: "",
+    catalogKind: "boards",
+    catalogEdgeGroup: "",
     materialId: "",
     materialIds: [],
     productSearch: "",
@@ -83,6 +95,7 @@ const auth = {
   loading: true,
   error: "",
   mode: "login",
+  visitor: false,
 };
 
 const safe = (value = "") =>
@@ -158,7 +171,10 @@ function unreadNotifications() {
 }
 
 function canCreateQuote() {
-  return Boolean(auth.user);
+  return Boolean(
+    auth.visitor ||
+      ["admin", "comercial", "cliente"].includes(auth.user?.role),
+  );
 }
 
 function newQuoteState() {
@@ -167,6 +183,13 @@ function newQuoteState() {
     fresh.project.clientName =
       auth.user.clientName || auth.user.fullName || "";
     fresh.project.rut = auth.user.rut || "";
+    fresh.project.projectAddress = auth.user.projectAddress || "";
+    fresh.contact = {
+      name: auth.user.fullName || "",
+      email: auth.user.email || "",
+      phone: auth.user.phone || "",
+      city: auth.user.location || "",
+    };
   }
   if (auth.user?.role === "comercial") {
     fresh.assignedTo = auth.user.id;
@@ -175,17 +198,20 @@ function newQuoteState() {
 }
 
 function canEditCurrent() {
+  if (auth.visitor) return !state.visitorSubmitted;
   if (!auth.user) return false;
-  if (auth.user.role === "admin") {
-    return !["produccion", "despacho"].includes(state.project.status);
-  }
+  if (auth.user.role === "admin") return true;
   if (auth.user.role === "produccion") {
-    if (["produccion", "despacho"].includes(state.project.status)) return true;
-    return !state.ownerId || state.ownerId === auth.user.id;
+    return [
+      "facturado_pagado",
+      "produccion",
+      "despacho",
+      "entregado",
+    ].includes(state.project.status);
   }
   if (
     auth.user.role === "comercial" &&
-    ["produccion", "despacho"].includes(state.project.status)
+    !["cotizacion", "facturacion"].includes(state.project.status)
   ) {
     return false;
   }
@@ -201,15 +227,21 @@ function statusEntriesForRole(
 ) {
   const entries = Object.entries(statusLabels);
   let allowed;
-  if (role === "cliente") allowed = ["cotizacion"];
+  if (!role || role === "cliente") allowed = ["cotizacion"];
+  else if (role === "admin") allowed = entries.map(([value]) => value);
   else if (role === "produccion") {
-    if (currentStatus === "cotizacion") allowed = ["cotizacion", "facturacion"];
-    else if (currentStatus === "produccion") allowed = ["produccion", "despacho"];
+    if (currentStatus === "facturado_pagado") {
+      allowed = ["facturado_pagado", "produccion"];
+    } else if (currentStatus === "produccion") {
+      allowed = ["produccion", "despacho"];
+    } else if (currentStatus === "despacho") {
+      allowed = ["despacho", "entregado"];
+    }
     else allowed = [currentStatus];
   } else if (currentStatus === "cotizacion") {
     allowed = ["cotizacion", "facturacion"];
   } else if (currentStatus === "facturacion") {
-    allowed = ["facturacion", "produccion"];
+    allowed = ["facturacion", "facturado_pagado"];
   } else {
     allowed = [currentStatus];
   }
@@ -229,6 +261,16 @@ function notify(text, type = "success") {
 
 function validateCurrentStep() {
   if (state.step === 0) {
+    if (
+      auth.visitor &&
+      (!state.contact.name.trim() ||
+        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(state.contact.email) ||
+        state.contact.phone.trim().length < 7 ||
+        !state.contact.city.trim())
+    ) {
+      notify("Completa nombre, correo, teléfono y ciudad.", "error");
+      return false;
+    }
     if (!state.project.clientName.trim()) {
       notify("Completa el nombre del cliente.", "error");
       return false;
@@ -289,9 +331,25 @@ async function saveProject(showMessage = true) {
     pieces: state.pieces,
     settings: state.settings,
     assignedTo: state.assignedTo || null,
+    contact: state.contact,
+    submissionSource: auth.visitor ? "visitante" : state.submissionSource,
     summary: result.summary,
   };
   try {
+    if (auth.visitor) {
+      const payload = await api("/api/public/quotes", {
+        method: "POST",
+        body: record,
+      });
+      state.visitorSubmitted = true;
+      state.visitorQuoteId = payload.quote.id;
+      if (showMessage) {
+        notify(
+          `Cotización ${projectCode(payload.quote.id)} enviada. Administración fue notificada.`,
+        );
+      }
+      return true;
+    }
     const exists = projectsCache.some((item) => item.id === state.projectId);
     const payload = await api(
       exists ? `/api/projects/${state.projectId}` : "/api/projects",
@@ -385,9 +443,12 @@ function accessView() {
           ${
             registering
               ? `<label>Teléfono <em>*</em><input name="phone" type="tel" minlength="7" required autocomplete="tel" /></label>
-                <label>Empresa <small>Opcional</small><input name="clientName" autocomplete="organization" /></label>
-                <label>RUT <small>Opcional</small><input name="rut" /></label>
-                <label>Ubicación <small>Opcional</small><input name="location" autocomplete="address-level2" /></label>`
+                <label>Ciudad <small>Opcional</small><input name="location" autocomplete="address-level2" /></label>
+                <label>Razón social <small>Solo si es empresa</small><input name="clientName" autocomplete="organization" /></label>
+                <label>RUT empresa <small>Obligatorio si indica razón social</small><input name="rut" /></label>
+                <label>Dirección de facturación <small>Obligatoria si es empresa</small><input name="billingAddress" autocomplete="street-address" /></label>
+                <label>Giro comercial <small>Obligatorio si es empresa</small><input name="businessActivity" /></label>
+                <label>Dirección del proyecto <em>*</em><input name="projectAddress" minlength="5" required /></label>`
               : ""
           }
           <label>Clave <em>*</em><input name="password" type="password" minlength="10" required autocomplete="${
@@ -413,7 +474,8 @@ function accessView() {
                   registering
                     ? "Ya tengo una cuenta"
                     : "Soy cliente nuevo: crear cuenta"
-                }</button>`
+                }</button>
+                <button class="secondary" type="button" data-action="visitor-access">Ver catálogo y cotizar como visitante</button>`
           }
         </form>
       </section>
@@ -468,9 +530,16 @@ function shell(content) {
             )
             .join("")}
         </nav>
-        <button class="step-link ${state.view === "projects" ? "active" : ""}" data-action="projects">
-          <span>⌂</span><b>Proyectos<small>Control y estados</small></b>
+        <button class="step-link ${state.view === "catalog" ? "active" : ""}" data-action="catalog">
+          <span>▦</span><b>Catálogo<small>Materiales y precios</small></b>
         </button>
+        ${
+          auth.user
+            ? `<button class="step-link ${state.view === "projects" ? "active" : ""}" data-action="projects">
+                <span>⌂</span><b>Proyectos<small>Control y estados</small></b>
+              </button>`
+            : ""
+        }
         ${
           ["admin", "produccion"].includes(auth.user?.role)
             ? `<button class="step-link ${state.view === "production" ? "active" : ""}" data-action="production-dashboard">
@@ -493,9 +562,9 @@ function shell(content) {
             : ""
         }
         <div class="sidebar-user">
-          <b>${safe(auth.user?.fullName)}</b>
-          <span>${roleLabels[auth.user?.role] || ""}</span>
-          <button data-action="logout">Cerrar sesión</button>
+          <b>${safe(auth.user?.fullName || "Visitante")}</b>
+          <span>${auth.visitor ? "Catálogo y cotización sin descarga" : roleLabels[auth.user?.role] || ""}</span>
+          <button data-action="${auth.visitor ? "visitor-exit" : "logout"}">${auth.visitor ? "Volver al acceso" : "Cerrar sesión"}</button>
         </div>
       </aside>
       <main>
@@ -504,6 +573,8 @@ function shell(content) {
             <p class="eyebrow">${
               state.view === "projects"
                 ? "SEGUIMIENTO"
+                : state.view === "catalog"
+                  ? "CATÁLOGO GENERAL"
                 : state.view === "production"
                   ? "CONTROL DE FÁBRICA"
                 : state.view === "notifications"
@@ -515,6 +586,8 @@ function shell(content) {
             <h1>${
               state.view === "projects"
                 ? "Proyectos"
+                : state.view === "catalog"
+                  ? "Materiales y colores"
                 : state.view === "production"
                   ? "Agenda de producción"
                 : state.view === "notifications"
@@ -541,7 +614,12 @@ function shell(content) {
 }
 
 function projectStep() {
-  const availableStatusEntries = statusEntriesForRole();
+  const isExistingProject = projectsCache.some(
+    (item) => item.id === state.projectId,
+  );
+  const availableStatusEntries = isExistingProject
+    ? statusEntriesForRole()
+    : [["cotizacion", statusLabels.cotizacion]];
   const statusEditable =
     auth.user?.role !== "cliente" &&
     canEditCurrent() &&
@@ -552,22 +630,32 @@ function projectStep() {
       <div>
         <p class="eyebrow">NUEVA SOLICITUD</p>
         <h2>Identifica el trabajo antes de cotizar</h2>
-        <p>Solo el nombre del cliente es obligatorio. Los demás datos pueden completarse después.</p>
+        <p>${auth.visitor ? "Completa tus datos mínimos para que podamos responder la cotización." : "Identifica al cliente, dirección del proyecto y responsable comercial."}</p>
       </div>
       <div class="hero-mark">01</div>
     </section>
     <section class="card form-card">
-      <div class="section-title"><span>1</span><div><h3>Datos del proyecto</h3><p>Flujo autorizado: Cotización, Facturación, Producción y Despacho.</p></div></div>
+      <div class="section-title"><span>1</span><div><h3>Datos del proyecto</h3><p>Flujo: Cotización, Facturación, Facturado y pagado, Producción, Despacho y Entregado.</p></div></div>
       <div class="form-grid">
         <label>Nombre del proyecto
           <input data-project="projectName" value="${safe(state.project.projectName)}" placeholder="Ej. Cocina departamento Ñuñoa" />
         </label>
-        <label>Nombre del cliente <em>*</em>
-          <input data-project="clientName" value="${safe(state.project.clientName)}" placeholder="Nombre o razón social" />
-        </label>
-        <label>RUT
-          <input data-project="rut" value="${safe(state.project.rut)}" placeholder="12.345.678-5" />
-          <small>Opcional; si se ingresa, se valida módulo 11.</small>
+        ${
+          auth.visitor
+            ? `<label>Nombre <em>*</em><input data-contact="name" value="${safe(state.contact.name)}" autocomplete="name" /></label>
+              <label>Correo <em>*</em><input data-contact="email" type="email" value="${safe(state.contact.email)}" autocomplete="email" /></label>
+              <label>Teléfono <em>*</em><input data-contact="phone" type="tel" minlength="7" value="${safe(state.contact.phone)}" autocomplete="tel" /></label>
+              <label>Ciudad <em>*</em><input data-contact="city" value="${safe(state.contact.city)}" autocomplete="address-level2" /></label>`
+            : `<label>Nombre del cliente <em>*</em>
+                <input data-project="clientName" value="${safe(state.project.clientName)}" placeholder="Nombre o razón social" />
+              </label>
+              <label>RUT
+                <input data-project="rut" value="${safe(state.project.rut)}" placeholder="12.345.678-5" />
+                <small>Opcional; si se ingresa, se valida módulo 11.</small>
+              </label>`
+        }
+        <label>Dirección del proyecto
+          <input data-project="projectAddress" value="${safe(state.project.projectAddress)}" placeholder="Calle, número y comuna" />
         </label>
         <label>Estado
           <select data-project="status" ${statusEditable ? "" : "disabled"}>
@@ -579,7 +667,7 @@ function projectStep() {
               .join("")}
           </select>
         </label>
-        <label>Comercial responsable ${commercialRequired ? "<em>*</em>" : ""}
+        ${!auth.visitor ? `<label>Comercial responsable ${commercialRequired ? "<em>*</em>" : ""}
           <select data-assigned-to ${commercialRequired ? "required" : ""} ${
             ["comercial", "produccion"].includes(auth.user?.role)
               ? "disabled"
@@ -596,7 +684,7 @@ function projectStep() {
               .join("")}
           </select>
           <small>El comercial recibirá la cotización en su panel.</small>
-        </label>
+        </label>` : ""}
       </div>
     </section>
     ${stepFooter(false, "Continuar a materiales")}
@@ -674,6 +762,92 @@ function materialStep() {
     }
     ${stepFooter(true, "Continuar a piezas")}
   `;
+}
+
+function catalogView() {
+  const edgeGroups = [...new Set(edgeBands.map((item) => item.group))];
+  const showingBoards = state.catalogKind !== "edges";
+  const products = showingBoards
+    ? materials.filter((item) => item.categoryId === state.categoryId)
+    : edgeBands.filter((item) => item.group === state.catalogEdgeGroup);
+  return shell(`
+    <section class="intro-row catalog-intro">
+      <div>
+        <p class="eyebrow">CONSULTA ANTES O DURANTE LA COTIZACIÓN</p>
+        <h2>Catálogo por categoría</h2>
+        <p>Revisa colores, formatos y precios netos disponibles sin perder el avance de tu cotización.</p>
+      </div>
+      ${
+        canCreateQuote()
+          ? `<button class="primary" data-action="return-quote">Volver a mi cotización</button>`
+          : ""
+      }
+    </section>
+    <div class="catalog-tabs" role="tablist">
+      <button class="${showingBoards ? "active" : ""}" data-action="catalog-kind" data-kind="boards">Tableros</button>
+      <button class="${showingBoards ? "" : "active"}" data-action="catalog-kind" data-kind="edges">Tapacantos</button>
+    </div>
+    <section class="card">
+      <div class="section-title"><span>1</span><div><h3>${showingBoards ? "Categoría del tablero" : "Tipo de tapacanto"}</h3><p>Selecciona una categoría para revisar sus productos.</p></div></div>
+      <div class="category-grid catalog-categories">
+        ${
+          showingBoards
+            ? categories
+                .map(
+                  (category) => `<button class="category ${category.id === state.categoryId ? "selected" : ""}" data-category="${category.id}">
+                    <strong>${category.icon}</strong><span>${safe(category.name)}</span><i>${materials.filter((item) => item.categoryId === category.id).length}</i>
+                  </button>`,
+                )
+                .join("")
+            : edgeGroups
+                .map(
+                  (group) => `<button class="category ${group === state.catalogEdgeGroup ? "selected" : ""}" data-action="catalog-edge-group" data-group="${safe(group)}">
+                    <strong>▰</strong><span>${safe(group)}</span><i>${edgeBands.filter((item) => item.group === group).length}</i>
+                  </button>`,
+                )
+                .join("")
+        }
+      </div>
+    </section>
+    ${
+      (showingBoards && state.categoryId) || (!showingBoards && state.catalogEdgeGroup)
+        ? `<section class="card reveal catalog-results">
+            <div class="section-title product-title"><span>2</span><div><h3>Colores y productos disponibles</h3><p>${products.length} alternativa(s) en esta categoría.</p></div>
+              <label class="search-field">Buscar
+                <input id="material-search" type="search" value="${safe(state.productSearch)}" placeholder="Código, color, nombre o marca" />
+              </label>
+            </div>
+            <div class="product-grid">
+              ${products
+                .map((item) => {
+                  const selected = showingBoards && state.materialIds.includes(item.id);
+                  const body = `<span class="sample" style="background:${item.texture || "#ece8df"}">
+                      <img class="material-image" src="${materialImageUrl(item)}" data-fallback="${safe(item.image || "")}" alt="" loading="lazy" />
+                    </span>
+                    <span class="product-copy"><small>${safe(item.brand || item.group)} · ${safe(item.sku)}</small><b>${safe(item.name)}</b>
+                    <em>${
+                      showingBoards
+                        ? `${item.plateLength} × ${item.plateWidth} × ${item.thickness} mm`
+                        : `${String(item.thickness).replace(".", ",")} mm · ${safe(item.material || "Tapacanto")}`
+                    }</em>
+                    <strong>${clp(item.price ?? item.netPrice)} neto${showingBoards ? "" : "/ml"}</strong>
+                    ${
+                      !showingBoards
+                        ? `<span class="catalog-service-price">Servicio enchape: ${clp(item.serviceRate)}/ml</span>`
+                        : auth.user?.role === "admin"
+                          ? `<span class="admin-prices">Mínimo ${clp(item.minPrice)} · Compra ${clp(item.purchasePrice)}</span>`
+                          : ""
+                    }</span>`;
+                  return showingBoards && canCreateQuote()
+                    ? `<button class="product catalog-product ${selected ? "selected" : ""}" data-catalog-material="${item.id}" data-search-text="${safe(`${item.sku} ${item.name} ${item.brand}`.toLowerCase())}">${body}<i>${selected ? "✓" : "＋"}</i></button>`
+                    : `<article class="product catalog-product" data-search-text="${safe(`${item.sku} ${item.name} ${item.brand || item.group}`.toLowerCase())}">${body}</article>`;
+                })
+                .join("")}
+            </div>
+          </section>`
+        : `<div class="empty-hint">Selecciona una categoría para visualizar colores y precios.</div>`
+    }
+  `);
 }
 
 function piecesStep() {
@@ -1013,7 +1187,11 @@ function optimizeStep() {
     <section class="intro-row">
       <div><p class="eyebrow">RESULTADO</p><h2>Planos agrupados por tablero</h2><p>Cada material se optimiza por separado y genera sus propias hojas de corte.</p></div>
       <div class="actions">
-        <button class="secondary" data-action="pdf">↓ Descargar PDF</button>
+        ${
+          auth.visitor
+            ? ""
+            : `<button class="secondary" data-action="pdf">↓ Descargar PDF</button>`
+        }
         ${
           ["admin", "produccion"].includes(auth.user?.role)
             ? `<button class="secondary" data-action="labels-pdf">↓ Etiquetas 50 mm</button>`
@@ -1021,11 +1199,18 @@ function optimizeStep() {
         }
         ${
           canEditCurrent()
-            ? `<button class="primary" data-action="save">Guardar proyecto</button>`
+            ? `<button class="primary" data-action="save">${auth.visitor ? "Enviar cotización" : "Guardar proyecto"}</button>`
             : ""
         }
       </div>
     </section>
+    ${
+      auth.visitor
+        ? state.visitorSubmitted
+          ? `<div class="alert success"><b>Cotización enviada:</b> ${safe(projectCode(state.visitorQuoteId))}. Administración recibió el aviso y se comunicará contigo.</div>`
+          : `<div class="alert"><b>Modo visitante:</b> puedes revisar precios y enviar la cotización, pero la descarga PDF está disponible solo para Clientes registrados.</div>`
+        : ""
+    }
     <div class="metrics">
       <div><span>PLACAS</span><b>${summary.boardCount}</b></div>
       <div><span>APROVECHAMIENTO</span><b>${(100 - summary.waste).toFixed(1)} %</b></div>
@@ -1123,7 +1308,7 @@ function projectsView() {
     }</section>`);
   }
   return shell(`
-    <section class="intro-row"><div><p class="eyebrow">SEGUIMIENTO</p><h2>Cotización → Facturación → Producción → Despacho</h2><p>Cada perfil ve y modifica únicamente los proyectos que le corresponden.</p></div>${
+    <section class="intro-row"><div><p class="eyebrow">SEGUIMIENTO</p><h2>Cotización → Facturación → Pagado → Producción → Despacho → Entregado</h2><p>Cada perfil ve y modifica únicamente los proyectos que le corresponden.</p></div>${
       canCreateQuote()
         ? `<button class="primary" data-action="new">＋ Nueva cotización</button>`
         : ""
@@ -1137,20 +1322,18 @@ function projectsView() {
             <p>${safe(item.project.clientName)}${
               item.project.rut ? ` · ${safe(item.project.rut)}` : ""
             }<br><small>Código: ${safe(projectCode(item.id))}${
+              item.submissionSource === "visitante" ? " · Origen: Visitante" : ""
+            }${
               item.assignedName
                 ? ` · Comercial: ${safe(item.assignedName)}`
                 : ""
             }</small></p>
             <div><span>Total</span><b>${clp(item.summary?.total)}</b></div>
             ${
-              ((["admin", "comercial"].includes(auth.user?.role) &&
-                ["cotizacion", "facturacion"].includes(item.project.status)) ||
-                (auth.user?.role === "produccion" &&
-                  (item.project.status === "produccion" ||
-                    (item.ownerId === auth.user.id &&
-                      ["cotizacion", "facturacion"].includes(
-                        item.project.status,
-                      )))))
+              statusEntriesForRole(
+                auth.user?.role,
+                item.project.status,
+              ).length > 1
                 ? `<label>Estado<select data-project-status="${item.id}">
                     ${statusEntriesForRole(
                       auth.user?.role,
@@ -1228,7 +1411,14 @@ function productionPeriodRange(period) {
 function productionDashboardView() {
   const period = state.productionPeriod || "week";
   const range = productionPeriodRange(period);
-  const pipelineStatuses = ["facturacion", "produccion", "despacho"];
+  const pipelineStatuses = [
+    "cotizacion",
+    "facturacion",
+    "facturado_pagado",
+    "produccion",
+    "despacho",
+    "entregado",
+  ];
   const pipeline = projectsCache
     .filter((item) => pipelineStatuses.includes(item.project.status))
     .sort((a, b) =>
@@ -1242,7 +1432,7 @@ function productionDashboardView() {
     return date && date >= range.start && date <= range.end;
   });
   const completed = reportProjects.filter(
-    (item) => item.project.status === "despacho",
+    (item) => item.project.status === "entregado",
   );
   const completedBoards = completed.reduce(
     (sum, item) => sum + Number(item.summary?.boardCount || 0),
@@ -1260,16 +1450,19 @@ function productionDashboardView() {
     (item) => !item.executionDate || !item.deliveryDate,
   ).length;
   const statusColumns = [
-    ["facturacion", "Facturación", "Pedidos por programar o confirmar"],
+    ["cotizacion", "Cotización", "Oportunidades y solicitudes recibidas"],
+    ["facturacion", "Facturación", "Pedidos en proceso de facturación"],
+    ["facturado_pagado", "Facturado y pagado", "Órdenes liberadas a fábrica"],
     ["produccion", "Producción", "Órdenes actualmente en fábrica"],
     ["despacho", "Despacho", "Pedidos terminados y listos"],
+    ["entregado", "Entregado", "Registro histórico de entregas"],
   ];
   return shell(`
     <section class="intro-row production-intro">
       <div>
         <p class="eyebrow">CRM DE PRODUCCIÓN</p>
         <h2>Agenda, carga y cumplimiento</h2>
-        <p>Administra fechas de ejecución y entrega. Los indicadores se calculan desde los proyectos programados y cerrados en Despacho.</p>
+        <p>Visualiza el proceso completo. Administración agenda cualquier proyecto y Producción interviene desde Facturado y pagado.</p>
       </div>
       <div class="period-switch" aria-label="Período del reporte">
         ${[
@@ -1286,10 +1479,10 @@ function productionDashboardView() {
     </section>
     <section class="production-metrics">
       <article><span>PERÍODO</span><b>${safe(range.label)}</b><small>${reportProjects.length} orden(es) programada(s)</small></article>
-      <article><span>TABLEROS COMPLETADOS</span><b>${completedBoards.toLocaleString("es-CL")}</b><small>Proyectos en Despacho</small></article>
+      <article><span>TABLEROS ENTREGADOS</span><b>${completedBoards.toLocaleString("es-CL")}</b><small>Proyectos con estado Entregado</small></article>
       <article><span>ML ENCHAPADOS</span><b>${completedEdgeMeters.toLocaleString("es-CL", {
         maximumFractionDigits: 1,
-      })}</b><small>Proyectos en Despacho</small></article>
+      })}</b><small>Proyectos con estado Entregado</small></article>
       <article><span>ENTREGAS DEL PERÍODO</span><b>${deliveries}</b><small>Según fecha comprometida</small></article>
       <article class="${unscheduled ? "attention" : ""}"><span>SIN AGENDA COMPLETA</span><b>${unscheduled}</b><small>Requieren ejecución y entrega</small></article>
     </section>
@@ -1304,11 +1497,20 @@ function productionDashboardView() {
                 items.length
                   ? items
                       .map((item) => {
-                        const canMoveStatus =
-                          (auth.user?.role === "admin" &&
-                            status === "facturacion") ||
+                        const transitionEntries = statusEntriesForRole(
+                          auth.user?.role,
+                          item.project.status,
+                        );
+                        const canMoveStatus = transitionEntries.length > 1;
+                        const canSchedule =
+                          auth.user?.role === "admin" ||
                           (auth.user?.role === "produccion" &&
-                            status === "produccion");
+                            [
+                              "facturado_pagado",
+                              "produccion",
+                              "despacho",
+                              "entregado",
+                            ].includes(status));
                         return `<article class="crm-card">
                           <div class="crm-card-title">
                             <div><small>${safe(projectCode(item.id))}</small><h3>${safe(
@@ -1324,8 +1526,8 @@ function productionDashboardView() {
                             item.assignedName
                               ? ` · ${safe(item.assignedName)}`
                               : ""
-                          }</p>
-                          <form class="schedule-form" data-project-id="${item.id}">
+                          }${item.submissionSource === "visitante" ? " · Visitante web" : ""}</p>
+                          ${canSchedule ? `<form class="schedule-form" data-project-id="${item.id}">
                             <label>Ejecución<input type="date" name="executionDate" value="${safe(
                               dateInputValue(item.executionDate),
                             )}" /></label>
@@ -1333,14 +1535,11 @@ function productionDashboardView() {
                               dateInputValue(item.deliveryDate),
                             )}" /></label>
                             <button class="secondary small" type="submit">Guardar agenda</button>
-                          </form>
+                          </form>` : `<div class="crm-readonly-dates"><span>Ejecución: ${displayScheduleDate(item.executionDate)}</span><span>Entrega: ${displayScheduleDate(item.deliveryDate)}</span></div>`}
                           ${
                             canMoveStatus
                               ? `<label class="crm-status-control">Cambiar etapa<select data-project-status="${item.id}">
-                                  ${statusEntriesForRole(
-                                    auth.user?.role,
-                                    item.project.status,
-                                  )
+                                  ${transitionEntries
                                     .map(
                                       ([value, label]) =>
                                         `<option value="${value}" ${
@@ -1595,10 +1794,11 @@ function usersView() {
         <div class="table-wrap"><table>
           <thead><tr><th>Perfil</th><th>Proyectos visibles</th><th>Acciones principales</th></tr></thead>
           <tbody>
-            <tr><td><b>Administrador</b></td><td>Todos</td><td>Usuarios, cotizaciones, agenda CRM e indicadores; no altera una orden ya enviada a Producción.</td></tr>
-            <tr><td><b>Comercial</b></td><td>Propios y asignados</td><td>Pasa de Cotización a Facturación y luego a Producción.</td></tr>
-            <tr><td><b>Producción</b></td><td>Facturación, Producción, Despacho y borradores propios</td><td>Edita órdenes en fábrica, agenda fechas, descarga etiquetas y pasa a Despacho.</td></tr>
-            <tr><td><b>Cliente</b></td><td>Solo sus cotizaciones</td><td>Crea, guarda y consulta sin cambiar a Facturación, Producción o Despacho.</td></tr>
+            <tr><td><b>Administrador</b></td><td>Todos</td><td>Crea usuarios, visualiza y edita todo el flujo, catálogo, CRM, precios y documentos.</td></tr>
+            <tr><td><b>Comercial</b></td><td>Propios y asignados</td><td>Pasa Cotización a Facturación y luego a Facturado y pagado; producción queda en consulta.</td></tr>
+            <tr><td><b>Producción</b></td><td>Todos los proyectos</td><td>Consulta las etapas previas e interviene desde Facturado y pagado hasta Entregado.</td></tr>
+            <tr><td><b>Cliente</b></td><td>Solo sus cotizaciones</td><td>Consulta catálogo, cotiza, guarda, descarga y designa Comercial sin cambiar estados.</td></tr>
+            <tr><td><b>Visitante</b></td><td>Sin cuenta</td><td>Consulta catálogo y precios, envía cotización sin descargar PDF; Administración recibe la alerta.</td></tr>
           </tbody>
         </table></div>
       </section>
@@ -1645,16 +1845,21 @@ function render() {
     app.innerHTML = `<main class="access-page"><section class="access-brand"><img src="./logo-casa-diseno.png" alt="Casa Diseño Multiespacio" /><p>Preparando acceso seguro…</p></section></main>`;
     return;
   }
-  if (!auth.user) {
+  if (!auth.user && !auth.visitor) {
     app.innerHTML = accessView();
     return;
   }
-  if (auth.user.mustChangePassword) {
+  if (auth.user?.mustChangePassword) {
     app.innerHTML = passwordChangeView();
     return;
   }
   if (state.view === "projects") {
     app.innerHTML = projectsView();
+    renderEnhancements();
+    return;
+  }
+  if (state.view === "catalog") {
+    app.innerHTML = catalogView();
     renderEnhancements();
     return;
   }
@@ -2224,6 +2429,10 @@ function addPdfTable(
 }
 
 function exportPdf() {
+  if (auth.visitor) {
+    notify("La descarga PDF requiere una cuenta Cliente.", "error");
+    return;
+  }
   if (!latestResult?.plates.length) {
     notify("No hay placas para exportar.", "error");
     return;
@@ -2345,6 +2554,7 @@ app.addEventListener("submit", async (event) => {
             : "/api/auth/login";
       const payload = await api(endpoint, { method: "POST", body: data });
       auth.user = payload.user;
+      auth.visitor = false;
       auth.csrfToken = payload.csrfToken;
       auth.needsSetup = false;
       auth.mode = "login";
@@ -2392,6 +2602,12 @@ app.addEventListener("submit", async (event) => {
 
 app.addEventListener("input", (event) => {
   const target = event.target;
+  if (target.dataset.contact) {
+    state.contact[target.dataset.contact] = target.value;
+    if (target.dataset.contact === "name") {
+      state.project.clientName = target.value;
+    }
+  }
   if (target.dataset.project) {
     state.project[target.dataset.project] = target.value;
   }
@@ -2511,6 +2727,23 @@ app.addEventListener("click", async (event) => {
   const button = event.target.closest("button");
   if (!button) return;
   const action = button.dataset.action;
+  if (button.dataset.catalogMaterial) {
+    const materialId = button.dataset.catalogMaterial;
+    if (state.materialIds.includes(materialId)) {
+      if (state.pieces.some((piece) => piece.materialId === materialId)) {
+        notify("Ese tablero ya tiene piezas asignadas y no puede quitarse.", "error");
+        return;
+      }
+      state.materialIds = state.materialIds.filter((id) => id !== materialId);
+    } else {
+      state.materialIds.push(materialId);
+      state.materialId = materialId;
+      notify("Tablero agregado a la cotización.");
+      return;
+    }
+    render();
+    return;
+  }
   if (button.dataset.category) {
     state.categoryId = button.dataset.category;
     render();
@@ -2546,6 +2779,36 @@ app.addEventListener("click", async (event) => {
   if (action === "toggle-access") {
     auth.mode = auth.mode === "register" ? "login" : "register";
     auth.error = "";
+    render();
+  }
+  if (action === "visitor-access") {
+    auth.visitor = true;
+    auth.error = "";
+    state = newQuoteState();
+    state.view = "catalog";
+    render();
+  }
+  if (action === "visitor-exit") {
+    auth.visitor = false;
+    state = emptyState();
+    render();
+  }
+  if (action === "catalog") {
+    state.view = "catalog";
+    render();
+  }
+  if (action === "return-quote") {
+    state.view = "quote";
+    render();
+  }
+  if (action === "catalog-kind") {
+    state.catalogKind = button.dataset.kind === "edges" ? "edges" : "boards";
+    state.productSearch = "";
+    render();
+  }
+  if (action === "catalog-edge-group") {
+    state.catalogEdgeGroup = button.dataset.group || "";
+    state.productSearch = "";
     render();
   }
   if (action === "projects") {
@@ -2601,6 +2864,7 @@ app.addEventListener("click", async (event) => {
       // La sesión local se limpia incluso si ya venció en el servidor.
     }
     auth.user = null;
+    auth.visitor = false;
     auth.csrfToken = "";
     auth.error = "";
     projectsCache = [];

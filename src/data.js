@@ -8,8 +8,10 @@ export {
 export const statusLabels = {
   cotizacion: "Cotización",
   facturacion: "Facturación",
+  facturado_pagado: "Facturado y pagado",
   produccion: "Producción",
   despacho: "Despacho",
+  entregado: "Entregado",
 };
 
 export const grainLabels = {

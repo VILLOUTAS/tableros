@@ -1163,6 +1163,54 @@ function spacedMarks(values, scale, minimumPixels = 28) {
   }, []);
 }
 
+export function plateProductionMetrics(plate, material, edgeBands = []) {
+  let cutMillimeters = 0;
+  for (const strip of plate.strips || []) {
+    const fullCutPosition = strip.y + strip.height;
+    if (plate.cutAxis === "transversal") {
+      if (fullCutPosition < material.plateLength - 1) {
+        cutMillimeters += material.plateWidth;
+      }
+      for (const piece of strip.pieces || []) {
+        if (piece.y + piece.drawHeight < material.plateWidth - 1) {
+          cutMillimeters += strip.height;
+        }
+      }
+    } else {
+      if (fullCutPosition < material.plateWidth - 1) {
+        cutMillimeters += material.plateLength;
+      }
+      for (const piece of strip.pieces || []) {
+        if (piece.x + piece.drawWidth < material.plateLength - 1) {
+          cutMillimeters += strip.height;
+        }
+      }
+    }
+  }
+
+  const metersByEdge = {};
+  let edgeMeters = 0;
+  for (const piece of plate.pieces || []) {
+    for (const side of sides) {
+      const edgeId = piece.edges?.[side];
+      if (!edgeId || !edgeBands.some((edge) => edge.id === edgeId)) continue;
+      const millimeters =
+        side === "top" || side === "bottom"
+          ? Number(piece.length) || 0
+          : Number(piece.width) || 0;
+      const meters = millimeters / 1000;
+      edgeMeters += meters;
+      metersByEdge[edgeId] = (metersByEdge[edgeId] || 0) + meters;
+    }
+  }
+
+  return {
+    cutMeters: cutMillimeters / 1000,
+    edgeMeters,
+    metersByEdge,
+  };
+}
+
 export function drawCutPlan(
   canvas,
   plate,
@@ -1190,11 +1238,16 @@ export function drawCutPlan(
   }));
   const workflowRows = [...platePieceRows, ...plateLeftoverRows];
   const width = 1400;
+  const edgeLegendRowHeight = 70;
   const estimatedListTop =
-    188 + Math.max(94, 78 + Math.max(1, usedEdgeIds.length) * 42);
+    188 +
+    Math.max(
+      110,
+      86 + Math.max(1, usedEdgeIds.length) * edgeLegendRowHeight,
+    );
   const height = Math.max(
     900,
-    estimatedListTop + 76 + workflowRows.length * 19 + 62,
+    estimatedListTop + 76 + workflowRows.length * 19 + 190,
   );
   const margin = { left: 115, top: 188, right: 350, bottom: 82 };
   canvas.width = width;
@@ -1208,6 +1261,11 @@ export function drawCutPlan(
   const ox = margin.left;
   const oy = margin.top;
   const edgeVisuals = edgeVisualMap(usedEdgeIds);
+  const productionMetrics = plateProductionMetrics(
+    plate,
+    material,
+    edgeBands,
+  );
 
   ctx.fillStyle = "#f6f5f2";
   ctx.fillRect(0, 0, width, height);
@@ -1260,6 +1318,7 @@ export function drawCutPlan(
     headerX,
     109,
   );
+  ctx.font = "10.5px Arial";
   ctx.fillText(
     fittedText(
       ctx,
@@ -1273,6 +1332,31 @@ export function drawCutPlan(
     headerX,
     130,
   );
+  const metricLabelX = 1070;
+  const metricValueX = width - 42;
+  ctx.fillStyle = "#101820";
+  ctx.font = "700 12px Arial";
+  ctx.textAlign = "left";
+  ctx.fillText("TOTAL ML DE CORTE", metricLabelX, 64);
+  ctx.fillText("TOTAL ML DE ENCHAPE", metricLabelX, 88);
+  ctx.textAlign = "right";
+  ctx.fillText(
+    productionMetrics.cutMeters.toLocaleString("es-CL", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }),
+    metricValueX,
+    64,
+  );
+  ctx.fillText(
+    productionMetrics.edgeMeters.toLocaleString("es-CL", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }),
+    metricValueX,
+    88,
+  );
+  ctx.textAlign = "left";
   ctx.strokeStyle = "#a9b0b7";
   ctx.lineWidth = 1;
   ctx.beginPath();
@@ -1562,7 +1646,7 @@ export function drawCutPlan(
     const edge = edgeBands.find((item) => item.id === id);
     if (!edge) return;
     const visual = edgeVisuals.get(id);
-    const y = oy + 70 + index * 42;
+    const y = oy + 72 + index * edgeLegendRowHeight;
     ctx.fillStyle = visual.color;
     ctx.fillRect(legendX, y - 10, 28, 20);
     ctx.fillStyle = "#ffffff";
@@ -1570,19 +1654,34 @@ export function drawCutPlan(
     ctx.textAlign = "center";
     ctx.fillText(visual.code, legendX + 14, y + 4);
     drawEdgeLine(ctx, edge, visual, legendX + 40, y, legendX + 100, y);
+    ctx.fillStyle = "#101820";
+    ctx.font = "700 10px Arial";
+    ctx.textAlign = "right";
+    ctx.fillText(
+      `${Number(productionMetrics.metersByEdge[id] || 0).toLocaleString(
+        "es-CL",
+        { minimumFractionDigits: 2, maximumFractionDigits: 2 },
+      )} ML`,
+      width - 42,
+      y + 4,
+    );
     ctx.fillStyle = "#303a44";
-    ctx.font = "10px Arial";
+    ctx.font = "9px Arial";
     ctx.textAlign = "left";
     ctx.fillText(
       fittedText(
         ctx,
-        `${edge.material} ${String(edge.thickness).replace(".", ",")} mm · ${
-          edge.sku
-        } · ${edge.name}`,
-        margin.right - 160,
+        `${edge.sku} · ${edge.material} ${String(edge.thickness).replace(".", ",")} mm`,
+        margin.right - 88,
       ),
-      legendX + 112,
-      y + 4,
+      legendX,
+      y + 25,
+    );
+    ctx.font = "700 9px Arial";
+    ctx.fillText(
+      fittedText(ctx, edge.name, margin.right - 88),
+      legendX,
+      y + 42,
     );
   });
   if (!usedEdgeIds.length) {
@@ -1592,7 +1691,11 @@ export function drawCutPlan(
   }
 
   const listTop =
-    oy + Math.max(94, 78 + Math.max(1, usedEdgeIds.length) * 42);
+    oy +
+    Math.max(
+      110,
+      86 + Math.max(1, usedEdgeIds.length) * edgeLegendRowHeight,
+    );
   ctx.fillStyle = "#101820";
   ctx.font = "700 14px Arial";
   ctx.textAlign = "left";
@@ -1640,7 +1743,7 @@ export function drawCutPlan(
       fittedText(
         ctx,
         `${row.code}${row.name ? ` · ${row.name}` : ""}`,
-        measureX - legendX - 16,
+        measureX - legendX - 24,
       ),
       legendX + 5,
       y,
@@ -1661,11 +1764,27 @@ export function drawCutPlan(
     });
   });
 
+  const staffTop = listTop + 76 + workflowRows.length * 19 + 24;
+  const staffRoles = ["CORTADOR", "ENCHAPADOR", "SUPERVISOR", "DESPACHADOR"];
+  staffRoles.forEach((role, index) => {
+    const y = staffTop + index * 36;
+    ctx.fillStyle = "#101820";
+    ctx.font = "700 11px Arial";
+    ctx.textAlign = "left";
+    ctx.fillText(`NOMBRE ${role}`, legendX, y);
+    ctx.strokeStyle = "#101820";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(legendX, y + 14);
+    ctx.lineTo(Math.min(width - 42, legendX + listWidth - 70), y + 14);
+    ctx.stroke();
+  });
+
   ctx.fillStyle = "#58636d";
   ctx.font = "11px Arial";
   ctx.textAlign = "left";
   ctx.fillText(
-    "Medidas interiores: parciales · Exteriores: acumuladas · T1/T2/T3: tapacanto por lado · RET: retazo reutilizable · C/E/S: controles de producción · Unidades en mm.",
+    "Medidas interiores: parciales · Exteriores: acumuladas · T#: tapacanto por lado · RET: retazo reutilizable · C/E/S: controles de producción · Unidades en mm.",
     39,
     height - 28,
   );

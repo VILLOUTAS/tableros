@@ -11,7 +11,7 @@ import pg from "pg";
 import unzipper from "unzipper";
 
 import { edgeBands, materials } from "./src/data.js";
-import { pieceFitsMaterial, validateRut } from "./src/logic.js";
+import { optimizeProject, pieceFitsMaterial, validateRut } from "./src/logic.js";
 
 const { Pool } = pg;
 const root = fileURLToPath(new URL(".", import.meta.url));
@@ -23,8 +23,10 @@ const validRoles = new Set(["admin", "comercial", "produccion", "cliente"]);
 const validStatuses = new Set([
   "cotizacion",
   "facturacion",
+  "facturado_pagado",
   "produccion",
   "despacho",
+  "entregado",
 ]);
 
 const hashToken = (token) =>
@@ -40,6 +42,9 @@ const publicUser = (user) =>
     phone: user.phone || "",
     rut: user.rut || "",
     location: user.location || "",
+    billingAddress: user.billingAddress || "",
+    businessActivity: user.businessActivity || "",
+    projectAddress: user.projectAddress || "",
     active: Boolean(user.active),
     mustChangePassword: Boolean(user.mustChangePassword),
     createdAt: user.createdAt,
@@ -67,6 +72,9 @@ function normalizeUserInput(body = {}) {
     phone: String(body.phone || "").trim(),
     rut: String(body.rut || "").trim(),
     location: String(body.location || "").trim(),
+    billingAddress: String(body.billingAddress || "").trim(),
+    businessActivity: String(body.businessActivity || "").trim(),
+    projectAddress: String(body.projectAddress || "").trim(),
     active: parseActive(body.active, true),
   };
 }
@@ -117,6 +125,9 @@ function mapUser(row) {
     phone: row.phone,
     rut: row.rut,
     location: row.location,
+    billingAddress: row.billing_address,
+    businessActivity: row.business_activity,
+    projectAddress: row.project_address,
     active: row.active,
     mustChangePassword: Boolean(row.must_change_password),
     createdAt: row.created_at,
@@ -134,6 +145,7 @@ function mapProject(row) {
       clientName: row.client_name,
       rut: row.rut || "",
       status: row.status,
+      projectAddress: row.payload?.projectAddress || "",
     },
     ...row.payload,
     summary: row.summary || row.payload?.summary || null,
@@ -141,7 +153,9 @@ function mapProject(row) {
     deliveryDate: row.delivery_date || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    ownerName: row.owner_name || "",
+    ownerName:
+      row.owner_name ||
+      (row.payload?.submissionSource === "visitante" ? "Visitante" : ""),
     assignedName: row.assigned_name || "",
   };
 }
@@ -325,6 +339,9 @@ class PostgresStore {
         phone TEXT NOT NULL DEFAULT '',
         rut TEXT NOT NULL DEFAULT '',
         location TEXT NOT NULL DEFAULT '',
+        billing_address TEXT NOT NULL DEFAULT '',
+        business_activity TEXT NOT NULL DEFAULT '',
+        project_address TEXT NOT NULL DEFAULT '',
         active BOOLEAN NOT NULL DEFAULT TRUE,
         must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -339,12 +356,12 @@ class PostgresStore {
       );
       CREATE TABLE IF NOT EXISTS projects (
         id UUID PRIMARY KEY,
-        owner_id UUID NOT NULL REFERENCES app_users(id),
+        owner_id UUID REFERENCES app_users(id),
         assigned_to UUID REFERENCES app_users(id),
         project_name TEXT NOT NULL DEFAULT '',
         client_name TEXT NOT NULL,
         rut TEXT NOT NULL DEFAULT '',
-        status TEXT NOT NULL CHECK (status IN ('cotizacion','facturacion','produccion','despacho')),
+        status TEXT NOT NULL CHECK (status IN ('cotizacion','facturacion','facturado_pagado','produccion','despacho','entregado')),
         payload JSONB NOT NULL DEFAULT '{}'::jsonb,
         summary JSONB,
         execution_date DATE,
@@ -381,35 +398,27 @@ class PostgresStore {
         ADD COLUMN IF NOT EXISTS rut TEXT NOT NULL DEFAULT '';
       ALTER TABLE app_users
         ADD COLUMN IF NOT EXISTS location TEXT NOT NULL DEFAULT '';
+      ALTER TABLE app_users
+        ADD COLUMN IF NOT EXISTS billing_address TEXT NOT NULL DEFAULT '';
+      ALTER TABLE app_users
+        ADD COLUMN IF NOT EXISTS business_activity TEXT NOT NULL DEFAULT '';
+      ALTER TABLE app_users
+        ADD COLUMN IF NOT EXISTS project_address TEXT NOT NULL DEFAULT '';
       ALTER TABLE projects
         ADD COLUMN IF NOT EXISTS execution_date DATE;
       ALTER TABLE projects
         ADD COLUMN IF NOT EXISTS delivery_date DATE;
+      ALTER TABLE projects
+        ALTER COLUMN owner_id DROP NOT NULL;
     `);
     await this.pool.query(`
       ALTER TABLE projects DROP CONSTRAINT IF EXISTS projects_status_check;
       UPDATE projects SET status = 'facturacion' WHERE status = 'venta';
       ALTER TABLE projects
         ADD CONSTRAINT projects_status_check
-        CHECK (status IN ('cotizacion','facturacion','produccion','despacho'));
+        CHECK (status IN ('cotizacion','facturacion','facturado_pagado','produccion','despacho','entregado'));
     `);
     await importBundledMaterialImages(this.pool);
-    // La versión 2.0.1 ejecutó accidentalmente la prueba de integración contra
-    // DATABASE_URL durante el build de Render. Se eliminan únicamente esos
-    // registros de prueba conocidos para devolver la base a su estado inicial.
-    await this.pool.query(`
-      DELETE FROM projects
-      WHERE owner_id IN (
-        SELECT id FROM app_users
-        WHERE email IN ('admin@prueba.local', 'produccion@prueba.local')
-      )
-      OR assigned_to IN (
-        SELECT id FROM app_users
-        WHERE email IN ('admin@prueba.local', 'produccion@prueba.local')
-      );
-      DELETE FROM app_users
-      WHERE email IN ('admin@prueba.local', 'produccion@prueba.local');
-    `);
     await this.pool.query("DELETE FROM app_sessions WHERE expires_at <= NOW()");
   }
 
@@ -422,8 +431,9 @@ class PostgresStore {
     const result = await this.pool.query(
       `INSERT INTO app_users
         (id, email, password_hash, full_name, role, client_name, phone, rut,
-         location, active, must_change_password)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+         location, billing_address, business_activity, project_address,
+         active, must_change_password)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
        RETURNING *`,
       [
         user.id,
@@ -435,6 +445,9 @@ class PostgresStore {
         user.phone || "",
         user.rut || "",
         user.location || "",
+        user.billingAddress || "",
+        user.businessActivity || "",
+        user.projectAddress || "",
         user.active ?? true,
         user.mustChangePassword ?? false,
       ],
@@ -487,7 +500,8 @@ class PostgresStore {
       `UPDATE app_users
        SET email=$2, password_hash=$3, full_name=$4, role=$5,
            client_name=$6, phone=$7, rut=$8, location=$9, active=$10,
-           must_change_password=$11, updated_at=NOW()
+           must_change_password=$11, billing_address=$12,
+           business_activity=$13, project_address=$14, updated_at=NOW()
        WHERE id=$1 RETURNING *`,
       [
         id,
@@ -501,6 +515,9 @@ class PostgresStore {
         next.location || "",
         next.active,
         next.mustChangePassword ?? false,
+        next.billingAddress || "",
+        next.businessActivity || "",
+        next.projectAddress || "",
       ],
     );
     return mapUser(result.rows[0]);
@@ -604,7 +621,7 @@ class PostgresStore {
       `SELECT p.*, owner.full_name AS owner_name,
               assigned.full_name AS assigned_name
        FROM projects p
-       JOIN app_users owner ON owner.id=p.owner_id
+       LEFT JOIN app_users owner ON owner.id=p.owner_id
        LEFT JOIN app_users assigned ON assigned.id=p.assigned_to
        WHERE ${where}
        ORDER BY p.updated_at DESC`,
@@ -618,7 +635,7 @@ class PostgresStore {
       `SELECT p.*, owner.full_name AS owner_name,
               assigned.full_name AS assigned_name
        FROM projects p
-       JOIN app_users owner ON owner.id=p.owner_id
+       LEFT JOIN app_users owner ON owner.id=p.owner_id
        LEFT JOIN app_users assigned ON assigned.id=p.assigned_to
        WHERE p.id=$1`,
       [id],
@@ -672,14 +689,12 @@ class PostgresStore {
 
 export function projectVisibility(user) {
   const where =
-      user.role === "admin"
+      ["admin", "produccion"].includes(user.role)
         ? "TRUE"
-        : user.role === "produccion"
-          ? "(p.status IN ('facturacion','produccion','despacho') OR p.owner_id=$1)"
-          : user.role === "comercial"
+        : user.role === "comercial"
             ? "(p.owner_id=$1 OR p.assigned_to=$1)"
             : "p.owner_id=$1";
-  const params = ["comercial", "cliente", "produccion"].includes(user.role)
+  const params = ["comercial", "cliente"].includes(user.role)
     ? [user.id]
     : [];
   return { where, params };
@@ -786,14 +801,7 @@ class MemoryStore {
     return [...this.projects.values()]
       .filter((project) => {
         if (user.role === "admin") return true;
-        if (user.role === "produccion") {
-          return (
-            project.ownerId === user.id ||
-            ["facturacion", "produccion", "despacho"].includes(
-              project.project.status,
-            )
-          );
-        }
+        if (user.role === "produccion") return true;
         if (user.role === "comercial") {
           return project.ownerId === user.id || project.assignedTo === user.id;
         }
@@ -814,6 +822,10 @@ class MemoryStore {
       assignedTo: record.assignedTo || null,
       project: record.project,
       summary: record.summary,
+      ownerName:
+        this.users.get(record.ownerId)?.fullName ||
+        (record.payload?.submissionSource === "visitante" ? "Visitante" : ""),
+      assignedName: this.users.get(record.assignedTo)?.fullName || "",
       createdAt: current?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -837,14 +849,7 @@ class MemoryStore {
 
 export function canReadProject(user, project) {
   if (user.role === "admin") return true;
-  if (user.role === "produccion") {
-    return (
-      project.ownerId === user.id ||
-      ["facturacion", "produccion", "despacho"].includes(
-        project.project.status,
-      )
-    );
-  }
+  if (user.role === "produccion") return true;
   if (user.role === "comercial") {
     return project.ownerId === user.id || project.assignedTo === user.id;
   }
@@ -852,18 +857,18 @@ export function canReadProject(user, project) {
 }
 
 export function canEditProject(user, project) {
-  if (user.role === "admin") {
-    return !["produccion", "despacho"].includes(project.project.status);
-  }
+  if (user.role === "admin") return true;
   if (user.role === "produccion") {
-    if (["produccion", "despacho"].includes(project.project.status)) {
-      return true;
-    }
-    return project.ownerId === user.id;
+    return [
+      "facturado_pagado",
+      "produccion",
+      "despacho",
+      "entregado",
+    ].includes(project.project.status);
   }
   if (user.role === "comercial") {
     return (
-      project.project.status !== "produccion" &&
+      ["cotizacion", "facturacion"].includes(project.project.status) &&
       (project.ownerId === user.id || project.assignedTo === user.id)
     );
   }
@@ -872,17 +877,19 @@ export function canEditProject(user, project) {
 
 export function canTransitionProjectStatus(user, currentStatus, nextStatus) {
   if (currentStatus === nextStatus) return true;
-  if (nextStatus === "facturacion") {
-    return user.role !== "cliente" && currentStatus === "cotizacion";
-  }
-  if (nextStatus === "produccion") {
+  if (user.role === "admin") return validStatuses.has(nextStatus);
+  if (user.role === "comercial") {
     return (
-      ["admin", "comercial"].includes(user.role) &&
-      currentStatus === "facturacion"
+      (currentStatus === "cotizacion" && nextStatus === "facturacion") ||
+      (currentStatus === "facturacion" && nextStatus === "facturado_pagado")
     );
   }
-  if (nextStatus === "despacho") {
-    return user.role === "produccion" && currentStatus === "produccion";
+  if (user.role === "produccion") {
+    return (
+      (currentStatus === "facturado_pagado" && nextStatus === "produccion") ||
+      (currentStatus === "produccion" && nextStatus === "despacho") ||
+      (currentStatus === "despacho" && nextStatus === "entregado")
+    );
   }
   return false;
 }
@@ -918,6 +925,9 @@ function projectRecord(body, ownerId, current = null) {
       clientName: String(project.clientName || "").trim(),
       rut: String(project.rut || "").trim(),
       status: validStatuses.has(project.status) ? project.status : "cotizacion",
+      projectAddress: String(
+        project.projectAddress || body.projectAddress || current?.project?.projectAddress || "",
+      ).trim(),
     },
     payload: {
       categoryId: String(body.categoryId || ""),
@@ -928,6 +938,18 @@ function projectRecord(body, ownerId, current = null) {
       settings: body.settings && typeof body.settings === "object" ? body.settings : {},
       discounts:
         body.discounts && typeof body.discounts === "object" ? body.discounts : {},
+      projectAddress: String(
+        project.projectAddress || body.projectAddress || current?.project?.projectAddress || "",
+      ).trim(),
+      contact:
+        body.contact && typeof body.contact === "object"
+          ? body.contact
+          : current?.contact && typeof current.contact === "object"
+            ? current.contact
+            : {},
+      submissionSource: String(
+        body.submissionSource || current?.submissionSource || "usuario",
+      ),
     },
     summary: body.summary && typeof body.summary === "object" ? body.summary : null,
   };
@@ -1014,6 +1036,15 @@ export async function createApplication({ store, useMemory = false } = {}) {
     legacyHeaders: false,
     message: { error: "Demasiados registros. Intenta nuevamente más tarde." },
   });
+  const visitorQuoteLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    limit: 10,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    message: {
+      error: "Se alcanzó el máximo de cotizaciones por hora. Intenta nuevamente más tarde.",
+    },
+  });
 
   const authenticate = async (request, response, next) => {
     const token = parseCookies(request.get("cookie")).casa_session;
@@ -1068,6 +1099,48 @@ export async function createApplication({ store, useMemory = false } = {}) {
       maxAge: sessionHours * 60 * 60 * 1000,
     });
     return csrfToken;
+  };
+
+  const announceNewQuote = async (saved, creator) => {
+    const admins = await database.listActiveAdmins();
+    for (const admin of admins) {
+      await database.createNotification({
+        id: randomUUID(),
+        userId: admin.id,
+        projectId: saved.id,
+        type: "new_quote",
+        title:
+          saved.submissionSource === "visitante"
+            ? "Nueva cotización de visitante"
+            : "Nueva cotización",
+        message: `${saved.project.clientName} · ${
+          saved.project.projectName || "Proyecto sin nombre"
+        } · creada por ${creator.fullName}`,
+      });
+    }
+    if (
+      saved.assignedTo &&
+      !admins.some((admin) => admin.id === saved.assignedTo)
+    ) {
+      await database.createNotification({
+        id: randomUUID(),
+        userId: saved.assignedTo,
+        projectId: saved.id,
+        type: "assigned_quote",
+        title: "Cotización asignada",
+        message: `${saved.project.clientName} · ${
+          saved.project.projectName || "Proyecto sin nombre"
+        }`,
+      });
+    }
+    sendQuoteEmail(quoteEmailRecipients(admins), saved, creator).catch(
+      (error) => {
+        console.error(
+          "No se pudo enviar la notificación por correo:",
+          error.message,
+        );
+      },
+    );
   };
 
   app.get("/api/health", (_request, response) => {
@@ -1131,11 +1204,21 @@ export async function createApplication({ store, useMemory = false } = {}) {
       !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email) ||
       input.fullName.length < 2 ||
       input.phone.length < 7 ||
+      input.projectAddress.length < 5 ||
       input.password.length < 10
     ) {
       return response.status(400).json({
         error:
-          "Completa nombre, correo, teléfono y una clave de al menos 10 caracteres.",
+          "Completa nombre, correo, teléfono, dirección del proyecto y una clave de al menos 10 caracteres.",
+      });
+    }
+    if (
+      input.clientName &&
+      (!input.rut || !input.billingAddress || !input.businessActivity)
+    ) {
+      return response.status(400).json({
+        error:
+          "Para registrar una empresa completa razón social, RUT, dirección de facturación y giro comercial.",
       });
     }
     if (input.rut && !validateRut(input.rut)) {
@@ -1152,6 +1235,9 @@ export async function createApplication({ store, useMemory = false } = {}) {
         phone: input.phone,
         rut: input.rut,
         location: input.location,
+        billingAddress: input.billingAddress,
+        businessActivity: input.businessActivity,
+        projectAddress: input.projectAddress,
         active: true,
         mustChangePassword: false,
       });
@@ -1238,6 +1324,9 @@ export async function createApplication({ store, useMemory = false } = {}) {
         phone: input.phone,
         rut: input.rut,
         location: input.location,
+        billingAddress: input.billingAddress,
+        businessActivity: input.businessActivity,
+        projectAddress: input.projectAddress,
         active: input.active,
         mustChangePassword: true,
       });
@@ -1321,6 +1410,9 @@ export async function createApplication({ store, useMemory = false } = {}) {
               phone: item.input.phone,
               rut: item.input.rut,
               location: item.input.location,
+              billingAddress: item.input.billingAddress,
+              businessActivity: item.input.businessActivity,
+              projectAddress: item.input.projectAddress,
               active: item.input.active,
               mustChangePassword: true,
             });
@@ -1365,6 +1457,15 @@ export async function createApplication({ store, useMemory = false } = {}) {
       }
       if (request.body.location !== undefined) {
         changes.location = String(request.body.location).trim();
+      }
+      if (request.body.billingAddress !== undefined) {
+        changes.billingAddress = String(request.body.billingAddress).trim();
+      }
+      if (request.body.businessActivity !== undefined) {
+        changes.businessActivity = String(request.body.businessActivity).trim();
+      }
+      if (request.body.projectAddress !== undefined) {
+        changes.projectAddress = String(request.body.projectAddress).trim();
       }
       if (request.body.role !== undefined && validRoles.has(request.body.role)) {
         changes.role = request.body.role;
@@ -1460,7 +1561,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
     },
   );
 
-  app.get("/api/material-images/:sku", authenticate, async (request, response) => {
+  app.get("/api/material-images/:sku", async (request, response) => {
     const sku = normalizeImageKey(request.params.sku);
     const image = await database.getMaterialImage(sku);
     if (!image) return response.status(404).end();
@@ -1468,6 +1569,82 @@ export async function createApplication({ store, useMemory = false } = {}) {
     response.set("cache-control", "public, max-age=86400");
     return response.send(image.data);
   });
+
+  app.post(
+    "/api/public/quotes",
+    visitorQuoteLimiter,
+    async (request, response) => {
+      const contact = {
+        name: String(request.body.contact?.name || "").trim(),
+        email: normalizeEmail(request.body.contact?.email),
+        phone: String(request.body.contact?.phone || "").trim(),
+        city: String(request.body.contact?.city || "").trim(),
+      };
+      if (
+        contact.name.length < 2 ||
+        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact.email) ||
+        contact.phone.length < 7 ||
+        contact.city.length < 2
+      ) {
+        return response.status(400).json({
+          error:
+            "Completa nombre, correo, teléfono y ciudad para enviar la cotización.",
+        });
+      }
+      const record = projectRecord(
+        {
+          ...request.body,
+          contact,
+          submissionSource: "visitante",
+          assignedTo: null,
+          project: {
+            ...(request.body.project || {}),
+            clientName: contact.name,
+            rut: "",
+            status: "cotizacion",
+          },
+        },
+        null,
+      );
+      record.id = randomUUID();
+      record.ownerId = null;
+      record.assignedTo = null;
+      record.project.status = "cotizacion";
+      record.payload.contact = contact;
+      record.payload.submissionSource = "visitante";
+      const dimensionError = projectDimensionError(record);
+      if (dimensionError) {
+        return response.status(400).json({ error: dimensionError });
+      }
+      if (!record.payload.materialIds.length || !record.payload.pieces.length) {
+        return response.status(400).json({
+          error: "La cotización debe incluir al menos un tablero y una pieza.",
+        });
+      }
+      const selectedCatalogMaterials = record.payload.materialIds
+        .map((id) => materials.find((item) => item.id === id))
+        .filter(Boolean);
+      const result = optimizeProject(
+        selectedCatalogMaterials,
+        record.payload.pieces,
+        edgeBands,
+        record.payload.settings,
+      );
+      record.summary = result.summary;
+      const saved = await database.saveProject(record);
+      await announceNewQuote(saved, {
+        fullName: `${contact.name} (Visitante)`,
+        email: contact.email,
+      });
+      return response.status(201).json({
+        quote: {
+          id: saved.id,
+          status: saved.project.status,
+          total: saved.summary?.total || 0,
+        },
+      });
+    },
+  );
 
   app.get("/api/projects", authenticate, async (request, response) => {
     response.json({ projects: await database.listProjects(request.auth.user) });
@@ -1482,7 +1659,13 @@ export async function createApplication({ store, useMemory = false } = {}) {
   });
 
   app.post("/api/projects", authenticate, csrf, async (request, response) => {
+    if (request.auth.user.role === "produccion") {
+      return response.status(403).json({
+        error: "Producción puede revisar todos los proyectos, pero no crear cotizaciones.",
+      });
+    }
     const record = projectRecord(request.body, request.auth.user.id);
+    record.id = randomUUID();
     if (!record.project.clientName) {
       return response.status(400).json({ error: "El nombre del cliente es obligatorio." });
     }
@@ -1505,56 +1688,10 @@ export async function createApplication({ store, useMemory = false } = {}) {
         }
         record.project.status = "cotizacion";
       }
-      if (
-        request.auth.user.role === "produccion" &&
-        ["produccion", "despacho"].includes(record.project.status)
-      ) {
-        return response.status(403).json({
-          error: "Producción puede crear en Cotización o Facturación.",
-        });
-      }
     }
-    if (["produccion", "despacho"].includes(record.project.status)) {
-      return response.status(400).json({
-        error: "Un proyecto nuevo debe comenzar en Cotización o Facturación.",
-      });
-    }
+    record.project.status = "cotizacion";
     const saved = await database.saveProject(record);
-    const admins = await database.listActiveAdmins();
-    for (const admin of admins) {
-      await database.createNotification({
-        id: randomUUID(),
-        userId: admin.id,
-        projectId: saved.id,
-        type: "new_quote",
-        title: "Nueva cotización",
-        message: `${saved.project.clientName} · ${
-          saved.project.projectName || "Proyecto sin nombre"
-        } · creada por ${request.auth.user.fullName}`,
-      });
-    }
-    if (
-      saved.assignedTo &&
-      !admins.some((admin) => admin.id === saved.assignedTo)
-    ) {
-      await database.createNotification({
-        id: randomUUID(),
-        userId: saved.assignedTo,
-        projectId: saved.id,
-        type: "assigned_quote",
-        title: "Cotización asignada",
-        message: `${saved.project.clientName} · ${
-          saved.project.projectName || "Proyecto sin nombre"
-        }`,
-      });
-    }
-    sendQuoteEmail(
-      quoteEmailRecipients(admins),
-      saved,
-      request.auth.user,
-    ).catch((error) => {
-      console.error("No se pudo enviar la notificación por correo:", error.message);
-    });
+    await announceNewQuote(saved, request.auth.user);
     return response.status(201).json({ project: saved });
   });
 
@@ -1579,7 +1716,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
     ) {
       return response.status(403).json({
         error:
-          "Cambio de estado no autorizado. Sigue el flujo Cotización, Facturación, Producción y Despacho.",
+          "Cambio de estado no autorizado. Sigue el flujo Cotización, Facturación, Facturado y pagado, Producción, Despacho y Entregado.",
       });
     }
     const record = projectRecord(request.body, current.ownerId, current);
@@ -1597,30 +1734,22 @@ export async function createApplication({ store, useMemory = false } = {}) {
     if (request.auth.user.role === "comercial") {
       record.assignedTo = current.assignedTo || request.auth.user.id;
     }
-    const enteredProduction =
-      current.project.status !== "produccion" &&
-      record.project.status === "produccion";
-    if (
-      enteredProduction &&
-      !["admin", "comercial"].includes(request.auth.user.role)
-    ) {
-      return response.status(403).json({
-        error: "Solo Administración o Comercial pueden enviar a Producción.",
-      });
-    }
+    const enteredPaid =
+      current.project.status !== "facturado_pagado" &&
+      record.project.status === "facturado_pagado";
     const saved = await database.saveProject(record);
-    if (enteredProduction) {
+    if (enteredPaid) {
       const productionUsers = await database.listActiveUsersByRole("produccion");
       for (const user of productionUsers) {
         await database.createNotification({
           id: randomUUID(),
           userId: user.id,
           projectId: saved.id,
-          type: "production_order",
-          title: "Nueva orden de producción",
+          type: "paid_order",
+          title: "Pedido facturado y pagado",
           message: `${saved.project.clientName} · ${
             saved.project.projectName || "Proyecto sin nombre"
-          } · enviada por ${request.auth.user.fullName}`,
+          } · liberado por ${request.auth.user.fullName}`,
         });
       }
     }
@@ -1667,6 +1796,20 @@ export async function createApplication({ store, useMemory = false } = {}) {
       const current = await database.getProject(request.params.id);
       if (!current || !canReadProject(request.auth.user, current)) {
         return response.status(404).json({ error: "Proyecto no encontrado." });
+      }
+      if (
+        request.auth.user.role === "produccion" &&
+        ![
+          "facturado_pagado",
+          "produccion",
+          "despacho",
+          "entregado",
+        ].includes(current.project.status)
+      ) {
+        return response.status(403).json({
+          error:
+            "Producción puede programar una orden una vez que esté Facturada y pagada.",
+        });
       }
       const normalizeDate = (value) => {
         const text = String(value || "").trim();

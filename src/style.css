@@ -406,8 +406,40 @@ td span { color: var(--muted); font-size: 11px; margin-top: 2px; }
 .project-card time { margin-left: auto; color: var(--muted); font-size: 11px; }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #6e8090; }
 .status-dot.facturacion { background: #b5833e; }
+.status-dot.facturado_pagado { background: #197a66; }
 .status-dot.produccion { background: var(--green); }
 .status-dot.despacho { background: #5d6570; }
+.status-dot.entregado { background: #263d54; }
+
+.catalog-tabs {
+  display: inline-flex;
+  gap: 5px;
+  margin-bottom: 16px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: white;
+}
+.catalog-tabs button {
+  border: 0;
+  border-radius: 8px;
+  padding: 10px 18px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 800;
+}
+.catalog-tabs button.active { background: var(--navy); color: white; }
+.catalog-results { margin-top: 16px; }
+.catalog-product { min-height: 265px; }
+article.catalog-product { cursor: default; }
+.catalog-service-price {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+}
+.alert.success { border-color: #8fc8b6; background: #f1fbf6; }
 .project-card h3 { margin-top: 22px; }
 .project-card > p { min-height: 42px; }
 .project-card > div { display: flex; justify-content: space-between; padding: 12px 0; margin-bottom: 12px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
@@ -467,10 +499,13 @@ td span { color: var(--muted); font-size: 11px; margin-top: 2px; }
 .production-metrics small { color: var(--muted); font-size: 10px; }
 .crm-board {
   display: grid;
-  grid-template-columns: repeat(3, minmax(280px, 1fr));
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(285px, 1fr);
   gap: 14px;
   align-items: start;
   margin-bottom: 22px;
+  overflow-x: auto;
+  padding-bottom: 8px;
 }
 .crm-column {
   overflow: hidden;
@@ -530,6 +565,13 @@ td span { color: var(--muted); font-size: 11px; margin-top: 2px; }
 .schedule-form input,
 .crm-status-control select { padding: 8px; font-size: 11px; }
 .schedule-form button { grid-column: 1 / -1; }
+.crm-readonly-dates {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 9px;
+}
 .crm-status-control { font-size: 9px; }
 .crm-card > .ghost { justify-self: start; padding-left: 0; }
 .crm-empty {
@@ -660,7 +702,7 @@ td span { color: var(--muted); font-size: 11px; margin-top: 2px; }
   .project-grid { grid-template-columns: repeat(2, 1fr); }
   .selected-materials { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .production-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .crm-board { grid-template-columns: 1fr; }
+  .crm-board { grid-auto-columns: minmax(270px, 82vw); }
 }
 
 @media (max-width: 760px) {
@@ -678,6 +720,7 @@ td span { color: var(--muted); font-size: 11px; margin-top: 2px; }
     background: rgba(255,255,255,.05);
   }
   .sidebar > .step-link, .sidebar-user { display: none; }
+  .sidebar > [data-action="catalog"] { display: flex; margin-top: 8px; }
   .sidebar-new { margin: 0; }
   .topbar { top: 0; min-height: 75px; padding: 14px 18px; }
   .topbar h1 { font-size: 21px; }

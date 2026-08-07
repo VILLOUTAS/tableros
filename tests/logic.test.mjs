@@ -12,6 +12,7 @@ import {
   optimize,
   optimizeProject,
   parsePieceImportTable,
+  plateProductionMetrics,
   pieceFitsMaterial,
   resolveCatalogReference,
   summarizeOptimizedPieces,
@@ -479,7 +480,30 @@ test("la hoja de producción mantiene plano, listado, retazos y controles C/E/S"
   assert.ok(drawnText.includes("C"));
   assert.ok(drawnText.includes("E"));
   assert.ok(drawnText.includes("S"));
+  assert.ok(drawnText.includes("TOTAL ML DE CORTE"));
+  assert.ok(drawnText.includes("TOTAL ML DE ENCHAPE"));
+  assert.ok(drawnText.includes("NOMBRE CORTADOR"));
+  assert.ok(drawnText.includes("NOMBRE ENCHAPADOR"));
+  assert.ok(drawnText.includes("NOMBRE SUPERVISOR"));
+  assert.ok(drawnText.includes("NOMBRE DESPACHADOR"));
   assert.ok(drawnText.some((value) => value.includes("RET-QA-001")));
   assert.ok(canvas.width >= 1400);
   assert.ok(canvas.height >= 900);
+});
+
+test("calcula metros de corte y enchape por cada hoja", () => {
+  const board = {
+    ...material,
+    id: "tablero-metricas",
+    sku: "MET-001",
+    thickness: 18,
+  };
+  const result = optimize(board, [piece({ quantity: 2 })], edges, {
+    kerf: 2,
+    optimizationMode: "longitudinal",
+  });
+  const metrics = plateProductionMetrics(result.plates[0], board, edges);
+  assert.ok(metrics.cutMeters > 0);
+  assert.equal(metrics.edgeMeters, 2.56);
+  assert.equal(metrics.metersByEdge["pvc-1"], 2.56);
 });

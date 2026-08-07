@@ -1,11 +1,31 @@
 # Cotizador online — Casa Diseño Multiespacio
 
-Versión 3.0.1 del cotizador y optimizador de cortes. Incluye acceso seguro con
+Versión 3.1.0 del cotizador y optimizador de cortes. Incluye acceso seguro con
 usuarios diferenciados, base PostgreSQL, catálogo completo importado desde
 Excel y persistencia de proyectos.
 
 ## Funciones incluidas
 
+- Catálogo general independiente, accesible antes o durante una cotización,
+  con tableros y tapacantos ordenados por categoría, imágenes, colores,
+  formatos y precios netos.
+- Acceso Visitante sin cuenta: solicita nombre, correo, teléfono y ciudad,
+  permite consultar el catálogo y enviar una cotización, pero bloquea la
+  descarga PDF. Administración recibe el proyecto, una alerta interna y el
+  correo configurado.
+- Autoregistro Cliente con inicio de sesión automático y campos ampliados para
+  razón social, RUT, dirección de facturación, giro y dirección del proyecto.
+- Flujo completo: Cotización, Facturación, Facturado y pagado, Producción,
+  Despacho y Entregado.
+- Comercial gestiona sus proyectos y los asignados hasta Facturado y pagado;
+  desde ese punto conserva consulta detallada de producción.
+- Producción visualiza todos los estados y solo puede intervenir desde
+  Facturado y pagado hasta Entregado. Administración mantiene edición total.
+- CRM con las seis columnas del flujo, incluyendo oportunidades previas a
+  fábrica y registro en tiempo real de pedidos entregados.
+- Cada hoja de corte informa ML de corte, ML total de enchape y ML por tipo de
+  tapacanto. Las leyendas se distribuyen en líneas separadas y se incluyen
+  espacios manuscritos para Cortador, Enchapador, Supervisor y Despachador.
 - Logo oficial Casa Diseño Multiespacio.
 - Inicio de sesión real: claves cifradas con bcrypt, cookie `HttpOnly`, token
   CSRF y bloqueo temporal por intentos repetidos.
@@ -21,12 +41,14 @@ Excel y persistencia de proyectos.
 - Matriz de permisos visible en el módulo Usuarios y cambio de perfil reservado
   al Administrador.
 - Proyectos con nombre de cliente como único dato obligatorio.
-- Flujo de estados Cotización, Facturación, Producción y Despacho.
-- Todos los perfiles crean Cotizaciones; Facturación está disponible para
-  Administrador, Comercial y Producción; Administración o Comercial envían a
-  Producción y solo Producción puede cerrar en Despacho.
-- Una orden en Producción o Despacho solo admite cambios de fabricación desde
-  el perfil Producción.
+- Flujo de estados Cotización, Facturación, Facturado y pagado, Producción,
+  Despacho y Entregado.
+- Administrador, Comercial, Cliente y Visitante pueden originar Cotizaciones.
+  Comercial confirma Facturación y pago; Producción continúa desde la orden
+  pagada hasta su entrega.
+- Administración puede editar todo. Producción consulta las etapas previas e
+  interviene desde Facturado y pagado; Comercial conserva consulta detallada
+  después de liberar la orden.
 - 145 tableros y 121 tapacantos del Excel entregado.
 - Selección progresiva por categoría y búsqueda por código, nombre o marca.
 - Selección de múltiples tipos de tablero dentro de un mismo proyecto.
@@ -75,8 +97,8 @@ Excel y persistencia de proyectos.
 - Guardado de proyectos disponible para Administrador, Comercial, Producción
   y Cliente, respetando la visibilidad y estados autorizados para cada perfil.
 - Centro de notificaciones para Administradores, Comerciales y Producción.
-- Al pasar una orden a Producción, el Comercial ya no puede modificarla y los
-  usuarios de Producción reciben una alerta visible.
+- Al marcar una orden como Facturada y pagada, el Comercial deja de modificarla
+  y los usuarios de Producción reciben una alerta visible.
 - Aviso por correo de nuevas
   cotizaciones a `contacto@cdchile.cl` y a los Administradores activos, cuando
   el servicio de correo está configurado.
@@ -89,9 +111,8 @@ Excel y persistencia de proyectos.
   las carga automáticamente en PostgreSQL sin sobrescribir imágenes
   personalizadas; el Administrador también puede importar otro ZIP.
 - CRM de fábrica para Administrador y Producción con fechas de ejecución y
-  entrega, columnas de Facturación/Producción/Despacho y reportes diarios,
-  semanales y mensuales de carga, tableros completados y metros lineales
-  enchapados.
+  entrega, las seis columnas del flujo y reportes diarios, semanales y
+  mensuales de carga, tableros entregados y metros lineales enchapados.
 
 ## Publicar en Render
 
@@ -112,6 +133,17 @@ de datos necesitan un proceso Node.js permanente.
 7. Después de comprobar la nueva URL, puedes retirar el Static Site anterior.
 
 No elimines el sitio anterior antes de probar el nuevo servicio.
+
+### Actualizar desde V3.0.x sin perder información
+
+Usa el mismo Web Service y la misma variable `DATABASE_URL`. Al iniciar, la
+V3.1.0 agrega solamente columnas nuevas, habilita proyectos de Visitante y
+amplía la restricción de estados. No elimina usuarios, proyectos, imágenes,
+cotizaciones ni estados existentes.
+
+Antes de desplegar se recomienda generar un respaldo de PostgreSQL. No crees
+otra base de datos ni reemplaces `DATABASE_URL`, porque eso haría que la
+aplicación aparezca vacía aunque la información anterior siga en la otra base.
 
 ### Configuración manual equivalente
 

@@ -1,4 +1,4 @@
-COTIZADOR CASA DISEÑO V3.0.1 — ACTUALIZACIÓN
+COTIZADOR CASA DISEÑO V3.1.0 — ACTUALIZACIÓN SEGURA
 
 1. Descomprime este paquete.
 2. Reemplaza el contenido del repositorio GitHub con todos estos archivos.
@@ -18,6 +18,11 @@ SI TODAVÍA NO EXISTE EL WEB SERVICE V2
 
 IMPORTANTE
 
+- Esta actualización conserva usuarios, proyectos, imágenes y cotizaciones.
+- Debe desplegarse sobre el mismo Web Service y la misma DATABASE_URL.
+- No crear una base nueva ni cambiar DATABASE_URL durante esta actualización.
+- Antes de publicar, generar un respaldo de PostgreSQL.
+- La migración agrega campos y estados; no elimina tablas ni registros.
 - No intentes cambiar el servicio anterior de Static Site a Web Service:
   Render no permite modificar el tipo de un servicio existente.
 - No uses Publish Directory.
@@ -64,8 +69,16 @@ IMPORTANTE
 - Esta versión ya incluye catalog/IMAGENES_PRODUCTOS_V3.zip con 273 imágenes;
   Render las importa automáticamente al iniciar y conserva imágenes
   personalizadas existentes.
-- El flujo es Cotización > Facturación > Producción > Despacho. Solo Producción
-  modifica órdenes en fábrica y solo ese perfil puede pasarlas a Despacho.
+- El flujo es Cotización > Facturación > Facturado y pagado > Producción >
+  Despacho > Entregado.
+- Incluye catálogo general público por categoría para tableros y tapacantos.
+- Los Visitantes cotizan sin cuenta ni PDF; Administración recibe el proyecto,
+  la alerta y el correo.
+- Los Clientes se autoregistran e ingresan automáticamente con sus datos
+  comerciales y dirección de proyecto.
+- Producción visualiza todo el CRM e interviene desde Facturado y pagado.
+- La hoja de corte indica ML de corte, ML de enchape, ML por tapacanto y deja
+  espacios para Cortador, Enchapador, Supervisor y Despachador.
 - Administrador y Producción disponen de un CRM con agenda, fechas de ejecución
   y entrega, carga diaria/semanal/mensual, tableros completados y ML enchapados.
 - Para enviar correos, agrega en Render:

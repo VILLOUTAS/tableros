@@ -151,7 +151,7 @@ test("protege acceso, crea perfiles y permite guardar proyectos por perfil", asy
     });
     assert.equal(project.response.status, 201);
     assert.equal(project.body.project.project.clientName, "Cliente obligatorio");
-    assert.equal(project.body.project.project.status, "facturacion");
+    assert.equal(project.body.project.project.status, "cotizacion");
     assert.equal(project.body.project.pieces[0].name, "");
 
     const notifications = await request(base, "/api/notifications", {
@@ -251,42 +251,9 @@ test("protege acceso, crea perfiles y permite guardar proyectos por perfil", asy
         ],
       }),
     });
-    assert.equal(productionProject.response.status, 201);
-    assert.deepEqual(productionProject.body.project.materialIds, [
-      "62-egger-1502-1",
-      "62-egger-1501-2",
-    ]);
-    assert.equal(
-      productionProject.body.project.pieces[1].materialId,
-      "62-egger-1501-2",
-    );
-    const productionBilling = await request(
-      base,
-      `/api/projects/${productionProject.body.project.id}`,
-      {
-        method: "PATCH",
-        headers: productionHeaders,
-        body: JSON.stringify({
-          ...productionProject.body.project,
-          project: {
-            ...productionProject.body.project.project,
-            status: "facturacion",
-          },
-        }),
-      },
-    );
-    assert.equal(productionBilling.response.status, 200);
-    assert.equal(
-      productionBilling.body.project.project.status,
-      "facturacion",
-    );
+    assert.equal(productionProject.response.status, 403);
 
-    const visibleAfterSave = await request(base, "/api/projects", {
-      headers: { cookie: productionCookie },
-    });
-    assert.equal(visibleAfterSave.body.projects.length, 2);
-
-    const advanced = await request(
+    const paid = await request(
       base,
       `/api/projects/${project.body.project.id}`,
       {
@@ -296,18 +263,18 @@ test("protege acceso, crea perfiles y permite guardar proyectos por perfil", asy
           ...project.body.project,
           project: {
             ...project.body.project.project,
-            status: "produccion",
+            status: "facturado_pagado",
           },
         }),
       },
     );
-    assert.equal(advanced.response.status, 200);
-    assert.equal(advanced.body.project.project.status, "produccion");
+    assert.equal(paid.response.status, 200);
+    assert.equal(paid.body.project.project.status, "facturado_pagado");
 
     const visibleInProduction = await request(base, "/api/projects", {
       headers: { cookie: productionCookie },
     });
-    assert.equal(visibleInProduction.body.projects.length, 2);
+    assert.equal(visibleInProduction.body.projects.length, 1);
     const productionNotifications = await request(base, "/api/notifications", {
       headers: { cookie: productionCookie },
     });
@@ -315,19 +282,26 @@ test("protege acceso, crea perfiles y permite guardar proyectos por perfil", asy
     assert.equal(productionNotifications.body.notifications.length, 1);
     assert.equal(
       productionNotifications.body.notifications[0].type,
-      "production_order",
+      "paid_order",
     );
 
-    const blockedProductionEdit = await request(
+    const enteredProduction = await request(
       base,
       `/api/projects/${project.body.project.id}`,
       {
         method: "PATCH",
         headers: productionHeaders,
-        body: JSON.stringify(advanced.body.project),
+        body: JSON.stringify({
+          ...paid.body.project,
+          project: {
+            ...paid.body.project.project,
+            status: "produccion",
+          },
+        }),
       },
     );
-    assert.equal(blockedProductionEdit.response.status, 200);
+    assert.equal(enteredProduction.response.status, 200);
+    assert.equal(enteredProduction.body.project.project.status, "produccion");
 
     const scheduled = await request(
       base,
@@ -352,9 +326,9 @@ test("protege acceso, crea perfiles y permite guardar proyectos por perfil", asy
         method: "PATCH",
         headers: productionHeaders,
         body: JSON.stringify({
-          ...blockedProductionEdit.body.project,
+          ...enteredProduction.body.project,
           project: {
-            ...blockedProductionEdit.body.project.project,
+            ...enteredProduction.body.project.project,
             status: "despacho",
           },
         }),
@@ -363,16 +337,34 @@ test("protege acceso, crea perfiles y permite guardar proyectos por perfil", asy
     assert.equal(dispatched.response.status, 200);
     assert.equal(dispatched.body.project.project.status, "despacho");
 
-    const blockedAdminEdit = await request(
+    const delivered = await request(
+      base,
+      `/api/projects/${project.body.project.id}`,
+      {
+        method: "PATCH",
+        headers: productionHeaders,
+        body: JSON.stringify({
+          ...dispatched.body.project,
+          project: {
+            ...dispatched.body.project.project,
+            status: "entregado",
+          },
+        }),
+      },
+    );
+    assert.equal(delivered.response.status, 200);
+    assert.equal(delivered.body.project.project.status, "entregado");
+
+    const adminEdit = await request(
       base,
       `/api/projects/${project.body.project.id}`,
       {
         method: "PATCH",
         headers: adminHeaders,
-        body: JSON.stringify(dispatched.body.project),
+        body: JSON.stringify(delivered.body.project),
       },
     );
-    assert.equal(blockedAdminEdit.response.status, 403);
+    assert.equal(adminEdit.response.status, 200);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
@@ -381,7 +373,11 @@ test("protege acceso, crea perfiles y permite guardar proyectos por perfil", asy
 test("las consultas por perfil solo envían parámetros cuando el SQL los usa", () => {
   assert.deepEqual(
     projectVisibility({ id: "produccion-1", role: "produccion" }).params,
-    ["produccion-1"],
+    [],
+  );
+  assert.equal(
+    projectVisibility({ id: "produccion-1", role: "produccion" }).where,
+    "TRUE",
   );
   assert.deepEqual(
     projectVisibility({ id: "admin-1", role: "admin" }).params,
@@ -412,7 +408,7 @@ test("notifica nuevas cotizaciones a contacto y evita destinatarios repetidos", 
   );
 });
 
-test("respeta edición por rol y bloquea pedidos enviados a producción", () => {
+test("respeta edición por rol y libera Producción solo después del pago", () => {
   const ownQuote = {
     ownerId: "usuario-1",
     assignedTo: "comercial-1",
@@ -428,12 +424,19 @@ test("respeta edición por rol y bloquea pedidos enviados a producción", () => 
   );
   assert.equal(
     canEditProject({ id: "usuario-1", role: "produccion" }, ownQuote),
-    true,
+    false,
   );
   assert.equal(
     canEditProject(
       { id: "usuario-1", role: "produccion" },
       { ...ownQuote, project: { status: "facturacion" } },
+    ),
+    false,
+  );
+  assert.equal(
+    canEditProject(
+      { id: "usuario-1", role: "produccion" },
+      { ...ownQuote, project: { status: "facturado_pagado" } },
     ),
     true,
   );
@@ -453,7 +456,7 @@ test("respeta edición por rol y bloquea pedidos enviados a producción", () => 
       { id: "admin-1", role: "admin" },
       { ...ownQuote, project: { status: "produccion" } },
     ),
-    false,
+    true,
   );
   assert.equal(
     canEditProject(
@@ -464,7 +467,7 @@ test("respeta edición por rol y bloquea pedidos enviados a producción", () => 
   );
 });
 
-test("aplica el flujo de estados y reserva Despacho para Producción", () => {
+test("aplica el flujo Comercial, Producción y Entrega con control por rol", () => {
   assert.equal(
     canTransitionProjectStatus(
       { role: "cliente" },
@@ -485,14 +488,22 @@ test("aplica el flujo de estados y reserva Despacho para Producción", () => {
     canTransitionProjectStatus(
       { role: "comercial" },
       "facturacion",
-      "produccion",
+      "facturado_pagado",
     ),
     true,
   );
   assert.equal(
     canTransitionProjectStatus(
-      { role: "admin" },
+      { role: "comercial" },
       "facturacion",
+      "produccion",
+    ),
+    false,
+  );
+  assert.equal(
+    canTransitionProjectStatus(
+      { role: "produccion" },
+      "facturado_pagado",
       "produccion",
     ),
     true,
@@ -511,7 +522,15 @@ test("aplica el flujo de estados y reserva Despacho para Producción", () => {
       "produccion",
       "despacho",
     ),
-    false,
+    true,
+  );
+  assert.equal(
+    canTransitionProjectStatus(
+      { role: "produccion" },
+      "despacho",
+      "entregado",
+    ),
+    true,
   );
 });
 
@@ -568,13 +587,25 @@ test("permite autoregistro de clientes y exige sus datos obligatorios", async ()
         phone: "+56 9 1234 5678",
         password: "ClaveSegura123",
         clientName: "Empresa opcional",
+        rut: "12.345.678-5",
         location: "Santiago",
+        billingAddress: "Av. Apoquindo 1234, Las Condes",
+        businessActivity: "Fabricación de muebles",
+        projectAddress: "Los Alerces 456, Santiago",
       }),
     });
     assert.equal(registered.response.status, 201);
     assert.equal(registered.body.user.role, "cliente");
     assert.equal(registered.body.user.phone, "+56 9 1234 5678");
     assert.equal(registered.body.user.clientName, "Empresa opcional");
+    assert.equal(
+      registered.body.user.billingAddress,
+      "Av. Apoquindo 1234, Las Condes",
+    );
+    assert.equal(
+      registered.body.user.projectAddress,
+      "Los Alerces 456, Santiago",
+    );
     const clientCookie = registered.response.headers.get("set-cookie").split(";")[0];
     const clientHeaders = {
       "content-type": "application/json",
@@ -622,6 +653,83 @@ test("permite autoregistro de clientes y exige sus datos obligatorios", async ()
       headers: { cookie: clientCookie },
     });
     assert.equal(ownProjects.body.projects.length, 1);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("un visitante cotiza sin cuenta y Administración recibe el proyecto", async () => {
+  const { app } = await createApplication({ useMemory: true });
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise((resolve) => server.once("listening", resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const setup = await request(base, "/api/auth/setup", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        fullName: "Administración",
+        email: "admin@visitante.cl",
+        password: "ClaveAdminVisitante123",
+      }),
+    });
+    const adminCookie = setup.response.headers.get("set-cookie").split(";")[0];
+
+    const invalid = await request(base, "/api/public/quotes", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ contact: { name: "Sin datos" } }),
+    });
+    assert.equal(invalid.response.status, 400);
+
+    const visitorQuote = await request(base, "/api/public/quotes", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        contact: {
+          name: "Visita Web",
+          email: "visita@example.cl",
+          phone: "+56 9 1111 2222",
+          city: "Concepción",
+        },
+        project: { projectName: "Mueble visitante" },
+        materialId: "62-egger-1502-1",
+        materialIds: ["62-egger-1502-1"],
+        pieces: [
+          {
+            id: "pieza-visitante",
+            name: "Costado",
+            materialId: "62-egger-1502-1",
+            length: 600,
+            width: 400,
+            quantity: 2,
+            grain: "longitudinal",
+            edges: {},
+          },
+        ],
+        settings: {},
+      }),
+    });
+    assert.equal(visitorQuote.response.status, 201);
+    assert.equal(visitorQuote.body.quote.status, "cotizacion");
+
+    const projects = await request(base, "/api/projects", {
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(projects.body.projects.length, 1);
+    assert.equal(projects.body.projects[0].ownerId, null);
+    assert.equal(projects.body.projects[0].ownerName, "Visitante");
+    assert.equal(projects.body.projects[0].submissionSource, "visitante");
+    assert.equal(projects.body.projects[0].contact.city, "Concepción");
+
+    const notifications = await request(base, "/api/notifications", {
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(notifications.body.notifications.length, 1);
+    assert.equal(
+      notifications.body.notifications[0].title,
+      "Nueva cotización de visitante",
+    );
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
