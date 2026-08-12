@@ -53,12 +53,25 @@ export function resolveCatalogReference(items = [], reference, labelBuilder) {
   });
   if (exact) return exact;
 
-  return (
-    items.find((item) => {
-      const sku = normalizeCatalogReference(item.sku);
-      return sku && target.startsWith(`${sku} · `);
-    }) || null
-  );
+  const skuMatches = items.filter((item) => {
+    const sku = normalizeCatalogReference(item.sku);
+    if (!sku) return false;
+    return (
+      target.startsWith(`${sku} · `) ||
+      target.startsWith(`${sku} - `) ||
+      target === sku ||
+      target.split(" ").includes(sku)
+    );
+  });
+  if (skuMatches.length === 1) return skuMatches[0];
+
+  const labelMatches = items.filter((item) => {
+    const label = normalizeCatalogReference(
+      typeof labelBuilder === "function" ? labelBuilder(item) : "",
+    );
+    return label && (label.includes(target) || target.includes(label));
+  });
+  return labelMatches.length === 1 ? labelMatches[0] : null;
 }
 
 export function normalizeImportHeader(value) {
@@ -105,6 +118,21 @@ function defaultImportId() {
   return `pieza-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+const requiredPieceHeaderGroups = [
+  ["largo", "length", "largo mm", "largo pieza", "largo pieza mm"],
+  ["ancho", "width", "ancho mm", "ancho pieza", "ancho pieza mm"],
+  ["cantidad", "qty", "cant", "unidades", "unidad", "ud"],
+];
+
+function pieceImportHeaderRowIndex(table = []) {
+  return table.slice(0, 25).findIndex((candidate) => {
+    const normalized = new Set(candidate.map(normalizeImportHeader));
+    return requiredPieceHeaderGroups.every((aliases) =>
+      aliases.some((alias) => normalized.has(normalizeImportHeader(alias))),
+    );
+  });
+}
+
 export function parsePieceImportTable(
   table = [],
   {
@@ -118,19 +146,35 @@ export function parsePieceImportTable(
     return {
       rows: [],
       errors: ["La hoja de piezas está vacía."],
+      issues: [{ row: 0, field: "archivo", message: "La hoja de piezas está vacía." }],
       materialIds: [],
+      totalRows: 0,
+      blankRows: 0,
+      rejectedRows: 0,
+      headerRow: 0,
     };
   }
 
-  const headers = table[0].map((value) => String(value ?? ""));
+  const headerRowIndex = pieceImportHeaderRowIndex(table);
+  if (headerRowIndex < 0) {
+    const message =
+      "No se reconocen las columnas Largo, Ancho y Cantidad. Usa la plantilla descargada desde el cotizador.";
+    return {
+      rows: [],
+      errors: [message],
+      issues: [{ row: 0, field: "encabezados", message }],
+      materialIds: [],
+      totalRows: Math.max(0, table.length - 1),
+      blankRows: 0,
+      rejectedRows: Math.max(0, table.length - 1),
+      headerRow: 0,
+    };
+  }
+
+  const headers = table[headerRowIndex].map((value) => String(value ?? ""));
   const normalizedHeaders = new Set(headers.map(normalizeImportHeader));
-  const requiredGroups = [
-    ["largo", "length"],
-    ["ancho", "width"],
-    ["cantidad", "qty"],
-  ];
   if (
-    requiredGroups.some(
+    requiredPieceHeaderGroups.some(
       (aliases) =>
         !aliases.some((alias) =>
           normalizedHeaders.has(normalizeImportHeader(alias)),
@@ -142,23 +186,41 @@ export function parsePieceImportTable(
       errors: [
         "No se reconocen las columnas Largo, Ancho y Cantidad. Usa la plantilla descargada desde el cotizador.",
       ],
+      issues: [{
+        row: headerRowIndex + 1,
+        field: "encabezados",
+        message:
+          "No se reconocen las columnas Largo, Ancho y Cantidad. Usa la plantilla descargada desde el cotizador.",
+      }],
       materialIds: [],
+      totalRows: Math.max(0, table.length - headerRowIndex - 1),
+      blankRows: 0,
+      rejectedRows: Math.max(0, table.length - headerRowIndex - 1),
+      headerRow: headerRowIndex + 1,
     };
   }
 
-  const sourceRows = table.slice(1).map((row) =>
+  const sourceRows = table.slice(headerRowIndex + 1).map((row) =>
     Object.fromEntries(
       headers.map((header, index) => [header, row[index] ?? ""]),
     ),
   );
   const rows = [];
   const errors = [];
+  const issues = [];
+  let blankRows = 0;
   const importedMaterialIds = new Set();
   const fallbackMaterial = catalogMaterials.find(
     (item) => item.id === fallbackMaterialId,
   );
 
   sourceRows.forEach((row, index) => {
+    const sheetRow = headerRowIndex + index + 2;
+    const reject = (field, message) => {
+      const fullMessage = `Fila ${sheetRow}: ${message}`;
+      errors.push(fullMessage);
+      issues.push({ row: sheetRow, field, message });
+    };
     const rawCode = pickImportValue(row, [
       "codigo",
       "código",
@@ -175,15 +237,18 @@ export function parsePieceImportTable(
       "pieza",
       "name",
     ]);
-    const rawLength = pickImportValue(row, ["largo", "length"]);
-    const rawWidth = pickImportValue(row, ["ancho", "width"]);
-    const rawQuantity = pickImportValue(row, ["cantidad", "qty"]);
+    const rawLength = pickImportValue(row, requiredPieceHeaderGroups[0]);
+    const rawWidth = pickImportValue(row, requiredPieceHeaderGroups[1]);
+    const rawQuantity = pickImportValue(row, requiredPieceHeaderGroups[2]);
     const rawMaterialReference = pickImportValue(row, [
       "codigo material auto",
       "codigo material",
       "código material",
       "codigo material opcional",
       "material",
+      "tablero",
+      "codigo tablero",
+      "código tablero",
       "sku material",
     ]);
     const rawMaterialSelection = pickImportValue(row, [
@@ -220,12 +285,14 @@ export function parsePieceImportTable(
         "tapacanto l1",
         "tapacanto lado l1",
         "tapacanto superior",
+        "l1",
       ]),
       bottom: pickImportValue(row, [
         "l2 tapacanto",
         "tapacanto l2",
         "tapacanto lado l2",
         "tapacanto inferior",
+        "l2",
       ]),
       left: pickImportValue(row, [
         "a1 tapacanto",
@@ -234,6 +301,7 @@ export function parsePieceImportTable(
         "l4 tapacanto",
         "tapacanto l4",
         "tapacanto izquierdo",
+        "a1",
       ]),
       right: pickImportValue(row, [
         "a2 tapacanto",
@@ -242,6 +310,7 @@ export function parsePieceImportTable(
         "l3 tapacanto",
         "tapacanto l3",
         "tapacanto derecho",
+        "a2",
       ]),
     };
 
@@ -260,6 +329,7 @@ export function parsePieceImportTable(
         ...Object.values(rawEdgeSelections),
       ])
     ) {
+      blankRows += 1;
       return;
     }
 
@@ -297,20 +367,23 @@ export function parsePieceImportTable(
       width <= 0 ||
       quantity <= 0
     ) {
-      errors.push(
-        `Fila ${index + 2}: Largo, Ancho y Cantidad deben ser números positivos; Cantidad debe ser un entero.`,
+      reject(
+        "medidas/cantidad",
+        "Largo, Ancho y Cantidad deben ser números positivos; Cantidad debe ser un entero.",
       );
       return;
     }
     if (!material) {
-      errors.push(
-        `Fila ${index + 2}: el tablero indicado no existe en el catálogo. Selecciónalo desde la lista de la plantilla.`,
+      reject(
+        "tablero",
+        "el tablero indicado no existe en el catálogo. Selecciónalo desde la lista de la plantilla o ingresa su código SKU.",
       );
       return;
     }
     if (!pieceFitsMaterial({ length, width, grain }, material)) {
-      errors.push(
-        `Fila ${index + 2}: la pieza excede la plancha ${material.plateLength} × ${material.plateWidth} mm para la veta indicada.`,
+      reject(
+        "medidas",
+        `la pieza excede la plancha ${material.plateLength} × ${material.plateWidth} mm para la veta indicada.`,
       );
       return;
     }
@@ -333,8 +406,9 @@ export function parsePieceImportTable(
       right: "A2",
     };
     if (incompleteEdge) {
-      errors.push(
-        `Fila ${index + 2}: selecciona el producto de tapacanto ${sideLabels[incompleteEdge[0]]}.`,
+      reject(
+        `tapacanto ${sideLabels[incompleteEdge[0]]}`,
+        `selecciona el producto de tapacanto ${sideLabels[incompleteEdge[0]]}.`,
       );
       return;
     }
@@ -353,8 +427,9 @@ export function parsePieceImportTable(
       },
     );
     if (invalidEdge) {
-      errors.push(
-        `Fila ${index + 2}: el tapacanto ${sideLabels[invalidEdge[0]]} no existe en el catálogo.`,
+      reject(
+        `tapacanto ${sideLabels[invalidEdge[0]]}`,
+        `el tapacanto ${sideLabels[invalidEdge[0]]} no existe en el catálogo. Selecciónalo desde la lista o ingresa su SKU.`,
       );
       return;
     }
@@ -377,7 +452,12 @@ export function parsePieceImportTable(
   return {
     rows,
     errors,
+    issues,
     materialIds: [...importedMaterialIds],
+    totalRows: sourceRows.length,
+    blankRows,
+    rejectedRows: issues.length,
+    headerRow: headerRowIndex + 1,
   };
 }
 
@@ -1050,6 +1130,37 @@ function fittedText(ctx, value, maxWidth) {
   return `${shortened}…`;
 }
 
+function wrappedTextLines(ctx, value, maxWidth) {
+  const words = String(value ?? "").trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return [""];
+  const lines = [];
+  let line = "";
+  for (const word of words) {
+    const candidate = line ? `${line} ${word}` : word;
+    if (!line || ctx.measureText(candidate).width <= maxWidth) {
+      line = candidate;
+      continue;
+    }
+    lines.push(line);
+    if (ctx.measureText(word).width <= maxWidth) {
+      line = word;
+      continue;
+    }
+    let fragment = "";
+    for (const character of word) {
+      if (fragment && ctx.measureText(`${fragment}${character}`).width > maxWidth) {
+        lines.push(fragment);
+        fragment = character;
+      } else {
+        fragment += character;
+      }
+    }
+    line = fragment;
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
 const edgePalette = [
   "#005A8D",
   "#B93815",
@@ -1118,7 +1229,7 @@ function drawEdgeCode(ctx, visual, side, x, y, width, height) {
   ctx.fillStyle = visual.color;
   ctx.fillRect(cx - 13, cy - 8, 26, 16);
   ctx.fillStyle = "#ffffff";
-  ctx.font = "700 9px Arial";
+  ctx.font = "700 10px Arial";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText(visual.code, cx, cy + 0.5);
@@ -1126,7 +1237,7 @@ function drawEdgeCode(ctx, visual, side, x, y, width, height) {
 }
 
 function drawCutTag(ctx, text, x, y, maxWidth = 160) {
-  ctx.font = "700 9px Arial";
+  ctx.font = "700 8px Arial";
   const label = fittedText(ctx, text, maxWidth - 12);
   const tagWidth = Math.min(maxWidth, ctx.measureText(label).width + 12);
   ctx.fillStyle = "rgba(255,255,255,.94)";
@@ -1143,10 +1254,10 @@ function drawMeasureLabel(ctx, text, x, y, maxWidth, rotation = 0) {
   const labelWidth = Math.min(maxWidth, ctx.measureText(label).width);
   const boxWidth = labelWidth + 8;
   ctx.fillStyle = "rgba(255,255,255,.9)";
-  ctx.fillRect(-boxWidth / 2, -9, boxWidth, 14);
+  ctx.fillRect(-boxWidth / 2, -11, boxWidth, 18);
   ctx.fillStyle = "#101820";
   ctx.textAlign = "center";
-  ctx.fillText(label, 0, 2);
+  ctx.fillText(label, 0, 3);
   ctx.restore();
 }
 
@@ -1238,16 +1349,17 @@ export function drawCutPlan(
   }));
   const workflowRows = [...platePieceRows, ...plateLeftoverRows];
   const width = 1400;
-  const edgeLegendRowHeight = 70;
+  const edgeLegendRowHeight = 104;
+  const workflowRowHeight = 26;
   const estimatedListTop =
     188 +
     Math.max(
       110,
-      86 + Math.max(1, usedEdgeIds.length) * edgeLegendRowHeight,
+      94 + Math.max(1, usedEdgeIds.length) * edgeLegendRowHeight,
     );
   const height = Math.max(
     900,
-    estimatedListTop + 76 + workflowRows.length * 19 + 190,
+    estimatedListTop + 76 + workflowRows.length * workflowRowHeight + 190,
   );
   const margin = { left: 115, top: 188, right: 350, bottom: 82 };
   canvas.width = width;
@@ -1465,7 +1577,7 @@ export function drawCutPlan(
     if (w > 48 && h > 36) {
       const horizontalMeasure = Math.round(piece.drawWidth);
       const verticalMeasure = Math.round(piece.drawHeight);
-      ctx.font = `700 ${w > 100 && h > 70 ? 10 : 8}px Arial`;
+      ctx.font = `700 ${w > 100 && h > 70 ? 12 : 10}px Arial`;
       const horizontalInset = Math.min(29, Math.max(18, h * 0.18));
       const verticalInset = Math.min(29, Math.max(18, w * 0.12));
       drawMeasureLabel(
@@ -1666,22 +1778,25 @@ export function drawCutPlan(
       y + 4,
     );
     ctx.fillStyle = "#303a44";
-    ctx.font = "9px Arial";
+    ctx.font = "8.5px Arial";
     ctx.textAlign = "left";
-    ctx.fillText(
-      fittedText(
-        ctx,
-        `${edge.sku} · ${edge.material} ${String(edge.thickness).replace(".", ",")} mm`,
-        margin.right - 88,
-      ),
-      legendX,
-      y + 25,
+    const descriptorLines = wrappedTextLines(
+      ctx,
+      `${edge.sku} · ${edge.material || edge.group || ""} ${String(edge.thickness).replace(".", ",")} mm`,
+      margin.right - 64,
     );
-    ctx.font = "700 9px Arial";
-    ctx.fillText(
-      fittedText(ctx, edge.name, margin.right - 88),
-      legendX,
-      y + 42,
+    descriptorLines.forEach((line, lineIndex) => {
+      ctx.fillText(line, legendX, y + 25 + lineIndex * 12);
+    });
+    ctx.font = "700 8.5px Arial";
+    wrappedTextLines(ctx, edge.name, margin.right - 64).forEach(
+      (line, lineIndex) => {
+        ctx.fillText(
+          line,
+          legendX,
+          y + 31 + descriptorLines.length * 12 + lineIndex * 13,
+        );
+      },
     );
   });
   if (!usedEdgeIds.length) {
@@ -1694,7 +1809,7 @@ export function drawCutPlan(
     oy +
     Math.max(
       110,
-      86 + Math.max(1, usedEdgeIds.length) * edgeLegendRowHeight,
+      94 + Math.max(1, usedEdgeIds.length) * edgeLegendRowHeight,
     );
   ctx.fillStyle = "#101820";
   ctx.font = "700 14px Arial";
@@ -1731,40 +1846,43 @@ export function drawCutPlan(
   });
   ctx.textAlign = "left";
   workflowRows.forEach((row, index) => {
-    const y = listTop + 76 + index * 19;
+    const y = listTop + 76 + index * workflowRowHeight;
     if (index % 2) {
       ctx.fillStyle = "rgba(255,255,255,.58)";
-      ctx.fillRect(legendX, y - 13, listWidth, 18);
+      ctx.fillRect(legendX, y - 15, listWidth, workflowRowHeight - 1);
     }
     ctx.fillStyle = "#303a44";
-    ctx.font = "700 9px Arial";
+    ctx.font = "700 8px Arial";
     ctx.textAlign = "left";
+    ctx.fillText(row.code || "S/C", legendX + 5, y - 3);
+    ctx.font = "7.5px Arial";
     ctx.fillText(
       fittedText(
         ctx,
-        `${row.code}${row.name ? ` · ${row.name}` : ""}`,
-        measureX - legendX - 24,
+        row.name || "",
+        measureX - legendX - 40,
       ),
       legendX + 5,
-      y,
+      y + 8,
     );
-    ctx.font = "9px Arial";
+    ctx.font = "8px Arial";
     ctx.textAlign = "right";
     ctx.fillText(
       `${Math.round(row.cutLength)}×${Math.round(row.cutWidth)}`,
       measureX,
-      y,
+      y + 2,
     );
-    ctx.fillText(`${row.quantity}`, quantityX, y);
+    ctx.fillText(`${row.quantity}`, quantityX, y + 2);
     ctx.strokeStyle = "#101820";
     ctx.lineWidth = 1.2;
     ctx.setLineDash([]);
     checkCenters.forEach((center) => {
-      ctx.strokeRect(center - 5, y - 9, 10, 10);
+      ctx.strokeRect(center - 5, y - 7, 10, 10);
     });
   });
 
-  const staffTop = listTop + 76 + workflowRows.length * 19 + 24;
+  const staffTop =
+    listTop + 76 + workflowRows.length * workflowRowHeight + 24;
   const staffRoles = ["CORTADOR", "ENCHAPADOR", "SUPERVISOR", "DESPACHADOR"];
   staffRoles.forEach((role, index) => {
     const y = staffTop + index * 36;

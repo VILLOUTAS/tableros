@@ -29,6 +29,16 @@ const categoryMap = {
     name: "Melamina EGGER 18 mm",
     icon: "▥",
   },
+  "MELAMINA 15MM - MASISA": {
+    id: "melamina-masisa-15",
+    name: "Melamina MASISA 15 mm",
+    icon: "▤",
+  },
+  "MELAMINA 18MM - MASISA": {
+    id: "melamina-masisa-18",
+    name: "Melamina MASISA 18 mm",
+    icon: "▥",
+  },
   "TABLERO EGR DECOR": {
     id: "egr",
     name: "Tableros EGR Decor",

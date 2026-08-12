@@ -1,6 +1,6 @@
 # Cotizador online — Casa Diseño Multiespacio
 
-Versión 3.1.0 del cotizador y optimizador de cortes. Incluye acceso seguro con
+Versión 3.3.0 del cotizador y optimizador de cortes. Incluye acceso seguro con
 usuarios diferenciados, base PostgreSQL, catálogo completo importado desde
 Excel y persistencia de proyectos.
 
@@ -9,10 +9,19 @@ Excel y persistencia de proyectos.
 - Catálogo general independiente, accesible antes o durante una cotización,
   con tableros y tapacantos ordenados por categoría, imágenes, colores,
   formatos y precios netos.
+- Gestión de catálogo exclusiva para Administradores: permite crear y editar
+  tableros y tapacantos, categorías, medidas, precios, códigos e imágenes sin
+  modificar GitHub. Cada edición genera una revisión nueva para que los
+  proyectos existentes conserven la ficha anterior del producto.
 - Acceso Visitante sin cuenta: solicita nombre, correo, teléfono y ciudad,
   permite consultar el catálogo y enviar una cotización, pero bloquea la
-  descarga PDF. Administración recibe el proyecto, una alerta interna y el
-  correo configurado.
+  descarga PDF. El Visitante elige su ejecutivo; Administración y el Comercial
+  reciben el proyecto, una alerta interna y el correo configurado.
+- Colaboración comercial: el responsable o Administración puede sumar otros
+  Comerciales para ayudar a preparar una cotización, manteniendo identificado
+  al ejecutivo principal.
+- Eliminación protegida exclusiva de Administradores. La cotización desaparece
+  de los paneles, pero queda preservada en la base para auditoría.
 - Autoregistro Cliente con inicio de sesión automático y campos ampliados para
   razón social, RUT, dirección de facturación, giro y dirección del proyecto.
 - Flujo completo: Cotización, Facturación, Facturado y pagado, Producción,
@@ -49,7 +58,8 @@ Excel y persistencia de proyectos.
 - Administración puede editar todo. Producción consulta las etapas previas e
   interviene desde Facturado y pagado; Comercial conserva consulta detallada
   después de liberar la orden.
-- 145 tableros y 121 tapacantos del Excel entregado.
+- 147 tableros y 121 tapacantos del Excel entregado, incluyendo MASISA Blanco
+  Lisa de 15 y 18 mm en formato 2500 × 1830 mm.
 - Selección progresiva por categoría y búsqueda por código, nombre o marca.
 - Selección de múltiples tipos de tablero dentro de un mismo proyecto.
 - Asignación de cada pieza a uno de los tableros seleccionados, tanto en el
@@ -63,16 +73,23 @@ Excel y persistencia de proyectos.
   tablero seleccionado, considerando el sentido de la veta.
 - Importación Excel de piezas inmediata: al seleccionar el archivo, las filas
   válidas se incorporan al listado sin una segunda confirmación.
+- Detección automática de la hoja de cortes aunque haya sido renombrada, y de
+  encabezados aunque estén desplazados por títulos o instrucciones.
+- Diagnóstico de importación por fila y campo: informa filas válidas,
+  rechazadas y vacías, explica cada error y permite descargar un CSV de
+  correcciones.
 - Los tableros utilizados en el Excel se buscan en el catálogo completo y se
   agregan automáticamente al proyecto, aunque no estuvieran seleccionados en
   la pantalla Material.
 - Plantilla Excel dinámica incluida como archivo descargable directo, con los
-  145 tableros y 121 tapacantos del catálogo, filtros progresivos,
+  147 tableros y 121 tapacantos del catálogo, filtros progresivos,
   autocompletado y 499 filas preparadas.
 - Cada fila del Excel puede utilizar un tablero distinto; la validación
   automática indica si la pieza cabe en la plancha según la veta.
 - Selección de tapacantos independientes para L1, L2, A1 y A2 mediante filtros
   por tipo y producto; la asignación se incorpora automáticamente al proyecto.
+- Asignación rápida de los cuatro lados por todas las piezas, por tablero o por
+  un conjunto de piezas marcadas.
 - Disposición gráfica de lados: L1 superior, L2 inferior, A1 izquierdo y A2
   derecho.
 - Optimización longitudinal prioritaria o sin prioridad de eje.
@@ -92,7 +109,8 @@ Excel y persistencia de proyectos.
   contraste, patrón propio y trazos paralelos cuando dos piezas contiguas
   llevan terminaciones distintas.
 - Cotas interiores desplazadas hacia el centro y con respaldo blanco para
-  evitar que los tapacantos oculten sus valores.
+  evitar que los tapacantos oculten sus valores; tipografía ampliada para
+  impresión y nombres completos de tapacantos distribuidos en varias líneas.
 - Navegación directa entre las cinco secciones sin recorrerlas una por una.
 - Guardado de proyectos disponible para Administrador, Comercial, Producción
   y Cliente, respetando la visibilidad y estados autorizados para cada perfil.
@@ -134,12 +152,13 @@ de datos necesitan un proceso Node.js permanente.
 
 No elimines el sitio anterior antes de probar el nuevo servicio.
 
-### Actualizar desde V3.0.x sin perder información
+### Actualizar desde V3.0.x, V3.1.0 o V3.2.0 sin perder información
 
 Usa el mismo Web Service y la misma variable `DATABASE_URL`. Al iniciar, la
-V3.1.0 agrega solamente columnas nuevas, habilita proyectos de Visitante y
-amplía la restricción de estados. No elimina usuarios, proyectos, imágenes,
-cotizaciones ni estados existentes.
+V3.3.0 agrega solamente la tabla `catalog_product_revisions` para administrar
+el catálogo con historial. No elimina ni reemplaza tablas, usuarios, proyectos,
+imágenes, cotizaciones ni estados existentes. Los productos editados conservan
+su revisión anterior para las cotizaciones que ya los utilizaban.
 
 Antes de desplegar se recomienda generar un respaldo de PostgreSQL. No crees
 otra base de datos ni reemplaces `DATABASE_URL`, porque eso haría que la
@@ -231,7 +250,14 @@ npm start
 Sin `DATABASE_URL` se usa una base temporal en memoria para desarrollo. Para
 persistencia local, define una URL PostgreSQL antes de ejecutar `npm start`.
 
-## Actualizar el catálogo
+## Gestionar el catálogo
+
+La opción recomendada está en **Gestión de catálogo**, visible únicamente para
+el perfil Administrador. Desde allí se pueden crear o editar tableros y
+tapacantos y cargar una imagen individual. Los cambios quedan guardados en
+PostgreSQL y no requieren editar GitHub.
+
+El Excel sigue disponible como catálogo base para actualizaciones masivas:
 
 El archivo fuente está en:
 

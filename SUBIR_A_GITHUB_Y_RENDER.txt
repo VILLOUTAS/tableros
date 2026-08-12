@@ -1,4 +1,4 @@
-COTIZADOR CASA DISEÑO V3.1.0 — ACTUALIZACIÓN SEGURA
+COTIZADOR CASA DISEÑO V3.3.0 — ACTUALIZACIÓN SEGURA
 
 1. Descomprime este paquete.
 2. Reemplaza el contenido del repositorio GitHub con todos estos archivos.
@@ -22,7 +22,8 @@ IMPORTANTE
 - Debe desplegarse sobre el mismo Web Service y la misma DATABASE_URL.
 - No crear una base nueva ni cambiar DATABASE_URL durante esta actualización.
 - Antes de publicar, generar un respaldo de PostgreSQL.
-- La migración agrega campos y estados; no elimina tablas ni registros.
+- La migración agrega la tabla de revisiones del catálogo; no elimina tablas ni
+  registros existentes.
 - No intentes cambiar el servicio anterior de Static Site a Web Service:
   Render no permite modificar el tipo de un servicio existente.
 - No uses Publish Directory.
@@ -34,7 +35,7 @@ IMPORTANTE
 - No existe una clave predeterminada.
 - Las notificaciones internas funcionan sin configuración adicional.
 - La plantilla Excel dinámica se descarga directamente desde el paso Piezas.
-- Incluye los 145 tableros y 121 tapacantos, autocompleta tipo, producto y
+- Incluye los 147 tableros y 121 tapacantos, autocompleta tipo, producto y
   dimensiones, permite un material distinto por fila y dispone de 499 filas.
 - El tipo de tablero es un filtro opcional: vacío muestra todos los productos;
   seleccionado limita la lista al tipo correspondiente.
@@ -43,6 +44,9 @@ IMPORTANTE
 - Las filas dinámicas todavía vacías se ignoran al importar.
 - Al seleccionar el Excel, las filas válidas se incorporan inmediatamente al
   listado de piezas; ya no existe una segunda confirmación.
+- El importador detecta automáticamente la hoja por sus encabezados, aunque se
+  haya renombrado, e informa fila, campo y motivo de cada rechazo.
+- Desde el diagnóstico se puede descargar un CSV con todos los errores.
 - Los tableros indicados en el Excel se agregan automáticamente al proyecto,
   incluso si no se seleccionaron antes en el paso Material.
 - Un proyecto puede incluir varios tableros y cada pieza queda asignada a uno.
@@ -53,6 +57,8 @@ IMPORTANTE
 - Cada usuario nuevo debe cambiar su clave temporal en el primer ingreso.
 - La pantalla Usuarios incluye la matriz de accesos de cada perfil.
 - Los tapacantos se identifican con T1/T2/T3, colores y patrones diferentes.
+- Los cuatro lados se pueden asignar masivamente a todas las piezas, a las de
+  un tablero o solo a las piezas marcadas.
 - Las cotas interiores quedan separadas de las líneas de tapacanto.
 - El largo, ancho y cantidad se pueden editar directamente en el listado.
 - El paso 5 muestra la optimización y el listado de cada placa.
@@ -62,6 +68,10 @@ IMPORTANTE
 - Los retazos se codifican y figuran en plano, listado y PDF.
 - Administrador y Producción pueden descargar etiquetas térmicas de 50 mm.
 - Los Clientes pueden autoregistrarse, elegir Comercial y solo ven sus pedidos.
+- Los Visitantes también eligen Comercial. Administración o el Comercial
+  responsable pueden agregar otros Comerciales colaboradores.
+- Solo el Administrador puede eliminar cotizaciones; se ocultan de los paneles
+  y quedan protegidas en la base para auditoría.
 - Al enviar un pedido a Producción, el Comercial queda bloqueado para editar y
   Producción recibe una alerta en el dashboard.
 - Las imágenes se cargan como un único ZIP desde Usuarios y se guardan en
@@ -72,6 +82,9 @@ IMPORTANTE
 - El flujo es Cotización > Facturación > Facturado y pagado > Producción >
   Despacho > Entregado.
 - Incluye catálogo general público por categoría para tableros y tapacantos.
+- Incluye Gestión de catálogo exclusiva para Administradores. Cada edición
+  crea una revisión y mantiene la ficha usada por cotizaciones anteriores.
+- Incorpora MASISA Blanco Lisa de 15 y 18 mm, ambos de 2500 x 1830 mm.
 - Los Visitantes cotizan sin cuenta ni PDF; Administración recibe el proyecto,
   la alerta y el correo.
 - Los Clientes se autoregistran e ingresan automáticamente con sus datos
@@ -79,6 +92,8 @@ IMPORTANTE
 - Producción visualiza todo el CRM e interviene desde Facturado y pagado.
 - La hoja de corte indica ML de corte, ML de enchape, ML por tapacanto y deja
   espacios para Cortador, Enchapador, Supervisor y Despachador.
+- Los nombres de tapacantos se muestran completos en varias líneas y las cuatro
+  medidas interiores usan una tipografía mayor para impresión.
 - Administrador y Producción disponen de un CRM con agenda, fechas de ejecución
   y entrega, carga diaria/semanal/mensual, tableros completados y ML enchapados.
 - Para enviar correos, agrega en Render:

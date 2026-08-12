@@ -3,8 +3,8 @@
 export const catalogMeta = {
   "source": "TABLEROS_PARA_COTIZADOR.xlsx",
   "sheet": "Sheet0",
-  "importedAt": "2026-07-25T20:03:54.628Z",
-  "materials": 145,
+  "importedAt": "2026-08-12T18:26:24.764Z",
+  "materials": 147,
   "edgeBands": 121
 };
 
@@ -20,6 +20,18 @@ export const categories = [
     "name": "Melamina EGGER 18 mm",
     "icon": "▥",
     "count": 43
+  },
+  {
+    "id": "melamina-masisa-15",
+    "name": "Melamina MASISA 15 mm",
+    "icon": "▤",
+    "count": 1
+  },
+  {
+    "id": "melamina-masisa-18",
+    "name": "Melamina MASISA 18 mm",
+    "icon": "▥",
+    "count": 1
   },
   {
     "id": "egr",
@@ -3080,6 +3092,48 @@ export const materials = [
     "texture": "linear-gradient(135deg, hsl(47 27% 65%), color-mix(in srgb, hsl(47 27% 65%) 70%, white))",
     "grainRequired": true,
     "suggestedEdgeId": "73-tap-astm-6"
+  },
+  {
+    "id": "36-masisa-1501-146",
+    "categoryId": "melamina-masisa-15",
+    "sourceCategory": "MELAMINA 15MM - MASISA",
+    "brand": "MASISA",
+    "sku": "36-MASISA-1501",
+    "name": "BLANCO LISA",
+    "description": "2500 x 1830 mm (4,57m2) - Aglomerado MDP alta densidad 500kg/m3",
+    "plateLength": 2500,
+    "plateWidth": 1830,
+    "thickness": 15,
+    "netPrice": 33890,
+    "minPrice": 26990,
+    "purchasePrice": 25000,
+    "supplierCode": "MASIMP1501",
+    "sourceId": "",
+    "image": "/materiales/36-masisa-1501.jpg",
+    "texture": "linear-gradient(135deg, hsl(24 7% 53%), color-mix(in srgb, hsl(24 7% 53%) 70%, white))",
+    "grainRequired": false,
+    "suggestedEdgeId": "67-d-0015-38"
+  },
+  {
+    "id": "36-masisa-1801-147",
+    "categoryId": "melamina-masisa-18",
+    "sourceCategory": "MELAMINA 18MM - MASISA",
+    "brand": "MASISA",
+    "sku": "36-MASISA-1801",
+    "name": "BLANCO LISA",
+    "description": "2500 x 1830 mm (4,57m2) - Aglomerado MDP alta densidad 500kg/m3",
+    "plateLength": 2500,
+    "plateWidth": 1830,
+    "thickness": 18,
+    "netPrice": 45100,
+    "minPrice": 34890,
+    "purchasePrice": 31395,
+    "supplierCode": "MASIMP1801",
+    "sourceId": "",
+    "image": "/materiales/36-masisa-1801.jpg",
+    "texture": "linear-gradient(135deg, hsl(24 7% 53%), color-mix(in srgb, hsl(24 7% 53%) 70%, white))",
+    "grainRequired": false,
+    "suggestedEdgeId": "67-d-0015-38"
   }
 ];
 

@@ -389,6 +389,41 @@ test("las consultas por perfil solo envían parámetros cuando el SQL los usa", 
   );
 });
 
+test("un comercial colaborador ve el proyecto y puede ayudar en cotización", async () => {
+  const { store } = await createApplication({ useMemory: true });
+  await store.saveProject({
+    id: "proyecto-colaborativo",
+    ownerId: "cliente-1",
+    assignedTo: "comercial-principal",
+    project: {
+      projectName: "Proyecto con apoyo",
+      clientName: "Cliente",
+      rut: "",
+      status: "cotizacion",
+    },
+    payload: {
+      materialId: "62-egger-1502-1",
+      materialIds: ["62-egger-1502-1"],
+      pieces: [],
+      collaboratorIds: ["comercial-apoyo"],
+    },
+    summary: null,
+  });
+  const visible = await store.listProjects({
+    id: "comercial-apoyo",
+    role: "comercial",
+  });
+  assert.equal(visible.length, 1);
+  assert.equal(visible[0].id, "proyecto-colaborativo");
+  assert.equal(
+    canEditProject(
+      { id: "comercial-apoyo", role: "comercial" },
+      visible[0],
+    ),
+    true,
+  );
+});
+
 test("notifica nuevas cotizaciones a contacto y evita destinatarios repetidos", () => {
   const recipients = quoteEmailRecipients(
     [
@@ -412,6 +447,7 @@ test("respeta edición por rol y libera Producción solo después del pago", () 
   const ownQuote = {
     ownerId: "usuario-1",
     assignedTo: "comercial-1",
+    collaboratorIds: ["comercial-apoyo"],
     project: { status: "cotizacion" },
   };
   assert.equal(
@@ -420,6 +456,10 @@ test("respeta edición por rol y libera Producción solo después del pago", () 
   );
   assert.equal(
     canEditProject({ id: "comercial-1", role: "comercial" }, ownQuote),
+    true,
+  );
+  assert.equal(
+    canEditProject({ id: "comercial-apoyo", role: "comercial" }, ownQuote),
     true,
   );
   assert.equal(
@@ -674,6 +714,25 @@ test("un visitante cotiza sin cuenta y Administración recibe el proyecto", asyn
       }),
     });
     const adminCookie = setup.response.headers.get("set-cookie").split(";")[0];
+    const adminHeaders = {
+      "content-type": "application/json",
+      cookie: adminCookie,
+      "x-csrf-token": setup.body.csrfToken,
+    };
+    const commercial = await request(base, "/api/users", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({
+        fullName: "Ejecutivo Visitantes",
+        email: "ejecutivo.visitantes@example.cl",
+        password: "TemporalVisitantes123",
+        role: "comercial",
+      }),
+    });
+    assert.equal(commercial.response.status, 201);
+    const publicCommercials = await request(base, "/api/public/commercials");
+    assert.equal(publicCommercials.response.status, 200);
+    assert.equal(publicCommercials.body.commercials.length, 1);
 
     const invalid = await request(base, "/api/public/quotes", {
       method: "POST",
@@ -686,6 +745,7 @@ test("un visitante cotiza sin cuenta y Administración recibe el proyecto", asyn
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
+        assignedTo: commercial.body.user.id,
         contact: {
           name: "Visita Web",
           email: "visita@example.cl",
@@ -721,6 +781,10 @@ test("un visitante cotiza sin cuenta y Administración recibe el proyecto", asyn
     assert.equal(projects.body.projects[0].ownerName, "Visitante");
     assert.equal(projects.body.projects[0].submissionSource, "visitante");
     assert.equal(projects.body.projects[0].contact.city, "Concepción");
+    assert.equal(
+      projects.body.projects[0].assignedTo,
+      commercial.body.user.id,
+    );
 
     const notifications = await request(base, "/api/notifications", {
       headers: { cookie: adminCookie },
@@ -730,6 +794,61 @@ test("un visitante cotiza sin cuenta y Administración recibe el proyecto", asyn
       notifications.body.notifications[0].title,
       "Nueva cotización de visitante",
     );
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("un administrador elimina una cotización sin borrarla físicamente", async () => {
+  const { app, store } = await createApplication({ useMemory: true });
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise((resolve) => server.once("listening", resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const setup = await request(base, "/api/auth/setup", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        fullName: "Administrador",
+        email: "admin.elimina@example.cl",
+        password: "ClaveAdminEliminar123",
+      }),
+    });
+    const cookie = setup.response.headers.get("set-cookie").split(";")[0];
+    const headers = {
+      "content-type": "application/json",
+      cookie,
+      "x-csrf-token": setup.body.csrfToken,
+    };
+    const created = await request(base, "/api/projects", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        project: { clientName: "Proyecto eliminable" },
+        materialId: "62-egger-1502-1",
+        pieces: [{
+          id: "pieza-eliminable",
+          materialId: "62-egger-1502-1",
+          length: 500,
+          width: 400,
+          quantity: 1,
+          grain: "longitudinal",
+          edges: {},
+        }],
+      }),
+    });
+    assert.equal(created.response.status, 201);
+    const deleted = await request(
+      base,
+      `/api/projects/${created.body.project.id}`,
+      { method: "DELETE", headers },
+    );
+    assert.equal(deleted.response.status, 204);
+    const visible = await request(base, "/api/projects", {
+      headers: { cookie },
+    });
+    assert.equal(visible.body.projects.length, 0);
+    assert.ok(store.projects.get(created.body.project.id).deletedAt);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

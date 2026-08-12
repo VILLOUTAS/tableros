@@ -216,6 +216,35 @@ test("acepta piezas Excel sin nombre y explica filas inválidas", () => {
   assert.match(imported.errors[0], /Fila 3: la pieza excede la plancha/);
 });
 
+test("detecta encabezados desplazados y entrega diagnóstico estructurado", () => {
+  const boards = [{
+    id: "tablero-1",
+    sku: "TAB-1",
+    brand: "MARCA",
+    name: "BLANCO",
+    thickness: 15,
+    plateLength: 2600,
+    plateWidth: 1830,
+  }];
+  const imported = parsePieceImportTable([
+    ["LISTADO DE CORTES DEL PROYECTO"],
+    ["Completar solo las columnas necesarias"],
+    ["tablero", "largo pieza mm", "ancho pieza mm", "cant"],
+    ["TAB-1", "1.250", 450, 2],
+    ["TAB-1", "", 450, 1],
+  ], {
+    catalogMaterials: boards,
+    idFactory: () => "pieza-detectada",
+  });
+
+  assert.equal(imported.headerRow, 3);
+  assert.equal(imported.rows.length, 1);
+  assert.equal(imported.rows[0].length, 1250);
+  assert.equal(imported.rejectedRows, 1);
+  assert.equal(imported.issues[0].row, 5);
+  assert.equal(imported.issues[0].field, "medidas/cantidad");
+});
+
 test("descuenta el tapacanto según el lado", () => {
   assert.deepEqual(cutDimensions(piece(), edges), {
     cutLength: 719,

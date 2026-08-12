@@ -9,13 +9,22 @@ import {
 } from "../src/catalog.generated.js";
 
 test("incluye el catálogo completo del Excel entregado", () => {
-  assert.equal(catalogMeta.materials, 145);
+  assert.equal(catalogMeta.materials, 147);
   assert.equal(catalogMeta.edgeBands, 121);
-  assert.equal(materials.length, 145);
+  assert.equal(materials.length, 147);
   assert.equal(edgeBands.length, 121);
   assert.deepEqual(
     categories.map((category) => category.count),
-    [38, 43, 61, 3],
+    [38, 43, 1, 1, 61, 3],
+  );
+  assert.deepEqual(
+    materials
+      .filter((material) => material.brand === "MASISA")
+      .map((material) => [material.sku, material.plateLength, material.plateWidth, material.thickness]),
+    [
+      ["36-MASISA-1501", 2500, 1830, 15],
+      ["36-MASISA-1801", 2500, 1830, 18],
+    ],
   );
 });
 

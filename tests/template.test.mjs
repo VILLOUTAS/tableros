@@ -42,6 +42,17 @@ test("incluye una plantilla Excel descargable y compatible con la importación",
   assert.equal(rows.length, 500);
   assert.equal(rows[1][21], 1);
   assert.equal(rows[499][21], 499);
+  const boards = await readSheet(templatePath, "Catalogo Tableros");
+  assert.equal(boards.length, 148);
+  assert.deepEqual(
+    boards
+      .filter((row) => String(row[1] || "").startsWith("36-MASISA"))
+      .map((row) => [row[1], row[5], row[6], row[7]]),
+    [
+      ["36-MASISA-1501", 2500, 1830, 15],
+      ["36-MASISA-1801", 2500, 1830, 18],
+    ],
+  );
 });
 
 test("incluye una plantilla Excel de usuarios para la carga masiva", async () => {

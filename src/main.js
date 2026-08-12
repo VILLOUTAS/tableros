@@ -1,6 +1,6 @@
 import "./style.css";
 import { jsPDF } from "jspdf";
-import { readSheet } from "read-excel-file/browser";
+import readWorkbook, { readSheet } from "read-excel-file/browser";
 
 import {
   categories,
@@ -58,9 +58,13 @@ function emptyState() {
     visitorSubmitted: false,
     visitorQuoteId: "",
     assignedTo: "",
+    collaboratorIds: [],
     categoryId: "",
     catalogKind: "boards",
     catalogEdgeGroup: "",
+    catalogAdminKind: "board",
+    catalogAdminSearch: "",
+    catalogEditingId: "",
     materialId: "",
     materialIds: [],
     productSearch: "",
@@ -122,6 +126,28 @@ const selectedMaterial = (id = state.materialId) =>
 const materialImageUrl = (material) =>
   `/api/material-images/${encodeURIComponent(material?.sku || material?.id || "")}`;
 
+const activeMaterials = () =>
+  materials.filter((item) => item.active !== false);
+
+const activeEdgeBands = () =>
+  edgeBands.filter((item) => item.active !== false);
+
+function applyCatalogPayload(payload = {}) {
+  if (Array.isArray(payload.categories)) {
+    categories.splice(0, categories.length, ...payload.categories);
+  }
+  if (Array.isArray(payload.materials)) {
+    materials.splice(0, materials.length, ...payload.materials);
+  }
+  if (Array.isArray(payload.edgeBands)) {
+    edgeBands.splice(0, edgeBands.length, ...payload.edgeBands);
+  }
+}
+
+async function loadCatalog() {
+  applyCatalogPayload(await api("/api/catalog"));
+}
+
 async function api(path, options = {}) {
   const headers = { ...(options.headers || {}) };
   if (options.body && typeof options.body !== "string") {
@@ -142,6 +168,27 @@ async function api(path, options = {}) {
   return payload;
 }
 
+async function uploadProductImage(sku, file) {
+  if (!file?.size) return null;
+  const response = await fetch(
+    `/api/material-images/${encodeURIComponent(sku)}`,
+    {
+      method: "PUT",
+      credentials: "same-origin",
+      headers: {
+        "content-type": file.type,
+        "x-csrf-token": auth.csrfToken,
+      },
+      body: file,
+    },
+  );
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(payload?.error || "No fue posible guardar la imagen.");
+  }
+  return payload;
+}
+
 async function loadProjects() {
   const payload = await api("/api/projects");
   projectsCache = payload.projects || [];
@@ -154,8 +201,10 @@ async function loadUsers() {
 }
 
 async function loadCommercials() {
-  if (!auth.user) return;
-  const payload = await api("/api/commercials");
+  if (!auth.user && !auth.visitor) return;
+  const payload = await api(
+    auth.visitor ? "/api/public/commercials" : "/api/commercials",
+  );
   commercialsCache = payload.commercials || [];
 }
 
@@ -279,7 +328,7 @@ function validateCurrentStep() {
       notify("Ingresa un RUT chileno válido.", "error");
       return false;
     }
-    if (auth.user?.role === "cliente" && !state.assignedTo) {
+    if ((auth.visitor || auth.user?.role === "cliente") && !state.assignedTo) {
       notify("Selecciona el comercial que atenderá tu cotización.", "error");
       return false;
     }
@@ -311,7 +360,7 @@ async function saveProject(showMessage = true) {
     notify("Faltan datos obligatorios para guardar el proyecto.", "error");
     return false;
   }
-  if (auth.user?.role === "cliente" && !state.assignedTo) {
+  if ((auth.visitor || auth.user?.role === "cliente") && !state.assignedTo) {
     notify("Selecciona un comercial antes de guardar.", "error");
     return false;
   }
@@ -331,6 +380,7 @@ async function saveProject(showMessage = true) {
     pieces: state.pieces,
     settings: state.settings,
     assignedTo: state.assignedTo || null,
+    collaboratorIds: state.collaboratorIds || [],
     contact: state.contact,
     submissionSource: auth.visitor ? "visitante" : state.submissionSource,
     summary: result.summary,
@@ -556,6 +606,9 @@ function shell(content) {
                 auth.user?.role === "admin"
                   ? `<button class="step-link ${state.view === "users" ? "active" : ""}" data-action="users">
                       <span>♙</span><b>Usuarios<small>Perfiles y accesos</small></b>
+                    </button>
+                    <button class="step-link ${state.view === "catalog-admin" ? "active" : ""}" data-action="catalog-admin">
+                      <span>⚙</span><b>Gestión de catálogo<small>Productos y precios</small></b>
                     </button>`
                   : ""
               }`
@@ -581,6 +634,8 @@ function shell(content) {
                   ? "MONITOREO COMERCIAL"
                 : state.view === "users"
                   ? "ADMINISTRACIÓN"
+                : state.view === "catalog-admin"
+                  ? "ADMINISTRACIÓN DE PRODUCTOS"
                   : `PASO ${state.step + 1} DE 5`
             }</p>
             <h1>${
@@ -594,6 +649,8 @@ function shell(content) {
                   ? "Notificaciones"
                 : state.view === "users"
                   ? "Usuarios y perfiles"
+                : state.view === "catalog-admin"
+                  ? "Gestión de catálogo"
                   : steps[state.step][0]
             }</h1>
           </div>
@@ -624,7 +681,11 @@ function projectStep() {
     auth.user?.role !== "cliente" &&
     canEditCurrent() &&
     availableStatusEntries.length > 1;
-  const commercialRequired = auth.user?.role === "cliente";
+  const commercialRequired = auth.visitor || auth.user?.role === "cliente";
+  const canAssignCollaborators =
+    !auth.visitor &&
+    ["admin", "comercial"].includes(auth.user?.role) &&
+    canEditCurrent();
   return `
     <section class="hero-card">
       <div>
@@ -667,7 +728,7 @@ function projectStep() {
               .join("")}
           </select>
         </label>
-        ${!auth.visitor ? `<label>Comercial responsable ${commercialRequired ? "<em>*</em>" : ""}
+        <label>Ejecutivo comercial responsable ${commercialRequired ? "<em>*</em>" : ""}
           <select data-assigned-to ${commercialRequired ? "required" : ""} ${
             ["comercial", "produccion"].includes(auth.user?.role)
               ? "disabled"
@@ -683,7 +744,16 @@ function projectStep() {
               )
               .join("")}
           </select>
-          <small>El comercial recibirá la cotización en su panel.</small>
+          <small>El ejecutivo recibirá la cotización directamente en su panel.</small>
+        </label>
+        ${canAssignCollaborators ? `<label class="form-span">Comerciales colaboradores
+          <select data-collaborators multiple size="${Math.min(4, Math.max(2, commercialsCache.length))}">
+            ${commercialsCache
+              .filter((commercial) => commercial.id !== state.assignedTo)
+              .map((commercial) => `<option value="${commercial.id}" ${(state.collaboratorIds || []).includes(commercial.id) ? "selected" : ""}>${safe(commercial.fullName)}</option>`)
+              .join("")}
+          </select>
+          <small>Usa Ctrl/Cmd para elegir más de uno. Estos usuarios podrán abrir y ayudar a preparar la cotización.</small>
         </label>` : ""}
       </div>
     </section>
@@ -692,7 +762,9 @@ function projectStep() {
 }
 
 function materialStep() {
-  const products = materials.filter((item) => item.categoryId === state.categoryId);
+  const products = activeMaterials().filter(
+    (item) => item.categoryId === state.categoryId,
+  );
   const chosenMaterials = selectedMaterials();
   return `
     <section class="intro-row">
@@ -765,11 +837,11 @@ function materialStep() {
 }
 
 function catalogView() {
-  const edgeGroups = [...new Set(edgeBands.map((item) => item.group))];
+  const edgeGroups = [...new Set(activeEdgeBands().map((item) => item.group))];
   const showingBoards = state.catalogKind !== "edges";
   const products = showingBoards
-    ? materials.filter((item) => item.categoryId === state.categoryId)
-    : edgeBands.filter((item) => item.group === state.catalogEdgeGroup);
+    ? activeMaterials().filter((item) => item.categoryId === state.categoryId)
+    : activeEdgeBands().filter((item) => item.group === state.catalogEdgeGroup);
   return shell(`
     <section class="intro-row catalog-intro">
       <div>
@@ -795,14 +867,14 @@ function catalogView() {
             ? categories
                 .map(
                   (category) => `<button class="category ${category.id === state.categoryId ? "selected" : ""}" data-category="${category.id}">
-                    <strong>${category.icon}</strong><span>${safe(category.name)}</span><i>${materials.filter((item) => item.categoryId === category.id).length}</i>
+                    <strong>${category.icon}</strong><span>${safe(category.name)}</span><i>${activeMaterials().filter((item) => item.categoryId === category.id).length}</i>
                   </button>`,
                 )
                 .join("")
             : edgeGroups
                 .map(
                   (group) => `<button class="category ${group === state.catalogEdgeGroup ? "selected" : ""}" data-action="catalog-edge-group" data-group="${safe(group)}">
-                    <strong>▰</strong><span>${safe(group)}</span><i>${edgeBands.filter((item) => item.group === group).length}</i>
+                    <strong>▰</strong><span>${safe(group)}</span><i>${activeEdgeBands().filter((item) => item.group === group).length}</i>
                   </button>`,
                 )
                 .join("")
@@ -847,6 +919,91 @@ function catalogView() {
           </section>`
         : `<div class="empty-hint">Selecciona una categoría para visualizar colores y precios.</div>`
     }
+  `);
+}
+
+function catalogAdminView() {
+  const productType = state.catalogAdminKind === "edge" ? "edge" : "board";
+  const collection = productType === "board" ? activeMaterials() : activeEdgeBands();
+  const query = String(state.catalogAdminSearch || "").trim().toLowerCase();
+  const visibleProducts = collection.filter((item) =>
+    !query ||
+    `${item.sku} ${item.name} ${item.brand || item.group || ""}`
+      .toLowerCase()
+      .includes(query),
+  );
+  const editing = collection.find((item) => item.id === state.catalogEditingId);
+  const board = productType === "board";
+  return shell(`
+    <section class="intro-row catalog-admin-intro">
+      <div>
+        <p class="eyebrow">EXCLUSIVO PARA ADMINISTRADORES</p>
+        <h2>Productos, medidas, precios e imágenes</h2>
+        <p>Cada edición crea una revisión nueva. Las cotizaciones existentes conservan el identificador y la ficha anterior del producto.</p>
+      </div>
+      <button class="secondary" data-action="catalog-admin-new">＋ Nuevo producto</button>
+    </section>
+    <div class="catalog-tabs" role="tablist">
+      <button class="${board ? "active" : ""}" data-action="catalog-admin-kind" data-kind="board">Tableros</button>
+      <button class="${board ? "" : "active"}" data-action="catalog-admin-kind" data-kind="edge">Tapacantos</button>
+    </div>
+    <div class="catalog-admin-layout">
+      <section class="card catalog-admin-form-card">
+        <div class="section-title">
+          <span>${editing ? "✎" : "＋"}</span>
+          <div><h3>${editing ? "Editar producto" : "Crear producto"}</h3><p>${editing ? `Revisión de ${safe(editing.sku)}` : `Nuevo ${board ? "tablero" : "tapacanto"}`}</p></div>
+        </div>
+        <form id="admin-catalog-form" class="catalog-admin-form">
+          <input type="hidden" name="productType" value="${productType}" />
+          <input type="hidden" name="productId" value="${safe(editing?.id || "")}" />
+          <label>Código SKU <em>*</em><input name="sku" required value="${safe(editing?.sku || "")}" /></label>
+          <label>Nombre o color <em>*</em><input name="name" required value="${safe(editing?.name || "")}" /></label>
+          ${
+            board
+              ? `<label>Marca <em>*</em><input name="brand" required value="${safe(editing?.brand || "")}" /></label>
+                 <label>Categoría <em>*</em><input name="categoryName" required list="catalog-category-options" value="${safe(editing?.categoryName || editing?.sourceCategory || "")}" placeholder="Ej.: Melamina MASISA 15 mm" /></label>
+                 <datalist id="catalog-category-options">${categories.map((category) => `<option value="${safe(category.name)}"></option>`).join("")}</datalist>
+                 <label>Largo plancha (mm) <em>*</em><input name="plateLength" type="number" min="1" step="1" required value="${editing?.plateLength || 2600}" /></label>
+                 <label>Ancho plancha (mm) <em>*</em><input name="plateWidth" type="number" min="1" step="1" required value="${editing?.plateWidth || 1830}" /></label>
+                 <label>Espesor (mm) <em>*</em><input name="thickness" type="number" min="0.1" step="0.1" required value="${editing?.thickness || 15}" /></label>
+                 <label>Precio venta neto <em>*</em><input name="netPrice" type="number" min="0" step="1" required value="${editing?.netPrice ?? 0}" /></label>
+                 <label>Precio mínimo neto<input name="minPrice" type="number" min="0" step="1" value="${editing?.minPrice ?? 0}" /></label>
+                 <label>Precio compra neto<input name="purchasePrice" type="number" min="0" step="1" value="${editing?.purchasePrice ?? 0}" /></label>
+                 <label>Código proveedor<input name="supplierCode" value="${safe(editing?.supplierCode || "")}" /></label>
+                 <label class="checkbox-row"><input name="grainRequired" type="checkbox" ${editing?.grainRequired === false ? "" : "checked"} /> Producto con veta</label>`
+              : `<label>Grupo <em>*</em><input name="group" required value="${safe(editing?.group || "PVC 0,4 mm")}" /></label>
+                 <label>Material <em>*</em><select name="material"><option ${editing?.material === "PVC" ? "selected" : ""}>PVC</option><option ${editing?.material === "ABS" ? "selected" : ""}>ABS</option><option ${editing?.material === "EGR" ? "selected" : ""}>EGR</option><option ${!['PVC','ABS','EGR'].includes(editing?.material) && editing ? "selected" : ""}>Otro</option></select></label>
+                 <label>Espesor (mm) <em>*</em><input name="thickness" type="number" min="0.1" step="0.1" required value="${editing?.thickness || 0.4}" /></label>
+                 <label>Precio tapacanto neto/ml <em>*</em><input name="price" type="number" min="0" step="1" required value="${editing?.price ?? 0}" /></label>
+                 <label>Servicio enchape neto/ml <em>*</em><input name="serviceRate" type="number" min="0" step="1" required value="${editing?.serviceRate ?? 500}" /></label>
+                 <label>Precio mínimo neto<input name="minPrice" type="number" min="0" step="1" value="${editing?.minPrice ?? 0}" /></label>
+                 <label>Precio compra neto<input name="purchasePrice" type="number" min="0" step="1" value="${editing?.purchasePrice ?? 0}" /></label>
+                 <label>Código proveedor<input name="supplierCode" value="${safe(editing?.supplierCode || "")}" /></label>
+                 <label>Tipo de línea<select name="style"><option value="solid" ${editing?.style === "solid" ? "selected" : ""}>Continua</option><option value="dashed" ${editing?.style === "dashed" ? "selected" : ""}>Segmentada</option><option value="dashdot" ${editing?.style === "dashdot" ? "selected" : ""}>Punto y raya</option><option value="double" ${editing?.style === "double" ? "selected" : ""}>Doble</option></select></label>`
+          }
+          <label class="form-span">Descripción<textarea name="description" rows="2">${safe(editing?.description || "")}</textarea></label>
+          <label class="form-span">Imagen del producto <input name="imageFile" type="file" accept="image/jpeg,image/png,image/webp" /><small>Opcional. JPG, PNG o WEBP de hasta 2,5 MB.</small></label>
+          <div class="form-span catalog-admin-actions">
+            <button class="primary" type="submit">${editing ? "Guardar como nueva revisión" : "Crear producto"}</button>
+            ${editing ? `<button class="ghost" type="button" data-action="catalog-admin-new">Cancelar edición</button>` : ""}
+          </div>
+        </form>
+      </section>
+      <section class="card catalog-admin-list-card">
+        <div class="section-title product-title">
+          <span>▦</span><div><h3>${board ? "Tableros activos" : "Tapacantos activos"}</h3><p>${collection.length} producto(s). Las revisiones históricas quedan protegidas.</p></div>
+          <label class="search-field">Buscar<input id="catalog-admin-search" type="search" value="${safe(state.catalogAdminSearch)}" placeholder="Código, nombre o marca" /></label>
+        </div>
+        <div class="catalog-admin-list">
+          ${visibleProducts.length ? visibleProducts.map((item) => `
+            <article class="catalog-admin-row" data-admin-search="${safe(`${item.sku} ${item.name} ${item.brand || item.group || ""}`.toLowerCase())}">
+              <span class="sample" style="background:${item.texture || item.color || "#ece8df"}"><img class="material-image" src="${materialImageUrl(item)}" data-fallback="${safe(item.image || "")}" alt="" /></span>
+              <div><small>${safe(item.sku)} · ${safe(item.catalogSource === "administracion" ? "Gestión administrativa" : "Excel base")}</small><b>${safe(item.name)}</b><span>${board ? `${safe(item.brand)} · ${item.plateLength} × ${item.plateWidth} × ${item.thickness} mm · ${clp(item.netPrice)}` : `${safe(item.group)} · ${String(item.thickness).replace('.', ',')} mm · ${clp(item.price)}/ml`}</span></div>
+              <button class="secondary small" data-action="catalog-admin-edit" data-id="${item.id}">Editar</button>
+            </article>`).join("") : `<div class="empty-hint">No hay productos que coincidan con la búsqueda.</div>`}
+        </div>
+      </section>
+    </div>
   `);
 }
 
@@ -907,11 +1064,21 @@ function piecesStep() {
           state.importPreview
             ? `<div class="import-result ${state.importPreview.errors.length ? "warning" : ""}">
                 <b>${safe(state.importPreview.fileName || "Archivo seleccionado")} · ${state.importPreview.importedCount || 0} filas incorporadas</b>
-                <span>${state.importPreview.errors.length} observaciones</span>
+                <span>Hoja: ${safe(state.importPreview.sheetName || "detectada automáticamente")} · Encabezados: fila ${state.importPreview.headerRow || "sin identificar"}</span>
+                <div class="import-metrics">
+                  <i><b>${state.importPreview.importedCount || 0}</b> válidas</i>
+                  <i><b>${state.importPreview.rejectedRows || 0}</b> rechazadas</i>
+                  <i><b>${state.importPreview.blankRows || 0}</b> vacías ignoradas</i>
+                </div>
                 ${
                   state.importPreview.errors.length
-                    ? `<ul>${state.importPreview.errors.slice(0, 4).map((error) => `<li>${safe(error)}</li>`).join("")}</ul>`
-                    : ""
+                    ? `<details open><summary>Ver diagnóstico completo (${state.importPreview.errors.length})</summary>
+                        <div class="import-errors"><table><thead><tr><th>Fila</th><th>Campo</th><th>Problema</th></tr></thead><tbody>
+                          ${(state.importPreview.issues || []).slice(0, 100).map((issue) => `<tr><td>${issue.row || "-"}</td><td>${safe(issue.field || "archivo")}</td><td>${safe(issue.message)}</td></tr>`).join("")}
+                        </tbody></table></div>
+                        <button class="ghost small" data-action="download-import-report">Descargar informe de errores</button>
+                      </details>`
+                    : `<span>El archivo fue validado sin errores.</span>`
                 }
               </div>`
             : ""
@@ -989,11 +1156,28 @@ function edgeStep() {
     <section class="intro-row">
       <div><p class="eyebrow">TERMINACIÓN</p><h2>Tapacantos por pieza y tablero</h2><p>El espesor seleccionado se descuenta automáticamente de la medida de corte.</p></div>
     </section>
-    <section class="card edge-toolbar">
-      <div><small>SUGERIDO PARA ${safe(material?.name)}</small><b><i style="background:${suggested?.color}"></i>${suggested?.group} · ${suggested?.name}</b></div>
-      <label>Tapacanto masivo<select id="global-edge">${edgeOptions(suggested?.id)}</select></label>
-      <button class="secondary" data-action="apply-all">Aplicar a los 4 lados</button>
-      <button class="ghost" data-action="clear-edges">Limpiar tapacantos</button>
+    <section class="card edge-bulk-card">
+      <div class="section-title"><span>⚡</span><div><h3>Asignación rápida por tablero o selección</h3><p>Configura L1, L2, A1 y A2 una sola vez y aplícalos a varias piezas.</p></div></div>
+      <div class="edge-bulk-grid">
+        <label>Aplicar a
+          <select id="edge-bulk-scope">
+            <option value="all">Todas las piezas</option>
+            <option value="selected">Solo piezas marcadas</option>
+            <optgroup label="Piezas de un tablero">
+              ${selectedMaterials().map((item) => `<option value="material:${item.id}">${safe(item.sku)} · ${safe(item.name)}</option>`).join("")}
+            </optgroup>
+          </select>
+        </label>
+        <label>L1 · Superior<select id="edge-fast-top">${edgeOptions(suggested?.id)}</select></label>
+        <label>L2 · Inferior<select id="edge-fast-bottom">${edgeOptions(suggested?.id)}</select></label>
+        <label>A1 · Izquierdo<select id="edge-fast-left">${edgeOptions(suggested?.id)}</select></label>
+        <label>A2 · Derecho<select id="edge-fast-right">${edgeOptions(suggested?.id)}</select></label>
+      </div>
+      <div class="edge-bulk-actions">
+        <button class="secondary" data-action="apply-edge-sides">Aplicar los 4 lados al alcance</button>
+        <button class="ghost" data-action="copy-edge-four">Usar L1 en los 4 lados</button>
+        <button class="ghost danger-text" data-action="clear-edge-scope">Limpiar el alcance</button>
+      </div>
     </section>
     <div class="edge-list">
       ${state.pieces
@@ -1002,7 +1186,7 @@ function edgeStep() {
           const pieceMaterial = selectedMaterial(piece.materialId);
           return `<article class="card edge-piece">
             <div class="edge-piece-head">
-              <div><small>${safe(piece.code)} · ${safe(pieceMaterial?.sku || "Sin tablero")}</small><h3>${safe(piece.name || "Pieza sin nombre")}</h3><p>${safe(pieceMaterial?.name || "")} · Terminada: ${piece.length} × ${piece.width} mm · Cantidad: ${piece.quantity}</p></div>
+              <div class="edge-piece-identity"><label class="piece-check"><input type="checkbox" data-edge-piece-select="${piece.id}" /> Marcar para asignación rápida</label><small>${safe(piece.code)} · ${safe(pieceMaterial?.sku || "Sin tablero")}</small><h3>${safe(piece.name || "Pieza sin nombre")}</h3><p>${safe(pieceMaterial?.name || "")} · Terminada: ${piece.length} × ${piece.width} mm · Cantidad: ${piece.quantity}</p></div>
               <div class="cut-size"><span>MEDIDA DE CORTE</span><b>${cut.cutLength} × ${cut.cutWidth} mm</b></div>
             </div>
             <div class="edge-diagram" aria-label="Tapacantos por posición">
@@ -1039,6 +1223,59 @@ function edgeStep() {
     </div>
     ${stepFooter(true, "Optimizar y cotizar")}
   `;
+}
+
+function edgeBulkTargetPieces() {
+  const scope = document.querySelector("#edge-bulk-scope")?.value || "all";
+  if (scope === "selected") {
+    const selected = new Set(
+      [...document.querySelectorAll("[data-edge-piece-select]:checked")].map(
+        (input) => input.dataset.edgePieceSelect,
+      ),
+    );
+    return state.pieces.filter((piece) => selected.has(piece.id));
+  }
+  if (scope.startsWith("material:")) {
+    const materialId = scope.slice("material:".length);
+    return state.pieces.filter((piece) => piece.materialId === materialId);
+  }
+  return state.pieces;
+}
+
+function applyFastEdges(mode = "sides") {
+  const targets = edgeBulkTargetPieces();
+  if (!targets.length) {
+    notify("No hay piezas dentro del alcance seleccionado.", "error");
+    return;
+  }
+  const top = document.querySelector("#edge-fast-top")?.value || null;
+  const values =
+    mode === "same"
+      ? { top, right: top, bottom: top, left: top }
+      : {
+          top,
+          bottom: document.querySelector("#edge-fast-bottom")?.value || null,
+          left: document.querySelector("#edge-fast-left")?.value || null,
+          right: document.querySelector("#edge-fast-right")?.value || null,
+        };
+  targets.forEach((piece) => {
+    piece.edges = { ...piece.edges, ...values };
+  });
+  latestResult = null;
+  notify(`Tapacantos aplicados a ${targets.length} pieza(s).`);
+}
+
+function clearFastEdges() {
+  const targets = edgeBulkTargetPieces();
+  if (!targets.length) {
+    notify("No hay piezas dentro del alcance seleccionado.", "error");
+    return;
+  }
+  targets.forEach((piece) => {
+    piece.edges = { top: null, right: null, bottom: null, left: null };
+  });
+  latestResult = null;
+  notify(`Tapacantos eliminados de ${targets.length} pieza(s).`);
 }
 
 function summaryRows(summary) {
@@ -1327,7 +1564,7 @@ function projectsView() {
               item.assignedName
                 ? ` · Comercial: ${safe(item.assignedName)}`
                 : ""
-            }</small></p>
+            }${item.collaboratorIds?.length ? ` · Apoyo: ${item.collaboratorIds.length}` : ""}</small></p>
             <div><span>Total</span><b>${clp(item.summary?.total)}</b></div>
             ${
               statusEntriesForRole(
@@ -1349,7 +1586,10 @@ function projectsView() {
                   </select></label>`
                 : ""
             }
-            <button class="secondary" data-action="open-project" data-id="${item.id}">Abrir proyecto</button>
+            <div class="project-actions">
+              <button class="secondary" data-action="open-project" data-id="${item.id}">Abrir proyecto</button>
+              ${auth.user?.role === "admin" ? `<button class="ghost danger-text" data-action="delete-project" data-id="${item.id}">Eliminar</button>` : ""}
+            </div>
           </article>`,
         )
         .join("")}
@@ -1873,6 +2113,11 @@ function render() {
     renderEnhancements();
     return;
   }
+  if (state.view === "catalog-admin" && auth.user?.role === "admin") {
+    app.innerHTML = catalogAdminView();
+    renderEnhancements();
+    return;
+  }
   if (state.view === "notifications") {
     app.innerHTML = notificationsView();
     renderEnhancements();
@@ -2167,7 +2412,32 @@ function normalizeHeader(value) {
 
 async function importExcel(file) {
   try {
-    const table = await readSheet(file, "Piezas");
+    const workbookSheets = await readWorkbook(file);
+    const normalizedRequiredHeaders = ["largo", "ancho", "cantidad"];
+    const sheetCandidates = workbookSheets
+      .map((sheet) => {
+        const firstRows = (sheet.data || []).slice(0, 25);
+        const headerScore = Math.max(
+          0,
+          ...firstRows.map((row) => {
+            const headers = new Set(row.map(normalizeHeader));
+            return normalizedRequiredHeaders.filter((header) =>
+              headers.has(header),
+            ).length;
+          }),
+        );
+        const name = normalizeHeader(sheet.sheet || "");
+        const nameScore = /pieza|corte|despiece/.test(name) ? 4 : 0;
+        return { ...sheet, score: headerScore * 10 + nameScore };
+      })
+      .sort((a, b) => b.score - a.score);
+    const selectedSheet = sheetCandidates.find((sheet) => sheet.score >= 30);
+    if (!selectedSheet) {
+      throw new Error(
+        `No se encontró una hoja con las columnas Largo, Ancho y Cantidad. Hojas detectadas: ${workbookSheets.map((sheet) => sheet.sheet).join(", ") || "ninguna"}.`,
+      );
+    }
+    const table = selectedSheet.data;
     const imported = parsePieceImportTable(table, {
       catalogMaterials: materials,
       catalogEdges: edgeBands,
@@ -2192,8 +2462,14 @@ async function importExcel(file) {
 
     state.importPreview = {
       errors: imported.errors,
+      issues: imported.issues || [],
       fileName: file.name,
+      sheetName: selectedSheet.sheet,
       importedCount: imported.rows.length,
+      totalRows: imported.totalRows,
+      rejectedRows: imported.rejectedRows,
+      blankRows: imported.blankRows,
+      headerRow: imported.headerRow,
     };
     notify(
       imported.rows.length
@@ -2202,11 +2478,46 @@ async function importExcel(file) {
       imported.rows.length ? "success" : "error",
     );
   } catch (error) {
+    state.importPreview = {
+      errors: [error.message || "No fue posible leer el archivo."],
+      issues: [{ row: 0, field: "archivo", message: error.message || "No fue posible leer el archivo." }],
+      fileName: file?.name || "Archivo seleccionado",
+      sheetName: "",
+      importedCount: 0,
+      totalRows: 0,
+      rejectedRows: 0,
+      blankRows: 0,
+      headerRow: 0,
+    };
     notify(
       error.message || "No fue posible leer el archivo. Revisa el formato.",
       "error",
     );
   }
+}
+
+function downloadImportReport() {
+  const preview = state.importPreview;
+  if (!preview?.issues?.length) return;
+  const csvCell = (value) =>
+    `"${String(value ?? "").replaceAll('"', '""')}"`;
+  const rows = [
+    ["archivo", "hoja", "fila", "campo", "problema"],
+    ...preview.issues.map((issue) => [
+      preview.fileName,
+      preview.sheetName,
+      issue.row || "",
+      issue.field || "archivo",
+      issue.message,
+    ]),
+  ];
+  const csv = `\ufeff${rows.map((row) => row.map(csvCell).join(";")).join("\r\n")}`;
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `Diagnostico_Importacion_${new Date().toISOString().slice(0, 10)}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 function normalizeImportedRole(value) {
@@ -2585,6 +2896,43 @@ app.addEventListener("submit", async (event) => {
     }
     return;
   }
+  if (form.id === "admin-catalog-form" && auth.user?.role === "admin") {
+    const formData = new FormData(form);
+    const productType = formData.get("productType") === "edge" ? "edge" : "board";
+    const productId = String(formData.get("productId") || "");
+    const imageFile = formData.get("imageFile");
+    const product = Object.fromEntries(
+      [...formData.entries()].filter(
+        ([key]) => !["productType", "productId", "imageFile", "grainRequired"].includes(key),
+      ),
+    );
+    if (productType === "board") {
+      product.grainRequired = formData.has("grainRequired");
+    }
+    try {
+      const payload = await api(
+        productId
+          ? `/api/admin/catalog/${productType}/${encodeURIComponent(productId)}`
+          : "/api/admin/catalog",
+        {
+          method: productId ? "PATCH" : "POST",
+          body: { productType, product },
+        },
+      );
+      applyCatalogPayload(payload.catalog);
+      let imageMessage = "";
+      if (imageFile?.size) {
+        await uploadProductImage(product.sku, imageFile);
+        imageMessage = " e imagen";
+      }
+      state.catalogEditingId = "";
+      notify(`Producto${imageMessage} guardado(s) sin modificar cotizaciones anteriores.`);
+      render();
+    } catch (error) {
+      notify(error.message, "error");
+    }
+    return;
+  }
   if (form.classList.contains("password-reset-form")) {
     const password = String(new FormData(form).get("password") || "");
     try {
@@ -2618,10 +2966,23 @@ app.addEventListener("input", (event) => {
     state.productSearch = target.value;
     applyProductFilter(target.value);
   }
+  if (target.id === "catalog-admin-search") {
+    state.catalogAdminSearch = target.value;
+    const query = target.value.trim().toLowerCase();
+    document.querySelectorAll(".catalog-admin-row").forEach((row) => {
+      row.hidden = Boolean(query) && !row.dataset.adminSearch.includes(query);
+    });
+  }
 });
 
 app.addEventListener("change", async (event) => {
   const target = event.target;
+  if (target.dataset.collaborators !== undefined) {
+    state.collaboratorIds = [...target.selectedOptions].map(
+      (option) => option.value,
+    );
+    return;
+  }
   if (target.dataset.pieceField) {
     updatePieceField(target);
     return;
@@ -2786,6 +3147,11 @@ app.addEventListener("click", async (event) => {
     auth.error = "";
     state = newQuoteState();
     state.view = "catalog";
+    try {
+      await loadCommercials();
+    } catch (error) {
+      auth.error = error.message;
+    }
     render();
   }
   if (action === "visitor-exit") {
@@ -2844,6 +3210,30 @@ app.addEventListener("click", async (event) => {
     } catch (error) {
       notify(error.message, "error");
     }
+  }
+  if (action === "catalog-admin" && auth.user?.role === "admin") {
+    try {
+      await loadCatalog();
+      state.catalogEditingId = "";
+      state.view = "catalog-admin";
+      render();
+    } catch (error) {
+      notify(error.message, "error");
+    }
+  }
+  if (action === "catalog-admin-kind" && auth.user?.role === "admin") {
+    state.catalogAdminKind = button.dataset.kind === "edge" ? "edge" : "board";
+    state.catalogEditingId = "";
+    state.catalogAdminSearch = "";
+    render();
+  }
+  if (action === "catalog-admin-new" && auth.user?.role === "admin") {
+    state.catalogEditingId = "";
+    render();
+  }
+  if (action === "catalog-admin-edit" && auth.user?.role === "admin") {
+    state.catalogEditingId = button.dataset.id || "";
+    render();
   }
   if (
     action === "notifications" &&
@@ -2927,15 +3317,45 @@ app.addEventListener("click", async (event) => {
     });
     render();
   }
+  if (action === "apply-edge-sides") {
+    applyFastEdges("sides");
+  }
+  if (action === "copy-edge-four") {
+    applyFastEdges("same");
+  }
+  if (action === "clear-edge-scope") {
+    clearFastEdges();
+  }
   if (action === "clear-edges") {
     state.pieces.forEach((piece) => {
       piece.edges = { top: null, right: null, bottom: null, left: null };
     });
     render();
   }
+  if (action === "download-import-report") {
+    downloadImportReport();
+  }
   if (action === "save") await saveProject();
   if (action === "pdf") exportPdf();
   if (action === "labels-pdf") exportLabelsPdf();
+  if (action === "delete-project" && auth.user?.role === "admin") {
+    const item = projectsCache.find((project) => project.id === button.dataset.id);
+    if (!item) return;
+    const confirmed = window.confirm(
+      `¿Eliminar la cotización ${projectCode(item.id)} de ${item.project.clientName}? Se quitará de todos los paneles.`,
+    );
+    if (!confirmed) return;
+    try {
+      await api(`/api/projects/${item.id}`, { method: "DELETE" });
+      projectsCache = projectsCache.filter((project) => project.id !== item.id);
+      notificationsCache = notificationsCache.filter(
+        (notification) => notification.projectId !== item.id,
+      );
+      notify("Cotización eliminada. El registro quedó protegido para auditoría.");
+    } catch (error) {
+      notify(error.message, "error");
+    }
+  }
   if (action === "open-project") {
     if (button.dataset.notificationId) {
       try {
@@ -2972,6 +3392,7 @@ app.addEventListener("click", async (event) => {
         ...item,
         project: { ...item.project },
         assignedTo: item.assignedTo || "",
+        collaboratorIds: [...(item.collaboratorIds || [])],
         materialId: primaryMaterialId || "",
         materialIds,
         settings: { ...defaults.settings, ...(item.settings || {}) },
@@ -3044,6 +3465,7 @@ app.addEventListener("click", async (event) => {
 async function initialize() {
   render();
   try {
+    await loadCatalog();
     const setup = await api("/api/auth/setup-status");
     auth.needsSetup = setup.needsSetup;
     if (!setup.needsSetup) {
