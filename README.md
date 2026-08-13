@@ -1,6 +1,6 @@
 # Cotizador online — Casa Diseño Multiespacio
 
-Versión 3.3.0 del cotizador y optimizador de cortes. Incluye acceso seguro con
+Versión 3.3.1 del cotizador y optimizador de cortes. Incluye acceso seguro con
 usuarios diferenciados, base PostgreSQL, catálogo completo importado desde
 Excel y persistencia de proyectos.
 
@@ -159,6 +159,10 @@ V3.3.0 agrega solamente la tabla `catalog_product_revisions` para administrar
 el catálogo con historial. No elimina ni reemplaza tablas, usuarios, proyectos,
 imágenes, cotizaciones ni estados existentes. Los productos editados conservan
 su revisión anterior para las cotizaciones que ya los utilizaban.
+
+La corrección V3.3.1 ordena la migración de `deleted_at` antes de crear su
+índice. Esto permite actualizar bases provenientes de versiones antiguas sin
+borrar ni reemplazar ningún registro.
 
 Antes de desplegar se recomienda generar un respaldo de PostgreSQL. No crees
 otra base de datos ni reemplaces `DATABASE_URL`, porque eso haría que la

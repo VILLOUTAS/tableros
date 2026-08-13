@@ -584,7 +584,6 @@ class PostgresStore {
       );
       CREATE INDEX IF NOT EXISTS projects_owner_idx ON projects(owner_id);
       CREATE INDEX IF NOT EXISTS projects_status_idx ON projects(status);
-      CREATE INDEX IF NOT EXISTS projects_deleted_idx ON projects(deleted_at);
       CREATE INDEX IF NOT EXISTS sessions_expiry_idx ON app_sessions(expires_at);
       CREATE INDEX IF NOT EXISTS notifications_user_idx
         ON app_notifications(user_id, created_at DESC);
@@ -616,6 +615,7 @@ class PostgresStore {
         ADD COLUMN IF NOT EXISTS deleted_by UUID REFERENCES app_users(id);
       ALTER TABLE projects
         ALTER COLUMN owner_id DROP NOT NULL;
+      CREATE INDEX IF NOT EXISTS projects_deleted_idx ON projects(deleted_at);
     `);
     await this.pool.query(`
       ALTER TABLE projects DROP CONSTRAINT IF EXISTS projects_status_check;
