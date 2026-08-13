@@ -1,6 +1,6 @@
 # Cotizador online — Casa Diseño Multiespacio
 
-Versión 3.3.1 del cotizador y optimizador de cortes. Incluye acceso seguro con
+Versión 3.3.2 del cotizador y optimizador de cortes. Incluye acceso seguro con
 usuarios diferenciados, base PostgreSQL, catálogo completo importado desde
 Excel y persistencia de proyectos.
 
@@ -20,6 +20,10 @@ Excel y persistencia de proyectos.
 - Colaboración comercial: el responsable o Administración puede sumar otros
   Comerciales para ayudar a preparar una cotización, manteniendo identificado
   al ejecutivo principal.
+- Carga masiva disponible desde Proyecto y Piezas. El Excel estándar se valida
+  con progreso visible, diagnóstico por fila y confirmación antes de incorporar
+  el lote. También se pueden pegar filas copiadas desde cualquier Excel,
+  asignando una vez el tablero, tapacanto y lados del grupo.
 - Eliminación protegida exclusiva de Administradores. La cotización desaparece
   de los paneles, pero queda preservada en la base para auditoría.
 - Autoregistro Cliente con inicio de sesión automático y campos ampliados para
@@ -71,8 +75,10 @@ Excel y persistencia de proyectos.
   validación inmediata contra las dimensiones del tablero y la veta.
 - Validación manual, Excel y servidor para impedir piezas mayores que el
   tablero seleccionado, considerando el sentido de la veta.
-- Importación Excel de piezas inmediata: al seleccionar el archivo, las filas
-  válidas se incorporan al listado sin una segunda confirmación.
+- Importación Excel con lectura visible, vista previa y confirmación explícita:
+  muestra las líneas, unidades y observaciones antes de incorporar el lote.
+- Pegado directo de filas copiadas desde otro Excel, asignando una sola vez el
+  tablero, tapacanto y lados L1/L2/A1/A2 para cada lote por color.
 - Detección automática de la hoja de cortes aunque haya sido renombrada, y de
   encabezados aunque estén desplazados por títulos o instrucciones.
 - Diagnóstico de importación por fila y campo: informa filas válidas,
@@ -163,6 +169,10 @@ su revisión anterior para las cotizaciones que ya los utilizaban.
 La corrección V3.3.1 ordena la migración de `deleted_at` antes de crear su
 índice. Esto permite actualizar bases provenientes de versiones antiguas sin
 borrar ni reemplazar ningún registro.
+
+La V3.3.2 modifica únicamente el flujo de ingreso masivo de piezas en el
+cliente web. No cambia el esquema de base de datos ni elimina usuarios,
+proyectos, estados, cotizaciones, imágenes o revisiones del catálogo.
 
 Antes de desplegar se recomienda generar un respaldo de PostgreSQL. No crees
 otra base de datos ni reemplaces `DATABASE_URL`, porque eso haría que la

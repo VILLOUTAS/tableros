@@ -1,0 +1,50 @@
+{"kind":"workbook","id":"wb/ki3byj","sheets":3,"tables":3}
+{"kind":"sheet","id":"ws/905off","name":"Piezas","index":0,"range":"A1:O500","address":"A1:O500","tables":1,"formulas":2994}
+{"kind":"table","sheet":"Piezas","address":"A1:O500","rows":500,"cols":15,"values":[["codigo_opcional","nombre_elemento_opcional","codigo_material_opcional","tipo_tablero_automatico","tablero_autocompletado","largo","ancho","cantidad","veta","notas","largo_plancha_auto","ancho_plancha_auto","espesor_mm_auto","validacion_automatica","fila_dinamica"],["","","","","","","","","","","","","","",1],[null,null,null,"","",null,null,null,null,null,"","","","",2],[null,null,null,"","",null,null,null,null,null,"","","","",3],[null,null,null,"","",null,null,null,null,null,"","","","",4]],"valuesTruncated":true,"valuesPreviewRows":5,"valuesPreviewCols":15,"valuesPreviewAddress":"A1:O5"}
+{"kind":"formula","sheet":"Piezas","address":"D2","formula":"=IFERROR(VLOOKUP(C2,'Catalogo Tableros'!$A$2:$H$146,2,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"E2","formula":"=IFERROR(VLOOKUP(C2,'Catalogo Tableros'!$A$2:$H$146,3,FALSE)&\" · \"&VLOOKUP(C2,'Catalogo Tableros'!$A$2:$H$146,4,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"K2","formula":"=IFERROR(VLOOKUP(C2,'Catalogo Tableros'!$A$2:$H$146,5,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"L2","formula":"=IFERROR(VLOOKUP(C2,'Catalogo Tableros'!$A$2:$H$146,6,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"M2","formula":"=IFERROR(VLOOKUP(C2,'Catalogo Tableros'!$A$2:$H$146,7,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"N2","formula":"=IF(OR(C2=\"\",F2=\"\",G2=\"\",H2=\"\",I2=\"\"),\"\",IF(I2=\"transversal\",IF(AND(F2<=L2,G2<=K2),\"OK\",\"EXCEDE TABLERO\"),IF(I2=\"sin-veta\",IF(OR(AND(F2<=K2,G2<=L2),AND(F2<=L2,G2<=K2)),\"OK\",\"EXCEDE TABLERO\"),IF(AND(F2<=K2,G2<=L2),\"OK\",\"EXCEDE TABLERO\"))))"}
+{"kind":"formula","sheet":"Piezas","address":"D3","formula":"=IFERROR(VLOOKUP(C3,'Catalogo Tableros'!$A$2:$H$146,2,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"E3","formula":"=IFERROR(VLOOKUP(C3,'Catalogo Tableros'!$A$2:$H$146,3,FALSE)&\" · \"&VLOOKUP(C3,'Catalogo Tableros'!$A$2:$H$146,4,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"K3","formula":"=IFERROR(VLOOKUP(C3,'Catalogo Tableros'!$A$2:$H$146,5,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"L3","formula":"=IFERROR(VLOOKUP(C3,'Catalogo Tableros'!$A$2:$H$146,6,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"M3","formula":"=IFERROR(VLOOKUP(C3,'Catalogo Tableros'!$A$2:$H$146,7,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"N3","formula":"=IF(OR(C3=\"\",F3=\"\",G3=\"\",H3=\"\",I3=\"\"),\"\",IF(I3=\"transversal\",IF(AND(F3<=L3,G3<=K3),\"OK\",\"EXCEDE TABLERO\"),IF(I3=\"sin-veta\",IF(OR(AND(F3<=K3,G3<=L3),AND(F3<=L3,G3<=K3)),\"OK\",\"EXCEDE TABLERO\"),IF(AND(F3<=K3,G3<=L3),\"OK\",\"EXCEDE TABLERO\"))))"}
+{"kind":"formula","sheet":"Piezas","address":"D4","formula":"=IFERROR(VLOOKUP(C4,'Catalogo Tableros'!$A$2:$H$146,2,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"E4","formula":"=IFERROR(VLOOKUP(C4,'Catalogo Tableros'!$A$2:$H$146,3,FALSE)&\" · \"&VLOOKUP(C4,'Catalogo Tableros'!$A$2:$H$146,4,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"K4","formula":"=IFERROR(VLOOKUP(C4,'Catalogo Tableros'!$A$2:$H$146,5,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"L4","formula":"=IFERROR(VLOOKUP(C4,'Catalogo Tableros'!$A$2:$H$146,6,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"M4","formula":"=IFERROR(VLOOKUP(C4,'Catalogo Tableros'!$A$2:$H$146,7,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"N4","formula":"=IF(OR(C4=\"\",F4=\"\",G4=\"\",H4=\"\",I4=\"\"),\"\",IF(I4=\"transversal\",IF(AND(F4<=L4,G4<=K4),\"OK\",\"EXCEDE TABLERO\"),IF(I4=\"sin-veta\",IF(OR(AND(F4<=K4,G4<=L4),AND(F4<=L4,G4<=K4)),\"OK\",\"EXCEDE TABLERO\"),IF(AND(F4<=K4,G4<=L4),\"OK\",\"EXCEDE TABLERO\"))))"}
+{"kind":"formula","sheet":"Piezas","address":"D5","formula":"=IFERROR(VLOOKUP(C5,'Catalogo Tableros'!$A$2:$H$146,2,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"E5","formula":"=IFERROR(VLOOKUP(C5,'Catalogo Tableros'!$A$2:$H$146,3,FALSE)&\" · \"&VLOOKUP(C5,'Catalogo Tableros'!$A$2:$H$146,4,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"K5","formula":"=IFERROR(VLOOKUP(C5,'Catalogo Tableros'!$A$2:$H$146,5,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"L5","formula":"=IFERROR(VLOOKUP(C5,'Catalogo Tableros'!$A$2:$H$146,6,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"M5","formula":"=IFERROR(VLOOKUP(C5,'Catalogo Tableros'!$A$2:$H$146,7,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"N5","formula":"=IF(OR(C5=\"\",F5=\"\",G5=\"\",H5=\"\",I5=\"\"),\"\",IF(I5=\"transversal\",IF(AND(F5<=L5,G5<=K5),\"OK\",\"EXCEDE TABLERO\"),IF(I5=\"sin-veta\",IF(OR(AND(F5<=K5,G5<=L5),AND(F5<=L5,G5<=K5)),\"OK\",\"EXCEDE TABLERO\"),IF(AND(F5<=K5,G5<=L5),\"OK\",\"EXCEDE TABLERO\"))))"}
+{"kind":"formula","sheet":"Piezas","address":"D6","formula":"=IFERROR(VLOOKUP(C6,'Catalogo Tableros'!$A$2:$H$146,2,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"E6","formula":"=IFERROR(VLOOKUP(C6,'Catalogo Tableros'!$A$2:$H$146,3,FALSE)&\" · \"&VLOOKUP(C6,'Catalogo Tableros'!$A$2:$H$146,4,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"K6","formula":"=IFERROR(VLOOKUP(C6,'Catalogo Tableros'!$A$2:$H$146,5,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"L6","formula":"=IFERROR(VLOOKUP(C6,'Catalogo Tableros'!$A$2:$H$146,6,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"M6","formula":"=IFERROR(VLOOKUP(C6,'Catalogo Tableros'!$A$2:$H$146,7,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"N6","formula":"=IF(OR(C6=\"\",F6=\"\",G6=\"\",H6=\"\",I6=\"\"),\"\",IF(I6=\"transversal\",IF(AND(F6<=L6,G6<=K6),\"OK\",\"EXCEDE TABLERO\"),IF(I6=\"sin-veta\",IF(OR(AND(F6<=K6,G6<=L6),AND(F6<=L6,G6<=K6)),\"OK\",\"EXCEDE TABLERO\"),IF(AND(F6<=K6,G6<=L6),\"OK\",\"EXCEDE TABLERO\"))))"}
+{"kind":"formula","sheet":"Piezas","address":"D7","formula":"=IFERROR(VLOOKUP(C7,'Catalogo Tableros'!$A$2:$H$146,2,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"E7","formula":"=IFERROR(VLOOKUP(C7,'Catalogo Tableros'!$A$2:$H$146,3,FALSE)&\" · \"&VLOOKUP(C7,'Catalogo Tableros'!$A$2:$H$146,4,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"K7","formula":"=IFERROR(VLOOKUP(C7,'Catalogo Tableros'!$A$2:$H$146,5,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"L7","formula":"=IFERROR(VLOOKUP(C7,'Catalogo Tableros'!$A$2:$H$146,6,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"M7","formula":"=IFERROR(VLOOKUP(C7,'Catalogo Tableros'!$A$2:$H$146,7,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"N7","formula":"=IF(OR(C7=\"\",F7=\"\",G7=\"\",H7=\"\",I7=\"\"),\"\",IF(I7=\"transversal\",IF(AND(F7<=L7,G7<=K7),\"OK\",\"EXCEDE TABLERO\"),IF(I7=\"sin-veta\",IF(OR(AND(F7<=K7,G7<=L7),AND(F7<=L7,G7<=K7)),\"OK\",\"EXCEDE TABLERO\"),IF(AND(F7<=K7,G7<=L7),\"OK\",\"EXCEDE TABLERO\"))))"}
+{"kind":"formula","sheet":"Piezas","address":"D8","formula":"=IFERROR(VLOOKUP(C8,'Catalogo Tableros'!$A$2:$H$146,2,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"E8","formula":"=IFERROR(VLOOKUP(C8,'Catalogo Tableros'!$A$2:$H$146,3,FALSE)&\" · \"&VLOOKUP(C8,'Catalogo Tableros'!$A$2:$H$146,4,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"K8","formula":"=IFERROR(VLOOKUP(C8,'Catalogo Tableros'!$A$2:$H$146,5,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"L8","formula":"=IFERROR(VLOOKUP(C8,'Catalogo Tableros'!$A$2:$H$146,6,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"M8","formula":"=IFERROR(VLOOKUP(C8,'Catalogo Tableros'!$A$2:$H$146,7,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"N8","formula":"=IF(OR(C8=\"\",F8=\"\",G8=\"\",H8=\"\",I8=\"\"),\"\",IF(I8=\"transversal\",IF(AND(F8<=L8,G8<=K8),\"OK\",\"EXCEDE TABLERO\"),IF(I8=\"sin-veta\",IF(OR(AND(F8<=K8,G8<=L8),AND(F8<=L8,G8<=K8)),\"OK\",\"EXCEDE TABLERO\"),IF(AND(F8<=K8,G8<=L8),\"OK\",\"EXCEDE TABLERO\"))))"}
+{"kind":"formula","sheet":"Piezas","address":"D9","formula":"=IFERROR(VLOOKUP(C9,'Catalogo Tableros'!$A$2:$H$146,2,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"E9","formula":"=IFERROR(VLOOKUP(C9,'Catalogo Tableros'!$A$2:$H$146,3,FALSE)&\" · \"&VLOOKUP(C9,'Catalogo Tableros'!$A$2:$H$146,4,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"K9","formula":"=IFERROR(VLOOKUP(C9,'Catalogo Tableros'!$A$2:$H$146,5,FALSE),\"\")"}
+{"kind":"formula","sheet":"Piezas","address":"L9","formula":"=IFERROR(VLOOKUP(C9,'Catalogo Tableros'!$A$2:$H$146,6,FALSE),\"\")"}
+{"kind":"notice","message":"Truncated: omitted 2952 lines. Increase maxChars, narrow range, or use tableMaxRows/tableMaxCols/tableMaxCellChars."}

@@ -1,0 +1,64 @@
+{
+  "usersInspection": {
+    "ndjson": "{\"kind\":\"sheet\",\"id\":\"ws/rqk8ci\",\"name\":\"Usuarios\",\"index\":0,\"range\":\"A1:F4\",\"address\":\"A1:F4\"}",
+    "truncated": false,
+    "metadata": {
+      "revision": "slnyub",
+      "target": {
+        "id": "wb/e7i4j2",
+        "beforeLines": 0,
+        "afterLines": 0
+      },
+      "kind": {
+        "requested": "sheet",
+        "tokens": [
+          "sheet"
+        ]
+      },
+      "include": {
+        "requested": "id,name,values,formulas",
+        "tokens": [
+          "id",
+          "name",
+          "values",
+          "formulas"
+        ]
+      },
+      "exclude": {
+        "tokens": []
+      },
+      "notices": []
+    }
+  },
+  "rolesInspection": {
+    "ndjson": "{\"kind\":\"sheet\",\"id\":\"ws/2kqqwp\",\"name\":\"Roles y accesos\",\"index\":1,\"range\":\"A1:C9\",\"address\":\"A1:C9\"}",
+    "truncated": false,
+    "metadata": {
+      "revision": "xlasni",
+      "target": {
+        "id": "wb/qhr1nb",
+        "beforeLines": 0,
+        "afterLines": 0
+      },
+      "kind": {
+        "requested": "sheet",
+        "tokens": [
+          "sheet"
+        ]
+      },
+      "include": {
+        "requested": "id,name,values,formulas",
+        "tokens": [
+          "id",
+          "name",
+          "values",
+          "formulas"
+        ]
+      },
+      "exclude": {
+        "tokens": []
+      },
+      "notices": []
+    }
+  }
+}

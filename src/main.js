@@ -80,6 +80,14 @@ function emptyState() {
       servicesDiscount: 0,
     },
     importPreview: null,
+    importPending: null,
+    pastePreview: null,
+    pastePending: null,
+    pasteConfig: {
+      materialId: "",
+      edgeId: "",
+      sides: { top: true, bottom: false, left: false, right: false },
+    },
     message: null,
   };
 }
@@ -670,6 +678,139 @@ function shell(content) {
     </div>`;
 }
 
+function pieceImportPreview() {
+  const preview = state.importPreview;
+  if (!preview) return "";
+  if (preview.status === "reading") {
+    return `<div class="import-result reading" role="status" aria-live="polite">
+      <b>Leyendo y validando ${safe(preview.fileName || "el archivo")}…</b>
+      <span>Al terminar verás cuántas líneas y piezas están listas para incorporar.</span>
+    </div>`;
+  }
+
+  const errors = preview.errors || [];
+  const validCount = preview.validCount || preview.importedCount || 0;
+  const totalUnits = preview.totalUnits || 0;
+  const isReady = preview.status === "ready" && state.importPending?.rows?.length;
+  const isImported = preview.status === "imported";
+  const heading = isReady
+    ? `${validCount} líneas listas · ${totalUnits} piezas`
+    : isImported
+      ? `${preview.importedCount || validCount} líneas incorporadas · ${totalUnits} piezas`
+      : "No se encontraron piezas válidas";
+
+  return `<div class="import-result ${errors.length || !validCount ? "warning" : ""}" aria-live="polite">
+    <b>${safe(preview.fileName || "Archivo seleccionado")} · ${heading}</b>
+    <span>Hoja: ${safe(preview.sheetName || "detectada automáticamente")} · Encabezados: fila ${preview.headerRow || "sin identificar"}</span>
+    <div class="import-metrics">
+      <i><b>${validCount}</b> líneas válidas</i>
+      <i><b>${totalUnits}</b> piezas totales</i>
+      <i><b>${preview.rejectedRows || 0}</b> rechazadas</i>
+      <i><b>${preview.blankRows || 0}</b> vacías ignoradas</i>
+    </div>
+    ${
+      isReady
+        ? `<div class="import-confirm">
+            <button class="primary" type="button" data-action="confirm-piece-import">Incorporar todas las piezas (${totalUnits})</button>
+            <span>También se seleccionarán automáticamente los tableros y tapacantos indicados en el Excel.</span>
+          </div>`
+        : isImported
+          ? `<span><b>Listo.</b> Las piezas ya aparecen en el listado y están disponibles para optimizar.</span>`
+          : ""
+    }
+    ${
+      errors.length
+        ? `<details ${validCount ? "" : "open"}><summary>Ver diagnóstico completo (${errors.length})</summary>
+            <div class="import-errors"><table><thead><tr><th>Fila</th><th>Campo</th><th>Problema</th></tr></thead><tbody>
+              ${(preview.issues || []).slice(0, 100).map((issue) => `<tr><td>${issue.row || "-"}</td><td>${safe(issue.field || "archivo")}</td><td>${safe(issue.message)}</td></tr>`).join("")}
+            </tbody></table></div>
+            <button class="ghost small" type="button" data-action="download-import-report">Descargar informe de errores</button>
+          </details>`
+        : validCount
+          ? `<span>El archivo fue validado sin errores.</span>`
+          : ""
+    }
+  </div>`;
+}
+
+function pastedPiecesPreview() {
+  const preview = state.pastePreview;
+  if (!preview) return "";
+  const ready = preview.status === "ready" && state.pastePending?.rows?.length;
+  return `<div class="import-result ${preview.errors?.length ? "warning" : ""}" aria-live="polite">
+    <b>${ready ? `${preview.validCount} líneas listas · ${preview.totalUnits} piezas` : "No fue posible interpretar el bloque pegado"}</b>
+    <span>${safe(preview.formatMessage || "")}</span>
+    ${
+      ready
+        ? `<div class="paste-sample"><b>Vista previa</b>${state.pastePending.rows.slice(0, 5).map((piece) => `<span>${safe(piece.name || "Sin nombre")} · ${piece.length} × ${piece.width} mm · ${piece.quantity} ud.</span>`).join("")}</div>
+          <div class="import-confirm">
+            <button class="primary" type="button" data-action="confirm-piece-paste">Incorporar este lote (${preview.totalUnits})</button>
+            <span>Después podrás pegar otro bloque para un tablero o color diferente.</span>
+          </div>`
+        : `<span>${safe((preview.errors || ["Incluye encabezados Largo, Ancho y Cantidad."])[0])}</span>`
+    }
+  </div>`;
+}
+
+function pastePiecesPanel() {
+  const configuredMaterialId =
+    state.pasteConfig.materialId || state.materialId || state.materialIds?.[0] || "";
+  const configuredMaterial = materials.find(
+    (item) => item.id === configuredMaterialId,
+  );
+  const configuredEdgeId =
+    state.pasteConfig.edgeId || configuredMaterial?.suggestedEdgeId || "";
+  const configSides = state.pasteConfig.sides || {};
+  return `<details class="paste-panel" ${state.pastePreview ? "open" : ""}>
+    <summary>Pegar directamente desde cualquier Excel</summary>
+    <div class="paste-panel-body">
+      <p>Copia desde el Excel del cliente las columnas <b>Largo, Ancho y Cantidad</b>; Nombre o Elemento es opcional. Con encabezados el orden puede ser distinto; sin encabezados usa Nombre, Largo, Ancho y Cantidad.</p>
+      <div class="paste-config-grid">
+        <label>Tablero/color para este lote <em>*</em>
+          <select id="paste-material">
+            <option value="">Seleccionar tablero</option>
+            ${activeMaterials().map((item) => `<option value="${item.id}" ${item.id === configuredMaterialId ? "selected" : ""}>${safe(item.sku)} · ${safe(item.name)} · ${item.thickness} mm</option>`).join("")}
+          </select>
+        </label>
+        <label>Tapacanto del lote
+          <select id="paste-edge">
+            <option value="">Sin tapacanto</option>
+            ${activeEdgeBands().map((item) => `<option value="${item.id}" ${item.id === configuredEdgeId ? "selected" : ""}>${safe(item.sku)} · ${safe(item.name)} · ${String(item.thickness).replace(".", ",")} mm</option>`).join("")}
+          </select>
+        </label>
+      </div>
+      <div class="paste-side-picker">
+        <span>Aplicar ese tapacanto en:</span>
+        <label class="side-top"><input type="checkbox" data-paste-side="top" ${configSides.top ? "checked" : ""} /><b>L1</b><small>Superior</small></label>
+        <label class="side-left"><input type="checkbox" data-paste-side="left" ${configSides.left ? "checked" : ""} /><b>A1</b><small>Izquierdo</small></label>
+        <i>PIEZA</i>
+        <label class="side-right"><input type="checkbox" data-paste-side="right" ${configSides.right ? "checked" : ""} /><b>A2</b><small>Derecho</small></label>
+        <label class="side-bottom"><input type="checkbox" data-paste-side="bottom" ${configSides.bottom ? "checked" : ""} /><b>L2</b><small>Inferior</small></label>
+      </div>
+      <label>Filas copiadas desde Excel
+        <textarea id="piece-paste-text" rows="8" placeholder="Nombre de pieza    Largo    Ancho    Cantidad&#10;Costado izquierdo  720      560      2"></textarea>
+      </label>
+      <button class="secondary" type="button" data-action="analyze-piece-paste">Revisar filas pegadas</button>
+      ${pastedPiecesPreview()}
+    </div>
+  </details>`;
+}
+
+function pieceImportPanel({ project = false } = {}) {
+  const reading = state.importPreview?.status === "reading";
+  return `<section class="card import-card ${project ? "project-import-card" : ""}">
+    <div class="section-title"><span>⇧</span><div><h3>${project ? "Carga masiva de piezas" : "Importar piezas"}</h3><p>${project ? "Puedes cargar el despiece ahora, antes de seleccionar materiales." : "Usa la plantilla o pega filas directamente desde otro Excel."}</p></div></div>
+    <label class="dropzone ${project ? "compact-dropzone" : ""} ${reading ? "reading" : ""}">
+      <input type="file" data-piece-excel accept=".xlsx" ${reading ? "disabled" : ""} />
+      <strong>${reading ? "Leyendo archivo…" : "Seleccionar Excel estándar"}</strong>
+      <span>Primero se valida; después podrás incorporar todas las piezas con un botón.</span>
+    </label>
+    <a class="text-button" href="/Plantilla_Piezas_Casa_Diseno.xlsx" download="Plantilla_Piezas_Casa_Diseno.xlsx">↓ Descargar plantilla Excel</a>
+    ${pieceImportPreview()}
+    ${pastePiecesPanel()}
+  </section>`;
+}
+
 function projectStep() {
   const isExistingProject = projectsCache.some(
     (item) => item.id === state.projectId,
@@ -757,6 +898,7 @@ function projectStep() {
         </label>` : ""}
       </div>
     </section>
+    ${canCreateQuote() && canEditCurrent() ? pieceImportPanel({ project: true }) : ""}
     ${stepFooter(false, "Continuar a materiales")}
   `;
 }
@@ -1052,38 +1194,7 @@ function piecesStep() {
           <button class="primary" type="submit">Agregar pieza</button>
         </form>
       </section>
-      <section class="card import-card">
-        <div class="section-title"><span>⇧</span><div><h3>Importar Excel</h3><p>Selecciona el tablero y los tapacantos por fila desde listas dinámicas.</p></div></div>
-        <label class="dropzone">
-          <input type="file" id="excel-file" accept=".xlsx" />
-          <strong>Seleccionar e importar archivo</strong>
-          <span>Las filas válidas se incorporan automáticamente · máximo recomendado 1.000</span>
-        </label>
-        <a class="text-button" href="/Plantilla_Piezas_Casa_Diseno.xlsx" download="Plantilla_Piezas_Casa_Diseno.xlsx">↓ Descargar plantilla Excel</a>
-        ${
-          state.importPreview
-            ? `<div class="import-result ${state.importPreview.errors.length ? "warning" : ""}">
-                <b>${safe(state.importPreview.fileName || "Archivo seleccionado")} · ${state.importPreview.importedCount || 0} filas incorporadas</b>
-                <span>Hoja: ${safe(state.importPreview.sheetName || "detectada automáticamente")} · Encabezados: fila ${state.importPreview.headerRow || "sin identificar"}</span>
-                <div class="import-metrics">
-                  <i><b>${state.importPreview.importedCount || 0}</b> válidas</i>
-                  <i><b>${state.importPreview.rejectedRows || 0}</b> rechazadas</i>
-                  <i><b>${state.importPreview.blankRows || 0}</b> vacías ignoradas</i>
-                </div>
-                ${
-                  state.importPreview.errors.length
-                    ? `<details open><summary>Ver diagnóstico completo (${state.importPreview.errors.length})</summary>
-                        <div class="import-errors"><table><thead><tr><th>Fila</th><th>Campo</th><th>Problema</th></tr></thead><tbody>
-                          ${(state.importPreview.issues || []).slice(0, 100).map((issue) => `<tr><td>${issue.row || "-"}</td><td>${safe(issue.field || "archivo")}</td><td>${safe(issue.message)}</td></tr>`).join("")}
-                        </tbody></table></div>
-                        <button class="ghost small" data-action="download-import-report">Descargar informe de errores</button>
-                      </details>`
-                    : `<span>El archivo fue validado sin errores.</span>`
-                }
-              </div>`
-            : ""
-        }
-      </section>
+      ${canCreateQuote() && canEditCurrent() ? pieceImportPanel() : ""}
     </div>
     ${piecesTable()}
     ${stepFooter(true, "Configurar tapacantos")}
@@ -2411,27 +2522,58 @@ function normalizeHeader(value) {
 }
 
 async function importExcel(file) {
+  state.importPending = null;
+  state.importPreview = {
+    status: "reading",
+    errors: [],
+    issues: [],
+    fileName: file?.name || "Archivo seleccionado",
+    sheetName: "",
+    validCount: 0,
+    importedCount: 0,
+    totalUnits: 0,
+    totalRows: 0,
+    rejectedRows: 0,
+    blankRows: 0,
+    headerRow: 0,
+  };
+  render();
+
   try {
-    const workbookSheets = await readWorkbook(file);
     const normalizedRequiredHeaders = ["largo", "ancho", "cantidad"];
+    const countRequiredHeaders = (table = []) =>
+      Math.max(
+        0,
+        ...table.slice(0, 25).map((row) => {
+          const headers = new Set((row || []).map(normalizeHeader));
+          return normalizedRequiredHeaders.filter((header) =>
+            headers.has(header),
+          ).length;
+        }),
+      );
+
+    let selectedSheet = null;
+    try {
+      const piecesTable = await readSheet(file, "Piezas");
+      if (countRequiredHeaders(piecesTable) === normalizedRequiredHeaders.length) {
+        selectedSheet = { sheet: "Piezas", data: piecesTable };
+      }
+    } catch {
+      // Si la hoja fue renombrada, se busca por encabezados en todo el libro.
+    }
+
+    let workbookSheets = [];
+    if (!selectedSheet) workbookSheets = await readWorkbook(file);
     const sheetCandidates = workbookSheets
       .map((sheet) => {
         const firstRows = (sheet.data || []).slice(0, 25);
-        const headerScore = Math.max(
-          0,
-          ...firstRows.map((row) => {
-            const headers = new Set(row.map(normalizeHeader));
-            return normalizedRequiredHeaders.filter((header) =>
-              headers.has(header),
-            ).length;
-          }),
-        );
+        const headerScore = countRequiredHeaders(firstRows);
         const name = normalizeHeader(sheet.sheet || "");
         const nameScore = /pieza|corte|despiece/.test(name) ? 4 : 0;
         return { ...sheet, score: headerScore * 10 + nameScore };
       })
       .sort((a, b) => b.score - a.score);
-    const selectedSheet = sheetCandidates.find((sheet) => sheet.score >= 30);
+    selectedSheet ||= sheetCandidates.find((sheet) => sheet.score >= 30);
     if (!selectedSheet) {
       throw new Error(
         `No se encontró una hoja con las columnas Largo, Ancho y Cantidad. Hojas detectadas: ${workbookSheets.map((sheet) => sheet.sheet).join(", ") || "ninguna"}.`,
@@ -2445,27 +2587,23 @@ async function importExcel(file) {
       idFactory: () => crypto.randomUUID(),
     });
 
-    if (imported.rows.length) {
-      state.pieces.push(...imported.rows);
-      const selectedIds = new Set(state.materialIds || []);
-      imported.materialIds.forEach((id) => selectedIds.add(id));
-      state.materialIds = [...selectedIds];
-      if (!state.materialId) state.materialId = imported.materialIds[0] || "";
-      const firstImportedMaterial = materials.find(
-        (item) => item.id === imported.materialIds[0],
-      );
-      if (!state.categoryId && firstImportedMaterial) {
-        state.categoryId = firstImportedMaterial.categoryId;
-      }
-      latestResult = null;
-    }
+    const totalUnits = imported.rows.reduce(
+      (sum, row) => sum + Number(row.quantity || 0),
+      0,
+    );
+    state.importPending = imported.rows.length
+      ? { rows: imported.rows, materialIds: imported.materialIds }
+      : null;
 
     state.importPreview = {
+      status: imported.rows.length ? "ready" : "error",
       errors: imported.errors,
       issues: imported.issues || [],
       fileName: file.name,
       sheetName: selectedSheet.sheet,
-      importedCount: imported.rows.length,
+      validCount: imported.rows.length,
+      importedCount: 0,
+      totalUnits,
       totalRows: imported.totalRows,
       rejectedRows: imported.rejectedRows,
       blankRows: imported.blankRows,
@@ -2473,17 +2611,21 @@ async function importExcel(file) {
     };
     notify(
       imported.rows.length
-        ? `${imported.rows.length} filas incorporadas desde Excel${imported.errors.length ? `; ${imported.errors.length} con observaciones.` : "."}`
-        : "No se incorporaron piezas. Revisa las observaciones del archivo.",
+        ? `${imported.rows.length} líneas y ${totalUnits} piezas listas. Presiona “Incorporar todas las piezas”.`
+        : "No se encontraron piezas válidas. Revisa el diagnóstico del archivo.",
       imported.rows.length ? "success" : "error",
     );
   } catch (error) {
+    state.importPending = null;
     state.importPreview = {
+      status: "error",
       errors: [error.message || "No fue posible leer el archivo."],
       issues: [{ row: 0, field: "archivo", message: error.message || "No fue posible leer el archivo." }],
       fileName: file?.name || "Archivo seleccionado",
       sheetName: "",
+      validCount: 0,
       importedCount: 0,
+      totalUnits: 0,
       totalRows: 0,
       rejectedRows: 0,
       blankRows: 0,
@@ -2494,6 +2636,146 @@ async function importExcel(file) {
       "error",
     );
   }
+}
+
+function addImportedPieceBatch(pending, previewKey) {
+  if (!pending?.rows?.length) {
+    notify("Primero valida las piezas que deseas incorporar.", "error");
+    return;
+  }
+  state.pieces.push(...pending.rows);
+  const selectedIds = new Set(state.materialIds || []);
+  pending.materialIds.forEach((id) => selectedIds.add(id));
+  state.materialIds = [...selectedIds];
+  if (!state.materialId) state.materialId = pending.materialIds[0] || "";
+  const firstImportedMaterial = materials.find(
+    (item) => item.id === pending.materialIds[0],
+  );
+  if (!state.categoryId && firstImportedMaterial) {
+    state.categoryId = firstImportedMaterial.categoryId;
+  }
+  const importedCount = pending.rows.length;
+  const totalUnits = pending.rows.reduce(
+    (sum, row) => sum + Number(row.quantity || 0),
+    0,
+  );
+  if (previewKey === "import") {
+    state.importPending = null;
+    state.importPreview = {
+      ...state.importPreview,
+      status: "imported",
+      importedCount,
+      validCount: importedCount,
+      totalUnits,
+    };
+  } else {
+    state.pastePending = null;
+    state.pastePreview = null;
+  }
+  state.view = "quote";
+  state.step = 2;
+  latestResult = null;
+  notify(
+    `${importedCount} líneas y ${totalUnits} piezas incorporadas. Ya están disponibles para optimizar.`,
+  );
+}
+
+function confirmPieceImport() {
+  addImportedPieceBatch(state.importPending, "import");
+}
+
+function splitPastedExcel(text = "") {
+  const lines = String(text)
+    .replaceAll("\r\n", "\n")
+    .replaceAll("\r", "\n")
+    .split("\n")
+    .filter((line) => line.trim());
+  const delimiter = lines.some((line) => line.includes("\t"))
+    ? "\t"
+    : lines.some((line) => line.includes(";"))
+      ? ";"
+      : ",";
+  return lines.map((line) => line.split(delimiter).map((cell) => cell.trim()));
+}
+
+function analyzePastedPieces() {
+  const text = document.querySelector("#piece-paste-text")?.value || "";
+  const materialId = document.querySelector("#paste-material")?.value || "";
+  const edgeId = document.querySelector("#paste-edge")?.value || "";
+  const sidesForEdge = Object.fromEntries(
+    ["top", "bottom", "left", "right"].map((side) => [
+      side,
+      Boolean(document.querySelector(`[data-paste-side="${side}"]`)?.checked),
+    ]),
+  );
+  state.pasteConfig = { materialId, edgeId, sides: sidesForEdge };
+  if (!text.trim()) {
+    state.pastePending = null;
+    state.pastePreview = {
+      status: "error",
+      errors: ["Pega primero las filas copiadas desde Excel."],
+    };
+    render();
+    return;
+  }
+  if (!materialId) {
+    state.pastePending = null;
+    state.pastePreview = {
+      status: "error",
+      errors: ["Selecciona el tablero o color correspondiente a este lote."],
+    };
+    render();
+    return;
+  }
+  const pastedTable = splitPastedExcel(text);
+  const importOptions = {
+    catalogMaterials: materials,
+    catalogEdges: edgeBands,
+    fallbackMaterialId: materialId,
+    idFactory: () => crypto.randomUUID(),
+  };
+  let assumedColumnOrder = false;
+  let imported = parsePieceImportTable(pastedTable, importOptions);
+  if (
+    !imported.rows.length &&
+    imported.headerRow === 0 &&
+    [3, 4].includes(pastedTable[0]?.length)
+  ) {
+    const assumedHeaders =
+      pastedTable[0].length === 3
+        ? ["largo", "ancho", "cantidad"]
+        : ["nombre", "largo", "ancho", "cantidad"];
+    imported = parsePieceImportTable(
+      [assumedHeaders, ...pastedTable],
+      importOptions,
+    );
+    assumedColumnOrder = imported.rows.length > 0;
+  }
+  imported.rows.forEach((piece) => {
+    piece.edges = {
+      top: edgeId && sidesForEdge.top ? edgeId : null,
+      right: edgeId && sidesForEdge.right ? edgeId : null,
+      bottom: edgeId && sidesForEdge.bottom ? edgeId : null,
+      left: edgeId && sidesForEdge.left ? edgeId : null,
+    };
+  });
+  const totalUnits = imported.rows.reduce(
+    (sum, row) => sum + Number(row.quantity || 0),
+    0,
+  );
+  state.pastePending = imported.rows.length
+    ? { rows: imported.rows, materialIds: [materialId] }
+    : null;
+  state.pastePreview = {
+    status: imported.rows.length ? "ready" : "error",
+    errors: imported.errors,
+    validCount: imported.rows.length,
+    totalUnits,
+    formatMessage: imported.rows.length
+      ? `${assumedColumnOrder ? "Se aplicó el orden Nombre (opcional), Largo, Ancho y Cantidad." : `Encabezados reconocidos en la fila ${imported.headerRow}.`} ${imported.rejectedRows ? `${imported.rejectedRows} fila(s) fueron descartadas.` : "Todas las filas son válidas."}`
+      : imported.errors[0] || "No se reconocieron las columnas necesarias.",
+  };
+  render();
 }
 
 function downloadImportReport() {
@@ -3001,7 +3283,7 @@ app.addEventListener("change", async (event) => {
     state.project.rut = formatRut(target.value);
     target.value = state.project.rut;
   }
-  if (target.id === "excel-file" && target.files?.[0]) {
+  if (target.dataset.pieceExcel !== undefined && target.files?.[0]) {
     await importExcel(target.files[0]);
   }
   if (target.id === "user-excel-file" && target.files?.[0]) {
@@ -3273,6 +3555,15 @@ app.addEventListener("click", async (event) => {
   if (action === "remove-piece") {
     state.pieces = state.pieces.filter((piece) => piece.id !== button.dataset.id);
     render();
+  }
+  if (action === "confirm-piece-import") {
+    confirmPieceImport();
+  }
+  if (action === "analyze-piece-paste") {
+    analyzePastedPieces();
+  }
+  if (action === "confirm-piece-paste") {
+    addImportedPieceBatch(state.pastePending, "paste");
   }
   if (action === "remove-material") {
     const materialId = button.dataset.id;

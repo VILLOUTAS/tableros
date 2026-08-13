@@ -1,4 +1,4 @@
-COTIZADOR CASA DISEÑO V3.3.1 — ACTUALIZACIÓN SEGURA
+COTIZADOR CASA DISEÑO V3.3.2 — ACTUALIZACIÓN SEGURA
 
 1. Descomprime este paquete.
 2. Reemplaza el contenido del repositorio GitHub con todos estos archivos.
@@ -34,7 +34,7 @@ IMPORTANTE
 - DATABASE_URL se configura automáticamente con el Blueprint.
 - No existe una clave predeterminada.
 - Las notificaciones internas funcionan sin configuración adicional.
-- La plantilla Excel dinámica se descarga directamente desde el paso Piezas.
+- La plantilla Excel dinámica se descarga desde Proyecto o desde Piezas.
 - Incluye los 147 tableros y 121 tapacantos, autocompleta tipo, producto y
   dimensiones, permite un material distinto por fila y dispone de 499 filas.
 - El tipo de tablero es un filtro opcional: vacío muestra todos los productos;
@@ -42,8 +42,10 @@ IMPORTANTE
 - Permite seleccionar tapacantos distintos para L1, L2, A1 y A2, filtrando
   primero por tipo y luego por producto.
 - Las filas dinámicas todavía vacías se ignoran al importar.
-- Al seleccionar el Excel, las filas válidas se incorporan inmediatamente al
-  listado de piezas; ya no existe una segunda confirmación.
+- Al seleccionar el Excel se muestra el avance, una vista previa con líneas y
+  unidades y un botón explícito para incorporar todas las piezas.
+- También se pueden copiar filas desde cualquier Excel y pegarlas directamente
+  por lote, asignando una vez tablero, tapacanto y lados L1/L2/A1/A2.
 - El importador detecta automáticamente la hoja por sus encabezados, aunque se
   haya renombrado, e informa fila, campo y motivo de cada rechazo.
 - Desde el diagnóstico se puede descargar un CSV con todos los errores.
