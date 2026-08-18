@@ -1,6 +1,6 @@
 # Cotizador online — Casa Diseño Multiespacio
 
-Versión 3.3.2 del cotizador y optimizador de cortes. Incluye acceso seguro con
+Versión 3.4.0 del cotizador y optimizador de cortes. Incluye acceso seguro con
 usuarios diferenciados, base PostgreSQL, catálogo completo importado desde
 Excel y persistencia de proyectos.
 
@@ -20,16 +20,20 @@ Excel y persistencia de proyectos.
 - Colaboración comercial: el responsable o Administración puede sumar otros
   Comerciales para ayudar a preparar una cotización, manteniendo identificado
   al ejecutivo principal.
-- Carga masiva disponible desde Proyecto y Piezas. El Excel estándar se valida
-  con progreso visible, diagnóstico por fila y confirmación antes de incorporar
-  el lote. También se pueden pegar filas copiadas desde cualquier Excel,
-  asignando una vez el tablero, tapacanto y lados del grupo.
+- Ingreso de piezas en el paso 2: después de escoger el tablero se puede digitar
+  manualmente o pegar directamente un bloque copiado desde cualquier Excel.
+  Cada lote permite definir una vez el tablero, tapacanto y lados L1/L2/A1/A2.
+- Dos modos de medida: “terminada” como opción predeterminada, que descuenta el
+  tapacanto automáticamente, y “de corte ya descontada” como opción avanzada.
 - Eliminación protegida exclusiva de Administradores. La cotización desaparece
   de los paneles, pero queda preservada en la base para auditoría.
 - Autoregistro Cliente con inicio de sesión automático y campos ampliados para
   razón social, RUT, dirección de facturación, giro y dirección del proyecto.
 - Flujo completo: Cotización, Facturación, Facturado y pagado, Producción,
   Despacho y Entregado.
+- Número de factura obligatorio al liberar un pedido como Facturado y pagado,
+  y número de guía obligatorio para marcarlo como Entregado. Ambos se muestran
+  en el CRM y en los documentos de producción.
 - Comercial gestiona sus proyectos y los asignados hasta Facturado y pagado;
   desde ese punto conserva consulta detallada de producción.
 - Producción visualiza todos los estados y solo puede intervenir desde
@@ -67,38 +71,26 @@ Excel y persistencia de proyectos.
 - Selección progresiva por categoría y búsqueda por código, nombre o marca.
 - Selección de múltiples tipos de tablero dentro de un mismo proyecto.
 - Asignación de cada pieza a uno de los tableros seleccionados, tanto en el
-  ingreso manual como en la importación Excel.
+  ingreso manual como en el pegado masivo.
 - Espacio para imágenes de materiales.
 - Código de pieza asignado recién al generar la optimización/hoja de corte y
   nombre del elemento opcional.
 - Edición directa de largo, ancho y cantidad desde el listado de piezas, con
   validación inmediata contra las dimensiones del tablero y la veta.
-- Validación manual, Excel y servidor para impedir piezas mayores que el
-  tablero seleccionado, considerando el sentido de la veta.
-- Importación Excel con lectura visible, vista previa y confirmación explícita:
-  muestra las líneas, unidades y observaciones antes de incorporar el lote.
+- Validación en navegador y servidor para impedir cortes menores que 50 × 50 mm
+  o mayores que el tablero seleccionado, considerando el sentido de la veta.
 - Pegado directo de filas copiadas desde otro Excel, asignando una sola vez el
   tablero, tapacanto y lados L1/L2/A1/A2 para cada lote por color.
-- Detección automática de la hoja de cortes aunque haya sido renombrada, y de
-  encabezados aunque estén desplazados por títulos o instrucciones.
-- Diagnóstico de importación por fila y campo: informa filas válidas,
-  rechazadas y vacías, explica cada error y permite descargar un CSV de
-  correcciones.
-- Los tableros utilizados en el Excel se buscan en el catálogo completo y se
-  agregan automáticamente al proyecto, aunque no estuvieran seleccionados en
-  la pantalla Material.
-- Plantilla Excel dinámica incluida como archivo descargable directo, con los
-  147 tableros y 121 tapacantos del catálogo, filtros progresivos,
-  autocompletado y 499 filas preparadas.
-- Cada fila del Excel puede utilizar un tablero distinto; la validación
-  automática indica si la pieza cabe en la plancha según la veta.
-- Selección de tapacantos independientes para L1, L2, A1 y A2 mediante filtros
-  por tipo y producto; la asignación se incorpora automáticamente al proyecto.
+- Vista previa del bloque pegado con filas válidas, unidades y explicación de
+  errores antes de incorporar cada lote.
 - Asignación rápida de los cuatro lados por todas las piezas, por tablero o por
   un conjunto de piezas marcadas.
 - Disposición gráfica de lados: L1 superior, L2 inferior, A1 izquierdo y A2
   derecho.
 - Optimización longitudinal prioritaria o sin prioridad de eje.
+- Disco nominal de 2 mm y consumo efectivo predeterminado de 3 mm por pasada.
+  La hoja muestra gráficamente el ancho consumido y numera la secuencia con
+  posiciones acumuladas.
 - Optimización, planos de corte y subtotales separados por cada tablero.
 - Listado específico en la misma hoja de cada plano de corte, con todas las
   piezas y retazos que se obtienen de esa placa.
@@ -109,11 +101,10 @@ Excel y persistencia de proyectos.
 - Descuentos independientes para tableros, tapacantos y servicios.
 - Plano monocromático con proyecto, cliente, cotización, estado, responsable,
   material y número de placa.
-- Medidas parciales en los cuatro lados, acumuladas exteriores, veta y cortes
-  completos, con tapacantos diferenciados por grosor y patrón de línea.
-- Identificación de cada tapacanto mediante código T1/T2/T3, color de alto
-  contraste, patrón propio y trazos paralelos cuando dos piezas contiguas
-  llevan terminaciones distintas.
+- Medidas parciales en los cuatro lados, acumuladas exteriores y cortes
+  completos, con tapacantos monocromáticos diferenciados por patrón de línea.
+- Interior limpio con código de producción y cotas ampliadas; el nombre y la
+  información completa permanecen en el listado legible de la misma hoja.
 - Cotas interiores desplazadas hacia el centro y con respaldo blanco para
   evitar que los tapacantos oculten sus valores; tipografía ampliada para
   impresión y nombres completos de tapacantos distribuidos en varias líneas.
@@ -137,6 +128,8 @@ Excel y persistencia de proyectos.
 - CRM de fábrica para Administrador y Producción con fechas de ejecución y
   entrega, las seis columnas del flujo y reportes diarios, semanales y
   mensuales de carga, tableros entregados y metros lineales enchapados.
+- Categoría Neolith visible como “Próximamente”, todavía sin activar su
+  optimización para no mezclar reglas de mecanizado con las de tableros.
 
 ## Publicar en Render
 
@@ -170,9 +163,11 @@ La corrección V3.3.1 ordena la migración de `deleted_at` antes de crear su
 índice. Esto permite actualizar bases provenientes de versiones antiguas sin
 borrar ni reemplazar ningún registro.
 
-La V3.3.2 modifica únicamente el flujo de ingreso masivo de piezas en el
-cliente web. No cambia el esquema de base de datos ni elimina usuarios,
-proyectos, estados, cotizaciones, imágenes o revisiones del catálogo.
+La V3.4.0 mantiene la misma base de datos y no elimina usuarios, proyectos,
+estados, cotizaciones, imágenes ni revisiones del catálogo. Los números de
+factura y guía se guardan dentro del JSON existente del proyecto, por lo que no
+requieren una migración destructiva. Los proyectos antiguos siguen abriendo
+aunque todavía no tengan esos documentos.
 
 Antes de desplegar se recomienda generar un respaldo de PostgreSQL. No crees
 otra base de datos ni reemplaces `DATABASE_URL`, porque eso haría que la
@@ -304,17 +299,14 @@ producto. Ejemplo:
 Las imágenes quedan guardadas en PostgreSQL y sobreviven a los despliegues de
 Render. La carpeta `public/materiales/` continúa funcionando como respaldo.
 
-## Plantilla dinámica Excel de piezas
+## Pegado directo desde Excel
 
-La aplicación descarga una plantilla única para ingresar piezas de diferentes
-tableros. `tipo_tablero_filtro` es opcional: si queda vacío,
-`tablero_seleccion` muestra los 145 productos; al escoger una categoría, la
-lista se limita a los productos de ese tipo. Las antiguas columnas de
-autocompletado E–F–G ya no se muestran; largo, ancho y espesor de plancha se
-calculan al final de la fila.
+En el paso **Material y piezas**, selecciona el tablero, pulsa **Pegar desde
+Excel**, copia las celdas del archivo recibido y pégalas en el recuadro. Se
+reconocen `Largo`, `Ancho` y `Cantidad`; `Nombre` es opcional. Sin encabezados,
+el orden esperado es Nombre, Largo, Ancho y Cantidad.
 
-Cada lado puede recibir un tapacanto diferente. El tipo funciona como filtro y
-el producto seleccionado se importa directamente:
+Para cada lote se selecciona un tapacanto y los lados donde se aplica:
 
 ```text
 L1 = superior
@@ -323,14 +315,10 @@ A1 = izquierdo
 A2 = derecho
 ```
 
-Si el código viene vacío, se genera automáticamente como `P-001`, `P-002`, etc.
-al crear la optimización/hoja de corte.
-Las filas dinámicas sin datos se ignoran durante la importación. Antes de subir
-el Excel, deben estar seleccionados en el paso Material todos los tableros
-utilizados en sus filas.
-El nombre del elemento también puede quedar vacío. Las selecciones de
-tapacantos permanecen opcionales; un lado sin producto seleccionado se importa
-sin tapacanto y puede completarse posteriormente en el paso Tapacantos.
+El código se genera automáticamente como `P-001`, `P-002`, etc. al crear la
+optimización. Para otro color o tapacanto, incorpora el lote y repite el pegado
+con la nueva configuración. Ya no es necesario descargar y volver a subir una
+plantilla de piezas.
 
 ## Verificación
 

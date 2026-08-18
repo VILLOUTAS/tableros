@@ -123,7 +123,7 @@ test("protege acceso, crea perfiles y permite guardar proyectos por perfil", asy
       }),
     });
     assert.equal(oversized.response.status, 400);
-    assert.match(oversized.body.error, /excede la plancha/);
+    assert.match(oversized.body.error, /no cabe en la plancha/);
 
     const project = await request(base, "/api/projects", {
       method: "POST",
@@ -253,6 +253,24 @@ test("protege acceso, crea perfiles y permite guardar proyectos por perfil", asy
     });
     assert.equal(productionProject.response.status, 403);
 
+    const paidWithoutInvoice = await request(
+      base,
+      `/api/projects/${project.body.project.id}`,
+      {
+        method: "PATCH",
+        headers: adminHeaders,
+        body: JSON.stringify({
+          ...project.body.project,
+          project: {
+            ...project.body.project.project,
+            status: "facturado_pagado",
+          },
+        }),
+      },
+    );
+    assert.equal(paidWithoutInvoice.response.status, 400);
+    assert.match(paidWithoutInvoice.body.error, /número de factura/i);
+
     const paid = await request(
       base,
       `/api/projects/${project.body.project.id}`,
@@ -261,6 +279,7 @@ test("protege acceso, crea perfiles y permite guardar proyectos por perfil", asy
         headers: adminHeaders,
         body: JSON.stringify({
           ...project.body.project,
+          invoiceNumber: "F-1001",
           project: {
             ...project.body.project.project,
             status: "facturado_pagado",
@@ -337,6 +356,24 @@ test("protege acceso, crea perfiles y permite guardar proyectos por perfil", asy
     assert.equal(dispatched.response.status, 200);
     assert.equal(dispatched.body.project.project.status, "despacho");
 
+    const deliveredWithoutGuide = await request(
+      base,
+      `/api/projects/${project.body.project.id}`,
+      {
+        method: "PATCH",
+        headers: productionHeaders,
+        body: JSON.stringify({
+          ...dispatched.body.project,
+          project: {
+            ...dispatched.body.project.project,
+            status: "entregado",
+          },
+        }),
+      },
+    );
+    assert.equal(deliveredWithoutGuide.response.status, 400);
+    assert.match(deliveredWithoutGuide.body.error, /guía de despacho/i);
+
     const delivered = await request(
       base,
       `/api/projects/${project.body.project.id}`,
@@ -345,6 +382,7 @@ test("protege acceso, crea perfiles y permite guardar proyectos por perfil", asy
         headers: productionHeaders,
         body: JSON.stringify({
           ...dispatched.body.project,
+          dispatchGuideNumber: "GD-2001",
           project: {
             ...dispatched.body.project.project,
             status: "entregado",

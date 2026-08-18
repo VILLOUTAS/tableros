@@ -16,10 +16,13 @@ import {
   cutDimensions,
   cutRateForMaterial,
   drawCutPlan,
+  finishedDimensions,
   formatRut,
+  MINIMUM_CUT_SIDE,
   parsePieceImportTable,
   optimizeProject,
   pieceFitsMaterial,
+  pieceProductionError,
   summarizeOptimizedPieces,
   summarizePlateLeftovers,
   summarizePlatePieces,
@@ -29,8 +32,8 @@ import {
 const app = document.querySelector("#app");
 const steps = [
   ["Proyecto", "Cliente y estado"],
-  ["Material", "Categoría y producto"],
-  ["Piezas", "Manual o Excel"],
+  ["Material y piezas", "Selección e ingreso"],
+  ["Revisión", "Listado de piezas"],
   ["Tapacantos", "Configuración por lado"],
   ["Optimización", "Plano y subtotales"],
 ];
@@ -48,6 +51,8 @@ function emptyState() {
       status: "cotizacion",
       projectAddress: "",
     },
+    invoiceNumber: "",
+    dispatchGuideNumber: "",
     contact: {
       name: "",
       email: "",
@@ -68,10 +73,12 @@ function emptyState() {
     materialId: "",
     materialIds: [],
     productSearch: "",
+    pieceEntryMode: "paste",
     defaultGrain: "longitudinal",
     pieces: [],
     settings: {
-      kerf: 2,
+      bladeThickness: 2,
+      kerf: 3,
       melamineCutRate: 7500,
       specialCutRate: 10500,
       optimizationMode: "longitudinal",
@@ -86,6 +93,7 @@ function emptyState() {
     pasteConfig: {
       materialId: "",
       edgeId: "",
+      measurementMode: "finished",
       sides: { top: true, bottom: false, left: false, right: false },
     },
     message: null,
@@ -346,7 +354,7 @@ function validateCurrentStep() {
     return false;
   }
   if (state.step === 2 && state.pieces.length === 0) {
-    notify("Agrega al menos una pieza o importa una planilla Excel.", "error");
+    notify("Agrega al menos una pieza manualmente o pegando desde Excel.", "error");
     return false;
   }
   return true;
@@ -387,6 +395,8 @@ async function saveProject(showMessage = true) {
     defaultGrain: state.defaultGrain,
     pieces: state.pieces,
     settings: state.settings,
+    invoiceNumber: state.invoiceNumber,
+    dispatchGuideNumber: state.dispatchGuideNumber,
     assignedTo: state.assignedTo || null,
     collaboratorIds: state.collaboratorIds || [],
     contact: state.contact,
@@ -760,6 +770,8 @@ function pastePiecesPanel() {
   );
   const configuredEdgeId =
     state.pasteConfig.edgeId || configuredMaterial?.suggestedEdgeId || "";
+  const configuredMeasurementMode =
+    state.pasteConfig.measurementMode === "cut" ? "cut" : "finished";
   const configSides = state.pasteConfig.sides || {};
   return `<details class="paste-panel" ${state.pastePreview ? "open" : ""}>
     <summary>Pegar directamente desde cualquier Excel</summary>
@@ -769,7 +781,7 @@ function pastePiecesPanel() {
         <label>Tablero/color para este lote <em>*</em>
           <select id="paste-material">
             <option value="">Seleccionar tablero</option>
-            ${activeMaterials().map((item) => `<option value="${item.id}" ${item.id === configuredMaterialId ? "selected" : ""}>${safe(item.sku)} · ${safe(item.name)} · ${item.thickness} mm</option>`).join("")}
+            ${selectedMaterials().map((item) => `<option value="${item.id}" ${item.id === configuredMaterialId ? "selected" : ""}>${safe(item.sku)} · ${safe(item.name)} · ${item.thickness} mm</option>`).join("")}
           </select>
         </label>
         <label>Tapacanto del lote
@@ -777,6 +789,13 @@ function pastePiecesPanel() {
             <option value="">Sin tapacanto</option>
             ${activeEdgeBands().map((item) => `<option value="${item.id}" ${item.id === configuredEdgeId ? "selected" : ""}>${safe(item.sku)} · ${safe(item.name)} · ${String(item.thickness).replace(".", ",")} mm</option>`).join("")}
           </select>
+        </label>
+        <label class="form-span">Interpretación de las medidas
+          <select id="paste-measurement-mode">
+            <option value="finished" ${configuredMeasurementMode === "finished" ? "selected" : ""}>Medidas terminadas - descontar tapacanto automáticamente</option>
+            <option value="cut" ${configuredMeasurementMode === "cut" ? "selected" : ""}>Medidas de corte - ya descontadas por el cliente</option>
+          </select>
+          <small>La opción terminada es la predeterminada. Usa “de corte” solo cuando el cliente ya descontó los tapacantos.</small>
         </label>
       </div>
       <div class="paste-side-picker">
@@ -797,17 +816,68 @@ function pastePiecesPanel() {
 }
 
 function pieceImportPanel({ project = false } = {}) {
-  const reading = state.importPreview?.status === "reading";
   return `<section class="card import-card ${project ? "project-import-card" : ""}">
-    <div class="section-title"><span>⇧</span><div><h3>${project ? "Carga masiva de piezas" : "Importar piezas"}</h3><p>${project ? "Puedes cargar el despiece ahora, antes de seleccionar materiales." : "Usa la plantilla o pega filas directamente desde otro Excel."}</p></div></div>
-    <label class="dropzone ${project ? "compact-dropzone" : ""} ${reading ? "reading" : ""}">
-      <input type="file" data-piece-excel accept=".xlsx" ${reading ? "disabled" : ""} />
-      <strong>${reading ? "Leyendo archivo…" : "Seleccionar Excel estándar"}</strong>
-      <span>Primero se valida; después podrás incorporar todas las piezas con un botón.</span>
-    </label>
-    <a class="text-button" href="/Plantilla_Piezas_Casa_Diseno.xlsx" download="Plantilla_Piezas_Casa_Diseno.xlsx">↓ Descargar plantilla Excel</a>
-    ${pieceImportPreview()}
+    <div class="section-title"><span>▦</span><div><h3>Pegar listado desde Excel</h3><p>Copia las celdas del archivo del cliente y asigna tablero, tapacanto y lados una sola vez al lote.</p></div></div>
     ${pastePiecesPanel()}
+  </section>`;
+}
+
+function manualPiecePanel() {
+  const material = selectedMaterial();
+  const chosenMaterials = selectedMaterials();
+  const limits = dimensionLimits(state.defaultGrain, material);
+  return `<section class="card piece-entry-card">
+    <div class="section-title"><span>＋</span><div><h3>Agregar pieza manualmente</h3><p>El nombre es opcional; el código se asigna recién al optimizar.</p></div></div>
+    <form id="piece-form" class="piece-form">
+      <label>Nombre del elemento <small>Opcional</small><input name="name" placeholder="Costado izquierdo" /></label>
+      <label>Tablero de esta pieza <em>*</em>
+        <select name="materialId" required>
+          ${chosenMaterials.map((item) => `<option value="${item.id}" ${item.id === material?.id ? "selected" : ""}>${safe(item.sku)} · ${safe(item.name)} · ${item.thickness} mm</option>`).join("")}
+        </select>
+      </label>
+      <label class="form-span">Interpretación de las medidas
+        <select name="measurementMode">
+          <option value="finished">Medidas terminadas · descontar tapacanto automáticamente</option>
+          <option value="cut">Medidas de corte · ya descontadas por el cliente</option>
+        </select>
+        <small>La primera opción es la normal. Usa “de corte” únicamente cuando el cliente ya hizo el descuento.</small>
+      </label>
+      <label>Largo ingresado (mm) <em>*</em><input name="length" type="number" min="${MINIMUM_CUT_SIDE}" max="${limits.maxLength}" required placeholder="720" /></label>
+      <label>Ancho ingresado (mm) <em>*</em><input name="width" type="number" min="${MINIMUM_CUT_SIDE}" max="${limits.maxWidth}" required placeholder="560" /></label>
+      <label>Cantidad <em>*</em><input name="quantity" type="number" min="1" value="1" required /></label>
+      <label>Notas<input name="notes" placeholder="Opcional" /></label>
+      <label class="form-span">Tapacanto único para los lados seleccionados
+        <select name="edgeId">${edgeOptions("")}</select>
+      </label>
+      <div class="form-span manual-edge-sides">
+        <span>Aplicar en:</span>
+        <label><input type="checkbox" name="edgeTop" /> L1 · superior</label>
+        <label><input type="checkbox" name="edgeBottom" /> L2 · inferior</label>
+        <label><input type="checkbox" name="edgeLeft" /> A1 · izquierdo</label>
+        <label><input type="checkbox" name="edgeRight" /> A2 · derecho</label>
+      </div>
+      <div class="grain-field form-span">
+        <span>Veta de la pieza</span>
+        <div class="grain-options">
+          ${["longitudinal", "transversal", "sin-veta"].map((grain) => `<label class="${grain === state.defaultGrain ? "selected" : ""}"><input type="radio" name="grain" value="${grain}" ${grain === state.defaultGrain ? "checked" : ""}/><b>${grainIcon(grain)}</b><span>${grainLabels[grain]}</span></label>`).join("")}
+        </div>
+        <small id="dimension-limit-note">${safe(limits.note)} Corte mínimo: ${MINIMUM_CUT_SIDE} × ${MINIMUM_CUT_SIDE} mm.</small>
+      </div>
+      <button class="primary form-span" type="submit">Agregar pieza</button>
+    </form>
+  </section>`;
+}
+
+function pieceEntryPanel() {
+  const mode = state.pieceEntryMode === "manual" ? "manual" : "paste";
+  return `<section class="piece-entry-section reveal">
+    <div class="section-title"><span>3</span><div><h3>Ingresa las piezas de este proyecto</h3><p>Puedes alternar entre ingreso manual y pegado masivo sin perder las piezas incorporadas.</p></div></div>
+    <div class="piece-entry-switch" role="tablist">
+      <button type="button" class="${mode === "paste" ? "active" : ""}" data-action="piece-entry-mode" data-mode="paste">▦ Pegar desde Excel</button>
+      <button type="button" class="${mode === "manual" ? "active" : ""}" data-action="piece-entry-mode" data-mode="manual">＋ Ingreso manual</button>
+    </div>
+    ${mode === "manual" ? manualPiecePanel() : pieceImportPanel()}
+    ${state.pieces.length ? `<div class="piece-entry-total"><b>${state.pieces.length} línea(s)</b><span>${state.pieces.reduce((sum, piece) => sum + Number(piece.quantity || 0), 0)} piezas incorporadas</span></div>` : ""}
   </section>`;
 }
 
@@ -827,6 +897,20 @@ function projectStep() {
     !auth.visitor &&
     ["admin", "comercial"].includes(auth.user?.role) &&
     canEditCurrent();
+  const showCommercialDocuments =
+    !auth.visitor && ["admin", "comercial", "produccion"].includes(auth.user?.role);
+  const canEditInvoice =
+    canEditCurrent() &&
+    (auth.user?.role === "admin" ||
+      (auth.user?.role === "comercial" &&
+        ["cotizacion", "facturacion"].includes(state.project.status)));
+  const canEditDispatchGuide =
+    canEditCurrent() &&
+    (auth.user?.role === "admin" ||
+      (auth.user?.role === "produccion" &&
+        ["facturado_pagado", "produccion", "despacho"].includes(
+          state.project.status,
+        )));
   return `
     <section class="hero-card">
       <div>
@@ -869,6 +953,14 @@ function projectStep() {
               .join("")}
           </select>
         </label>
+        ${showCommercialDocuments ? `<label>Número de factura ${state.project.status === "facturado_pagado" ? "<em>*</em>" : ""}
+          <input data-document="invoiceNumber" value="${safe(state.invoiceNumber)}" placeholder="Ej. 12345" ${canEditInvoice ? "" : "disabled"} />
+          <small>Obligatorio para pasar a Facturado y pagado.</small>
+        </label>
+        <label>Número de guía de despacho ${state.project.status === "entregado" ? "<em>*</em>" : ""}
+          <input data-document="dispatchGuideNumber" value="${safe(state.dispatchGuideNumber)}" placeholder="Ej. 9876" ${canEditDispatchGuide ? "" : "disabled"} />
+          <small>Obligatorio antes de marcar el pedido como Entregado.</small>
+        </label>` : ""}
         <label>Ejecutivo comercial responsable ${commercialRequired ? "<em>*</em>" : ""}
           <select data-assigned-to ${commercialRequired ? "required" : ""} ${
             ["comercial", "produccion"].includes(auth.user?.role)
@@ -898,7 +990,6 @@ function projectStep() {
         </label>` : ""}
       </div>
     </section>
-    ${canCreateQuote() && canEditCurrent() ? pieceImportPanel({ project: true }) : ""}
     ${stepFooter(false, "Continuar a materiales")}
   `;
 }
@@ -939,6 +1030,9 @@ function materialStep() {
               </button>`,
           )
           .join("")}
+        <button class="category coming-soon" type="button" disabled aria-disabled="true">
+          <strong>◆</strong><span>Neolith</span><i>Próximamente</i>
+        </button>
       </div>
     </section>
     ${
@@ -974,7 +1068,8 @@ function materialStep() {
           </section>`
         : `<div class="empty-hint">Selecciona una categoría para cargar sus productos.</div>`
     }
-    ${stepFooter(true, "Continuar a piezas")}
+    ${chosenMaterials.length && canCreateQuote() && canEditCurrent() ? pieceEntryPanel() : ""}
+    ${stepFooter(true, state.pieces.length ? "Revisar piezas" : "Continuar")}
   `;
 }
 
@@ -1006,13 +1101,13 @@ function catalogView() {
       <div class="category-grid catalog-categories">
         ${
           showingBoards
-            ? categories
+            ? `${categories
                 .map(
                   (category) => `<button class="category ${category.id === state.categoryId ? "selected" : ""}" data-category="${category.id}">
                     <strong>${category.icon}</strong><span>${safe(category.name)}</span><i>${activeMaterials().filter((item) => item.categoryId === category.id).length}</i>
                   </button>`,
                 )
-                .join("")
+                .join("")}<button class="category coming-soon" type="button" disabled aria-disabled="true"><strong>◆</strong><span>Neolith</span><i>Próximamente</i></button>`
             : edgeGroups
                 .map(
                   (group) => `<button class="category ${group === state.catalogEdgeGroup ? "selected" : ""}" data-action="catalog-edge-group" data-group="${safe(group)}">
@@ -1150,52 +1245,11 @@ function catalogAdminView() {
 }
 
 function piecesStep() {
-  const material = selectedMaterial();
-  const chosenMaterials = selectedMaterials();
-  const limits = dimensionLimits(state.defaultGrain, material);
   return `
     <section class="intro-row">
-      <div><p class="eyebrow">INGRESO DE PIEZAS</p><h2>Manual o mediante una planilla Excel</h2><p>Las medidas ingresadas son medidas terminadas.</p></div>
+      <div><p class="eyebrow">REVISIÓN DE PIEZAS</p><h2>Confirma cantidades y dimensiones</h2><p>Vuelve a Material y piezas si necesitas incorporar otro lote, color o tablero.</p></div>
       <div class="piece-counter"><strong>${state.pieces.reduce((sum, piece) => sum + piece.quantity, 0)}</strong><span>piezas totales</span></div>
     </section>
-    <div class="two-columns">
-      <section class="card">
-        <div class="section-title"><span>＋</span><div><h3>Agregar pieza</h3><p>El nombre es opcional; el código se asignará al generar la hoja de corte.</p></div></div>
-        <form id="piece-form" class="piece-form">
-          <label>Código de producción
-            <div class="locked-field">Pendiente <span>Se genera al optimizar</span></div>
-          </label>
-          <label>Nombre del elemento <small>Opcional</small><input name="name" placeholder="Costado izquierdo" /></label>
-          <label class="piece-material-field">Tablero de esta pieza <em>*</em>
-            <select name="materialId" required>
-              ${chosenMaterials
-                .map(
-                  (item) =>
-                    `<option value="${item.id}" ${item.id === material?.id ? "selected" : ""}>${safe(item.sku)} · ${safe(item.name)} · ${item.thickness} mm</option>`,
-                )
-                .join("")}
-            </select>
-          </label>
-          <label>Largo terminado (mm) <em>*</em><input name="length" type="number" min="1" max="${limits.maxLength}" required placeholder="720" /></label>
-          <label>Ancho terminado (mm) <em>*</em><input name="width" type="number" min="1" max="${limits.maxWidth}" required placeholder="560" /></label>
-          <label>Cantidad <em>*</em><input name="quantity" type="number" min="1" value="1" required /></label>
-          <label>Notas<input name="notes" placeholder="Opcional" /></label>
-          <div class="grain-field">
-            <span>Veta de la pieza</span>
-            <div class="grain-options">
-              ${["longitudinal", "transversal", "sin-veta"]
-                .map(
-                  (grain) => `<label class="${grain === state.defaultGrain ? "selected" : ""}"><input type="radio" name="grain" value="${grain}" ${grain === state.defaultGrain ? "checked" : ""}/><b>${grainIcon(grain)}</b><span>${grainLabels[grain]}</span></label>`,
-                )
-                .join("")}
-            </div>
-            <small id="dimension-limit-note">${safe(limits.note)}</small>
-          </div>
-          <button class="primary" type="submit">Agregar pieza</button>
-        </form>
-      </section>
-      ${canCreateQuote() && canEditCurrent() ? pieceImportPanel() : ""}
-    </div>
     ${piecesTable()}
     ${stepFooter(true, "Configurar tapacantos")}
   `;
@@ -1203,12 +1257,12 @@ function piecesStep() {
 
 function piecesTable() {
   if (!state.pieces.length) {
-    return `<section class="card empty-state"><span>▦</span><h3>Aún no hay piezas</h3><p>Agrégalas manualmente o importa la plantilla.</p></section>`;
+    return `<section class="card empty-state"><span>▦</span><h3>Aún no hay piezas</h3><p>Vuelve al paso Material y piezas para ingresarlas manualmente o pegarlas desde Excel.</p></section>`;
   }
   return `<section class="card table-card">
     <div class="section-title"><span>▦</span><div><h3>Listado de piezas</h3><p>${state.pieces.length} líneas ingresadas.</p></div></div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Código · elemento</th><th>Tablero</th><th>Terminada</th><th>Cant.</th><th>Veta</th><th></th></tr></thead>
+      <thead><tr><th>Código · elemento</th><th>Tablero</th><th>Ingresada / corte</th><th>Cant.</th><th>Veta</th><th></th></tr></thead>
       <tbody>${selectedMaterials()
         .flatMap((groupMaterial) => {
           const groupPieces = state.pieces.filter(
@@ -1224,6 +1278,8 @@ function piecesTable() {
             ...groupPieces.map((piece) => {
           const material = selectedMaterial(piece.materialId);
           const limits = dimensionLimits(piece.grain, material);
+          const cut = cutDimensions(piece, edgeBands);
+          const finished = finishedDimensions(piece, edgeBands);
           const editable = canEditCurrent();
           return `<tr>
             <td><b>${safe(piece.code || "Pendiente")}</b><span>${safe(
@@ -1233,11 +1289,11 @@ function piecesTable() {
             <td>${
               editable
                 ? `<div class="inline-dimensions">
-                    <label>Largo<input type="number" min="1" max="${limits.maxLength}" step="1" value="${piece.length}" data-piece-field="length" data-id="${piece.id}" aria-label="Largo de ${safe(piece.code)}" /></label>
+                    <label>Largo<input type="number" min="${MINIMUM_CUT_SIDE}" max="${limits.maxLength}" step="1" value="${piece.length}" data-piece-field="length" data-id="${piece.id}" aria-label="Largo de ${safe(piece.code)}" /></label>
                     <b>×</b>
-                    <label>Ancho<input type="number" min="1" max="${limits.maxWidth}" step="1" value="${piece.width}" data-piece-field="width" data-id="${piece.id}" aria-label="Ancho de ${safe(piece.code)}" /></label>
+                    <label>Ancho<input type="number" min="${MINIMUM_CUT_SIDE}" max="${limits.maxWidth}" step="1" value="${piece.width}" data-piece-field="width" data-id="${piece.id}" aria-label="Ancho de ${safe(piece.code)}" /></label>
                     <small>mm</small>
-                  </div>`
+                  </div><small class="dimension-mode">${piece.measurementMode === "cut" ? "Corte ingresado" : "Terminada"} · corte ${millimeters(cut.cutLength)} × ${millimeters(cut.cutWidth)} · terminada ${millimeters(finished.finishedLength)} × ${millimeters(finished.finishedWidth)}</small>`
                 : `${piece.length} × ${piece.width} mm`
             }</td>
             <td>${
@@ -1265,7 +1321,7 @@ function edgeStep() {
   const suggested = edgeBands.find((item) => item.id === material?.suggestedEdgeId);
   return `
     <section class="intro-row">
-      <div><p class="eyebrow">TERMINACIÓN</p><h2>Tapacantos por pieza y tablero</h2><p>El espesor seleccionado se descuenta automáticamente de la medida de corte.</p></div>
+      <div><p class="eyebrow">TERMINACIÓN</p><h2>Tapacantos por pieza y tablero</h2><p>Por defecto el espesor se descuenta de la medida terminada. Los lotes marcados “medida de corte” no se descuentan nuevamente.</p></div>
     </section>
     <section class="card edge-bulk-card">
       <div class="section-title"><span>⚡</span><div><h3>Asignación rápida por tablero o selección</h3><p>Configura L1, L2, A1 y A2 una sola vez y aplícalos a varias piezas.</p></div></div>
@@ -1298,7 +1354,7 @@ function edgeStep() {
           return `<article class="card edge-piece">
             <div class="edge-piece-head">
               <div class="edge-piece-identity"><label class="piece-check"><input type="checkbox" data-edge-piece-select="${piece.id}" /> Marcar para asignación rápida</label><small>${safe(piece.code)} · ${safe(pieceMaterial?.sku || "Sin tablero")}</small><h3>${safe(piece.name || "Pieza sin nombre")}</h3><p>${safe(pieceMaterial?.name || "")} · Terminada: ${piece.length} × ${piece.width} mm · Cantidad: ${piece.quantity}</p></div>
-              <div class="cut-size"><span>MEDIDA DE CORTE</span><b>${cut.cutLength} × ${cut.cutWidth} mm</b></div>
+              <div class="cut-size"><span>MEDIDA DE CORTE ${piece.measurementMode === "cut" ? "· YA DESCONTADA" : "· AUTOMÁTICA"}</span><b>${cut.cutLength} × ${cut.cutWidth} mm</b></div>
             </div>
             <div class="edge-diagram" aria-label="Tapacantos por posición">
               <div class="edge-piece-shape">
@@ -1353,6 +1409,26 @@ function edgeBulkTargetPieces() {
   return state.pieces;
 }
 
+function edgeConfigurationError(pieces = state.pieces) {
+  for (const piece of pieces) {
+    const material = selectedMaterial(piece.materialId);
+    const error = pieceProductionError(piece, material, edgeBands);
+    if (error) return `${piece.code || piece.name || "Pieza"}: ${error}`;
+  }
+  for (const material of selectedMaterials()) {
+    const usedEdges = new Set(
+      pieces
+        .filter((piece) => piece.materialId === material.id)
+        .flatMap((piece) => Object.values(piece.edges || {}))
+        .filter(Boolean),
+    );
+    if (usedEdges.size > 3) {
+      return `${material.sku} tendría ${usedEdges.size} tapacantos distintos; el máximo operativo por placa es 3.`;
+    }
+  }
+  return "";
+}
+
 function applyFastEdges(mode = "sides") {
   const targets = edgeBulkTargetPieces();
   if (!targets.length) {
@@ -1369,9 +1445,18 @@ function applyFastEdges(mode = "sides") {
           left: document.querySelector("#edge-fast-left")?.value || null,
           right: document.querySelector("#edge-fast-right")?.value || null,
         };
-  targets.forEach((piece) => {
-    piece.edges = { ...piece.edges, ...values };
-  });
+  const targetIds = new Set(targets.map((piece) => piece.id));
+  const proposed = state.pieces.map((piece) =>
+    targetIds.has(piece.id)
+      ? { ...piece, edges: { ...piece.edges, ...values } }
+      : piece,
+  );
+  const error = edgeConfigurationError(proposed);
+  if (error) {
+    notify(`No se aplicaron los tapacantos: ${error}`, "error");
+    return;
+  }
+  state.pieces = proposed;
   latestResult = null;
   notify(`Tapacantos aplicados a ${targets.length} pieza(s).`);
 }
@@ -1563,7 +1648,7 @@ function optimizeStep() {
       <div><span>PLACAS</span><b>${summary.boardCount}</b></div>
       <div><span>APROVECHAMIENTO</span><b>${(100 - summary.waste).toFixed(1)} %</b></div>
       <div><span>DESPERDICIO</span><b>${summary.waste.toFixed(1)} %</b></div>
-      <div><span>SIERRA</span><b>${state.settings.kerf} mm</b></div>
+      <div><span>DISCO / CONSUMO</span><b>${state.settings.bladeThickness || 2} / ${state.settings.kerf} mm</b></div>
     </div>
     ${
       !canEditCurrent()
@@ -1611,7 +1696,9 @@ function optimizeStep() {
         </section>
         <section class="card settings-card">
           <p class="eyebrow">PARÁMETROS</p>
-          <label>Sierra (mm)<input type="number" min="0" step="0.1" data-setting="kerf" value="${state.settings.kerf}" /></label>
+          <label>Espesor nominal del disco (mm)<input type="number" min="0" step="0.1" data-setting="bladeThickness" value="${state.settings.bladeThickness || 2}" /></label>
+          <label>Consumo efectivo por corte (mm)<input type="number" min="0" step="0.1" data-setting="kerf" value="${state.settings.kerf}" /></label>
+          <small>Valor predeterminado: disco 2 mm y consumo real 3 mm por cada corte.</small>
           <label>Modo de optimización<select data-setting-text="optimizationMode">
             <option value="longitudinal" ${state.settings.optimizationMode === "longitudinal" ? "selected" : ""}>Priorizar primer corte longitudinal</option>
             <option value="free" ${state.settings.optimizationMode === "free" ? "selected" : ""}>Sin priorizar</option>
@@ -1676,6 +1763,7 @@ function projectsView() {
                 ? ` · Comercial: ${safe(item.assignedName)}`
                 : ""
             }${item.collaboratorIds?.length ? ` · Apoyo: ${item.collaboratorIds.length}` : ""}</small></p>
+            ${item.invoiceNumber ? `<p class="project-documents"><b>Factura:</b> ${safe(item.invoiceNumber)}${item.dispatchGuideNumber ? ` · <b>Guía:</b> ${safe(item.dispatchGuideNumber)}` : ""}</p>` : ""}
             <div><span>Total</span><b>${clp(item.summary?.total)}</b></div>
             ${
               statusEntriesForRole(
@@ -1878,6 +1966,7 @@ function productionDashboardView() {
                               ? ` · ${safe(item.assignedName)}`
                               : ""
                           }${item.submissionSource === "visitante" ? " · Visitante web" : ""}</p>
+                          ${["facturado_pagado", "produccion", "despacho", "entregado"].includes(status) ? `<div class="crm-documents"><b>Factura ${safe(item.invoiceNumber || "pendiente")}</b>${["despacho", "entregado"].includes(status) ? `<span>Guía ${safe(item.dispatchGuideNumber || "pendiente")}</span>` : ""}</div>` : ""}
                           ${canSchedule ? `<form class="schedule-form" data-project-id="${item.id}">
                             <label>Ejecución<input type="date" name="executionDate" value="${safe(
                               dateInputValue(item.executionDate),
@@ -1919,7 +2008,7 @@ function productionDashboardView() {
         period === "day" ? "diario" : period === "month" ? "mensual" : "semanal",
       )}</h3><p>${safe(range.label)} · carga programada y cumplimiento por orden.</p></div></div>
       <div class="table-wrap"><table>
-        <thead><tr><th>Ejecución</th><th>Entrega</th><th>Proyecto</th><th>Estado</th><th>Tableros</th><th>ML tapacanto</th></tr></thead>
+        <thead><tr><th>Ejecución</th><th>Entrega</th><th>Proyecto</th><th>Estado</th><th>Factura</th><th>Guía</th><th>Tableros</th><th>ML tapacanto</th></tr></thead>
         <tbody>${
           reportProjects.length
             ? reportProjects
@@ -1931,6 +2020,8 @@ function productionDashboardView() {
                       item.project.projectName || projectCode(item.id),
                     )}</span></td>
                     <td>${safe(statusLabels[item.project.status])}</td>
+                    <td>${safe(item.invoiceNumber || "—")}</td>
+                    <td>${safe(item.dispatchGuideNumber || "—")}</td>
                     <td>${Number(item.summary?.boardCount || 0).toLocaleString(
                       "es-CL",
                     )}</td>
@@ -1941,7 +2032,7 @@ function productionDashboardView() {
                   </tr>`,
                 )
                 .join("")
-            : `<tr><td colspan="6" class="report-empty">No hay órdenes con fecha de ejecución dentro de este período.</td></tr>`
+            : `<tr><td colspan="8" class="report-empty">No hay órdenes con fecha de ejecución dentro de este período.</td></tr>`
         }</tbody>
       </table></div>
     </section>
@@ -2246,10 +2337,16 @@ function render() {
           if (canvas) {
             drawCutPlan(canvas, plate, plate.material, edgeBands, logo, {
               projectId: state.projectId,
-              project: state.project,
+              project: {
+                ...state.project,
+                invoiceNumber: state.invoiceNumber,
+                dispatchGuideNumber: state.dispatchGuideNumber,
+              },
               statusLabel: statusLabels[state.project.status],
               createdBy: auth.user?.fullName,
               generatedAt: new Date().toLocaleString("es-CL"),
+              kerf: state.settings.kerf,
+              bladeThickness: state.settings.bladeThickness || 2,
             });
           }
         });
@@ -2437,6 +2534,14 @@ function addPiece(form) {
   const grain = String(data.get("grain") || "sin-veta");
   const materialId = String(data.get("materialId") || "");
   const material = selectedMaterial(materialId);
+  const measurementMode = data.get("measurementMode") === "cut" ? "cut" : "finished";
+  const edgeId = String(data.get("edgeId") || "");
+  const edges = {
+    top: edgeId && data.get("edgeTop") ? edgeId : null,
+    right: edgeId && data.get("edgeRight") ? edgeId : null,
+    bottom: edgeId && data.get("edgeBottom") ? edgeId : null,
+    left: edgeId && data.get("edgeLeft") ? edgeId : null,
+  };
   if (length <= 0 || width <= 0 || quantity <= 0) {
     notify("Revisa los datos obligatorios de la pieza.", "error");
     return;
@@ -2445,11 +2550,10 @@ function addPiece(form) {
     notify("Selecciona un tablero válido para la pieza.", "error");
     return;
   }
-  if (!pieceFitsMaterial({ length, width, grain }, material)) {
-    notify(
-      `La pieza no cabe en la plancha de ${material.plateLength} × ${material.plateWidth} mm con la veta seleccionada.`,
-      "error",
-    );
+  const candidate = { length, width, grain, measurementMode, edges };
+  const productionError = pieceProductionError(candidate, material, edgeBands);
+  if (productionError) {
+    notify(`No se puede agregar la pieza: ${productionError}`, "error");
     return;
   }
   state.defaultGrain = grain;
@@ -2461,9 +2565,10 @@ function addPiece(form) {
     width,
     quantity,
     grain: state.defaultGrain,
+    measurementMode,
     materialId: material.id,
     notes: String(data.get("notes") || "").trim(),
-    edges: { top: null, right: null, bottom: null, left: null },
+    edges,
   });
   notify("Pieza agregada.");
 }
@@ -2478,28 +2583,26 @@ function updatePieceField(target) {
   if (
     !["length", "width", "quantity"].includes(field) ||
     !Number.isFinite(value) ||
-    value < 1 ||
+    value < (isQuantity ? 1 : MINIMUM_CUT_SIDE) ||
     (isQuantity && !Number.isInteger(value))
   ) {
     target.value = String(previous);
     notify(
       isQuantity
         ? "La cantidad debe ser un número entero mayor que cero."
-        : "La dimensión debe ser mayor que cero.",
+        : `La dimensión de corte no puede ser menor que ${MINIMUM_CUT_SIDE} mm.`,
       "error",
     );
     return;
   }
   const material = materials.find((item) => item.id === piece.materialId);
   const candidate = { ...piece, [field]: value };
-  if (!isQuantity && !pieceFitsMaterial(candidate, material)) {
+  const productionError = !isQuantity
+    ? pieceProductionError(candidate, material, edgeBands)
+    : "";
+  if (productionError) {
     target.value = String(previous);
-    notify(
-      `La pieza no cabe en la plancha de ${material?.plateLength || 0} × ${
-        material?.plateWidth || 0
-      } mm con la veta seleccionada.`,
-      "error",
-    );
+    notify(`No se puede actualizar la pieza: ${productionError}`, "error");
     return;
   }
   piece[field] = value;
@@ -2643,7 +2746,13 @@ function addImportedPieceBatch(pending, previewKey) {
     notify("Primero valida las piezas que deseas incorporar.", "error");
     return;
   }
-  state.pieces.push(...pending.rows);
+  const proposedPieces = [...state.pieces, ...pending.rows];
+  const edgeError = edgeConfigurationError(proposedPieces);
+  if (edgeError) {
+    notify(`No se incorporó el lote: ${edgeError}`, "error");
+    return;
+  }
+  state.pieces = proposedPieces;
   const selectedIds = new Set(state.materialIds || []);
   pending.materialIds.forEach((id) => selectedIds.add(id));
   state.materialIds = [...selectedIds];
@@ -2673,7 +2782,7 @@ function addImportedPieceBatch(pending, previewKey) {
     state.pastePreview = null;
   }
   state.view = "quote";
-  state.step = 2;
+  state.step = previewKey === "paste" ? 1 : 2;
   latestResult = null;
   notify(
     `${importedCount} líneas y ${totalUnits} piezas incorporadas. Ya están disponibles para optimizar.`,
@@ -2702,13 +2811,22 @@ function analyzePastedPieces() {
   const text = document.querySelector("#piece-paste-text")?.value || "";
   const materialId = document.querySelector("#paste-material")?.value || "";
   const edgeId = document.querySelector("#paste-edge")?.value || "";
+  const measurementMode =
+    document.querySelector("#paste-measurement-mode")?.value === "cut"
+      ? "cut"
+      : "finished";
   const sidesForEdge = Object.fromEntries(
     ["top", "bottom", "left", "right"].map((side) => [
       side,
       Boolean(document.querySelector(`[data-paste-side="${side}"]`)?.checked),
     ]),
   );
-  state.pasteConfig = { materialId, edgeId, sides: sidesForEdge };
+  state.pasteConfig = {
+    materialId,
+    edgeId,
+    measurementMode,
+    sides: sidesForEdge,
+  };
   if (!text.trim()) {
     state.pastePending = null;
     state.pastePreview = {
@@ -2751,14 +2869,29 @@ function analyzePastedPieces() {
     );
     assumedColumnOrder = imported.rows.length > 0;
   }
-  imported.rows.forEach((piece) => {
+  const material = materials.find((item) => item.id === materialId);
+  const validRows = [];
+  const productionErrors = [];
+  imported.rows.forEach((piece, index) => {
+    piece.measurementMode = measurementMode;
     piece.edges = {
       top: edgeId && sidesForEdge.top ? edgeId : null,
       right: edgeId && sidesForEdge.right ? edgeId : null,
       bottom: edgeId && sidesForEdge.bottom ? edgeId : null,
       left: edgeId && sidesForEdge.left ? edgeId : null,
     };
+    const error = pieceProductionError(piece, material, edgeBands);
+    if (error) {
+      productionErrors.push(
+        `Fila ${imported.headerRow + index + 1}: ${error}`,
+      );
+    } else {
+      validRows.push(piece);
+    }
   });
+  imported.rows = validRows;
+  imported.errors = [...(imported.errors || []), ...productionErrors];
+  imported.rejectedRows = Number(imported.rejectedRows || 0) + productionErrors.length;
   const totalUnits = imported.rows.reduce(
     (sum, row) => sum + Number(row.quantity || 0),
     0,
@@ -3241,6 +3374,9 @@ app.addEventListener("input", (event) => {
   if (target.dataset.project) {
     state.project[target.dataset.project] = target.value;
   }
+  if (target.dataset.document) {
+    state[target.dataset.document] = target.value;
+  }
   if (target.dataset.assignedTo !== undefined) {
     state.assignedTo = target.value;
   }
@@ -3318,7 +3454,15 @@ app.addEventListener("change", async (event) => {
   }
   if (target.dataset.pieceEdge) {
     const piece = state.pieces.find((item) => item.id === target.dataset.pieceEdge);
-    if (piece) piece.edges[target.dataset.side] = target.value || null;
+    if (piece) {
+      const previous = piece.edges[target.dataset.side];
+      piece.edges[target.dataset.side] = target.value || null;
+      const error = edgeConfigurationError();
+      if (error) {
+        piece.edges[target.dataset.side] = previous;
+        notify(`No se aplicó el tapacanto: ${error}`, "error");
+      }
+    }
     render();
   }
   if (target.dataset.setting) {
@@ -3339,9 +3483,47 @@ app.addEventListener("change", async (event) => {
     );
     if (project) {
       try {
+        let invoiceNumber = String(project.invoiceNumber || "").trim();
+        let dispatchGuideNumber = String(project.dispatchGuideNumber || "").trim();
+        if (
+          ["facturado_pagado", "produccion", "despacho", "entregado"].includes(
+            target.value,
+          ) &&
+          !invoiceNumber
+        ) {
+          invoiceNumber = String(
+            window.prompt(
+              "Ingresa el número de factura para liberar el pedido a Producción:",
+              "",
+            ) || "",
+          ).trim();
+          if (!invoiceNumber) {
+            notify("El número de factura es obligatorio.", "error");
+            render();
+            return;
+          }
+        }
+        if (target.value === "entregado" && !dispatchGuideNumber) {
+          dispatchGuideNumber = String(
+            window.prompt(
+              "Ingresa el número de guía de despacho para marcar el pedido como Entregado:",
+              "",
+            ) || "",
+          ).trim();
+          if (!dispatchGuideNumber) {
+            notify("El número de guía de despacho es obligatorio.", "error");
+            render();
+            return;
+          }
+        }
         const payload = await api(`/api/projects/${project.id}`, {
           method: "PATCH",
-          body: { ...project, project: { ...project.project, status: target.value } },
+          body: {
+            ...project,
+            invoiceNumber,
+            dispatchGuideNumber,
+            project: { ...project.project, status: target.value },
+          },
         });
         projectsCache = projectsCache.map((item) =>
           item.id === project.id ? payload.project : item,
@@ -3370,6 +3552,11 @@ app.addEventListener("click", async (event) => {
   const button = event.target.closest("button");
   if (!button) return;
   const action = button.dataset.action;
+  if (action === "piece-entry-mode") {
+    state.pieceEntryMode = button.dataset.mode === "manual" ? "manual" : "paste";
+    render();
+    return;
+  }
   if (button.dataset.catalogMaterial) {
     const materialId = button.dataset.catalogMaterial;
     if (state.materialIds.includes(materialId)) {

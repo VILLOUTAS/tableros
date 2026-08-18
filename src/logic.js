@@ -1,4 +1,5 @@
 const sides = ["top", "right", "bottom", "left"];
+export const MINIMUM_CUT_SIDE = 50;
 
 export function isBlankPieceImportRow(values = []) {
   return values.every((value) => String(value ?? "").trim() === "");
@@ -158,7 +159,7 @@ export function parsePieceImportTable(
   const headerRowIndex = pieceImportHeaderRowIndex(table);
   if (headerRowIndex < 0) {
     const message =
-      "No se reconocen las columnas Largo, Ancho y Cantidad. Usa la plantilla descargada desde el cotizador.";
+      "No se reconocen las columnas Largo, Ancho y Cantidad. Copia esas columnas desde tu Excel o pega las filas en el orden Nombre, Largo, Ancho y Cantidad.";
     return {
       rows: [],
       errors: [message],
@@ -184,13 +185,13 @@ export function parsePieceImportTable(
     return {
       rows: [],
       errors: [
-        "No se reconocen las columnas Largo, Ancho y Cantidad. Usa la plantilla descargada desde el cotizador.",
+        "No se reconocen las columnas Largo, Ancho y Cantidad. Copia esas columnas desde tu Excel o pega las filas en el orden Nombre, Largo, Ancho y Cantidad.",
       ],
       issues: [{
         row: headerRowIndex + 1,
         field: "encabezados",
         message:
-          "No se reconocen las columnas Largo, Ancho y Cantidad. Usa la plantilla descargada desde el cotizador.",
+          "No se reconocen las columnas Largo, Ancho y Cantidad. Copia esas columnas desde tu Excel o pega las filas en el orden Nombre, Largo, Ancho y Cantidad.",
       }],
       materialIds: [],
       totalRows: Math.max(0, table.length - headerRowIndex - 1),
@@ -434,6 +435,22 @@ export function parsePieceImportTable(
       return;
     }
 
+    const productionError = pieceProductionError(
+      {
+        length,
+        width,
+        grain,
+        measurementMode: "finished",
+        edges: importedEdges,
+      },
+      material,
+      catalogEdges,
+    );
+    if (productionError) {
+      reject("medidas", productionError);
+      return;
+    }
+
     rows.push({
       id: idFactory(),
       code,
@@ -442,6 +459,7 @@ export function parsePieceImportTable(
       width,
       quantity,
       grain,
+      measurementMode: "finished",
       materialId: material.id,
       notes: String(rawNotes ?? "").trim(),
       edges: importedEdges,
@@ -520,12 +538,58 @@ export function formatRut(value) {
 }
 
 export function cutDimensions(piece, edgeBands) {
+  if (piece?.measurementMode === "cut") {
+    return {
+      cutLength: Math.max(1, Number(piece.length) || 0),
+      cutWidth: Math.max(1, Number(piece.width) || 0),
+    };
+  }
   const edge = (side) =>
     edgeBands.find((item) => item.id === piece.edges?.[side])?.thickness ?? 0;
   return {
     cutLength: Math.max(1, piece.length - edge("left") - edge("right")),
     cutWidth: Math.max(1, piece.width - edge("top") - edge("bottom")),
   };
+}
+
+export function finishedDimensions(piece, edgeBands = []) {
+  if (piece?.measurementMode !== "cut") {
+    return {
+      finishedLength: Number(piece.length) || 0,
+      finishedWidth: Number(piece.width) || 0,
+    };
+  }
+  const edge = (side) =>
+    edgeBands.find((item) => item.id === piece.edges?.[side])?.thickness ?? 0;
+  return {
+    finishedLength:
+      (Number(piece.length) || 0) + edge("left") + edge("right"),
+    finishedWidth:
+      (Number(piece.width) || 0) + edge("top") + edge("bottom"),
+  };
+}
+
+export function pieceProductionError(piece, material, edgeBands = []) {
+  const cut = cutDimensions(piece, edgeBands);
+  if (
+    cut.cutLength < MINIMUM_CUT_SIDE ||
+    cut.cutWidth < MINIMUM_CUT_SIDE
+  ) {
+    return `la medida real de corte queda en ${Math.round(
+      cut.cutLength,
+    )} × ${Math.round(cut.cutWidth)} mm. El mínimo permitido es ${MINIMUM_CUT_SIDE} × ${MINIMUM_CUT_SIDE} mm.`;
+  }
+  if (
+    !pieceFitsMaterial(
+      { ...piece, length: cut.cutLength, width: cut.cutWidth },
+      material,
+    )
+  ) {
+    return `la pieza no cabe en la plancha ${material?.plateLength || 0} × ${
+      material?.plateWidth || 0
+    } mm para la veta indicada.`;
+  }
+  return "";
 }
 
 export function pieceFitsMaterial(piece, material) {
@@ -560,6 +624,7 @@ function makePlate(index, cutAxis = "longitudinal") {
 }
 
 function findPlacement(plate, candidates, material, kerf) {
+  let bestPlacement = null;
   for (const strip of plate.strips) {
     for (const candidate of candidates) {
       const x = strip.usedLength ? strip.usedLength + kerf : 0;
@@ -567,10 +632,16 @@ function findPlacement(plate, candidates, material, kerf) {
         candidate.h <= strip.height &&
         x + candidate.w <= material.plateLength
       ) {
-        return { strip, x, y: strip.y, ...candidate };
+        const score =
+          (strip.height - candidate.h) * material.plateLength +
+          (material.plateLength - x - candidate.w);
+        if (!bestPlacement || score < bestPlacement.score) {
+          bestPlacement = { strip, x, y: strip.y, ...candidate, score };
+        }
       }
     }
   }
+  if (bestPlacement) return bestPlacement;
 
   const y = plate.strips.length
     ? plate.strips.at(-1).y + plate.strips.at(-1).height + kerf
@@ -604,7 +675,18 @@ function packLayout(material, expanded, settings, cutAxis) {
           plateWidth: material.plateLength,
         }
       : material;
-  for (const piece of expanded) {
+  const orderedPieces = [...expanded].sort((a, b) => {
+    const aPrimary = cutAxis === "transversal" ? a.cutLength : a.cutWidth;
+    const bPrimary = cutAxis === "transversal" ? b.cutLength : b.cutWidth;
+    const aSecondary = cutAxis === "transversal" ? a.cutWidth : a.cutLength;
+    const bSecondary = cutAxis === "transversal" ? b.cutWidth : b.cutLength;
+    return (
+      bPrimary - aPrimary ||
+      bSecondary - aSecondary ||
+      b.cutLength * b.cutWidth - a.cutLength * a.cutWidth
+    );
+  });
+  for (const piece of orderedPieces) {
     const candidates = orientations(piece, piece).map((candidate) =>
       cutAxis === "transversal"
         ? {
@@ -783,12 +865,9 @@ export function optimize(material, pieces, edgeBands, settings = {}) {
           ...piece,
           instanceId: `${piece.id}-${index + 1}`,
           ...cutDimensions(piece, edgeBands),
+          ...finishedDimensions(piece, edgeBands),
         }),
       ),
-    )
-    .sort(
-      (a, b) =>
-        Math.max(b.cutLength, b.cutWidth) - Math.max(a.cutLength, a.cutWidth),
     );
 
   const layouts = [
@@ -804,11 +883,29 @@ export function optimize(material, pieces, edgeBands, settings = {}) {
       (total, plate) => total + plate.strips.length + plate.pieces.length,
       0,
     );
+  const reusableScoreFor = (layout) => {
+    const leftovers = layout.plates.flatMap((plate) =>
+      calculatePlateLeftovers(plate, material, normalizedSettings.kerf),
+    );
+    const largest = leftovers.reduce(
+      (maximum, leftover) =>
+        Math.max(maximum, leftover.width * leftover.height),
+      0,
+    );
+    return { fragments: leftovers.length, largest };
+  };
   layouts.sort(
-    (a, b) =>
-      a.warnings.length - b.warnings.length ||
-      a.plates.length - b.plates.length ||
-      cutCountFor(a) - cutCountFor(b),
+    (a, b) => {
+      const aReusable = reusableScoreFor(a);
+      const bReusable = reusableScoreFor(b);
+      return (
+        a.warnings.length - b.warnings.length ||
+        a.plates.length - b.plates.length ||
+        aReusable.fragments - bReusable.fragments ||
+        bReusable.largest - aReusable.largest ||
+        cutCountFor(a) - cutCountFor(b)
+      );
+    },
   );
   const { plates, warnings } = layouts[0];
   const plateArea = material.plateLength * material.plateWidth;
@@ -819,11 +916,14 @@ export function optimize(material, pieces, edgeBands, settings = {}) {
   const metersByEdge = {};
   let edgeMeters = 0;
   for (const piece of pieces) {
+    const finished = finishedDimensions(piece, edgeBands);
     for (const side of sides) {
       const edgeId = piece.edges?.[side];
       if (!edgeId) continue;
       const meters =
-        ((side === "top" || side === "bottom" ? piece.length : piece.width) *
+        ((side === "top" || side === "bottom"
+          ? finished.finishedLength
+          : finished.finishedWidth) *
           piece.quantity) /
         1000;
       edgeMeters += meters;
@@ -1060,8 +1160,8 @@ export function summarizePlatePieces(plate) {
       code: piece.code || "S/C",
       name: piece.name || "",
       materialId: plate.materialId || piece.materialId || "",
-      finishedLength: Number(piece.length) || 0,
-      finishedWidth: Number(piece.width) || 0,
+      finishedLength: Number(piece.finishedLength ?? piece.length) || 0,
+      finishedWidth: Number(piece.finishedWidth ?? piece.width) || 0,
       cutLength: Number(piece.cutLength) || 0,
       cutWidth: Number(piece.cutWidth) || 0,
       grain: piece.grain || "sin-veta",
@@ -1100,13 +1200,14 @@ export function summarizeOptimizedPieces(plates, pieces, edgeBands) {
       plates: new Set(),
     };
     const cut = cutDimensions(piece, edgeBands || []);
+    const finished = finishedDimensions(piece, edgeBands || []);
     return {
       id: piece.id || "",
       code: piece.code || "S/C",
       name: piece.name || "",
       materialId: piece.materialId || "",
-      finishedLength: Number(piece.length) || 0,
-      finishedWidth: Number(piece.width) || 0,
+      finishedLength: finished.finishedLength,
+      finishedWidth: finished.finishedWidth,
       cutLength: cut.cutLength,
       cutWidth: cut.cutWidth,
       grain: piece.grain || "sin-veta",
@@ -1161,22 +1262,11 @@ function wrappedTextLines(ctx, value, maxWidth) {
   return lines;
 }
 
-const edgePalette = [
-  "#005A8D",
-  "#B93815",
-  "#146C43",
-  "#6A3D9A",
-  "#7A5700",
-  "#006B73",
-  "#9A1B50",
-  "#394B59",
-];
-
 const edgePatterns = [
   [],
-  [16, 6],
+  [14, 7],
+  [13, 5, 3, 5],
   [3, 5],
-  [14, 4, 3, 4],
   [8, 4],
   [20, 5, 4, 5],
   [2, 4, 11, 4],
@@ -1189,7 +1279,7 @@ function edgeVisualMap(edgeIds) {
       id,
       {
         code: `T${index + 1}`,
-        color: edgePalette[index % edgePalette.length],
+        color: "#101820",
         dash: edgePatterns[index % edgePatterns.length],
       },
     ]),
@@ -1197,21 +1287,13 @@ function edgeVisualMap(edgeIds) {
 }
 
 function drawEdgeLine(ctx, edge, visual, x1, y1, x2, y2) {
-  const thickness = Number(edge.thickness) || 0.4;
   ctx.strokeStyle = visual?.color || "#101820";
-  ctx.lineWidth =
-    thickness >= 2 ? 10 : thickness >= 1.5 ? 8 : thickness >= 1 ? 6 : 4.5;
+  ctx.lineWidth = 2.2;
   ctx.setLineDash(visual?.dash || []);
   ctx.beginPath();
   ctx.moveTo(x1, y1);
   ctx.lineTo(x2, y2);
   ctx.stroke();
-  if (thickness >= 2) {
-    ctx.strokeStyle = "#ffffff";
-    ctx.lineWidth = 2.5;
-    ctx.setLineDash([]);
-    ctx.stroke();
-  }
   ctx.setLineDash([]);
 }
 
@@ -1274,7 +1356,54 @@ function spacedMarks(values, scale, minimumPixels = 28) {
   }, []);
 }
 
-export function plateProductionMetrics(plate, material, edgeBands = []) {
+export function plateCutSequence(plate, material, kerf = 0) {
+  const cuts = [];
+  const effectiveKerf = Math.max(0, Number(kerf) || 0);
+  const add = (axis, coordinate, length, type, stripIndex) => {
+    cuts.push({
+      number: cuts.length + 1,
+      axis,
+      coordinate: Number(coordinate) || 0,
+      length: Number(length) || 0,
+      type,
+      stripIndex,
+      kerf: effectiveKerf,
+    });
+  };
+  for (const [stripIndex, strip] of (plate.strips || []).entries()) {
+    if (plate.cutAxis === "transversal") {
+      const fullCoordinate = strip.y + strip.height;
+      if (fullCoordinate < material.plateLength - 1) {
+        add("X", fullCoordinate, material.plateWidth, "completo", stripIndex);
+      }
+      for (const piece of strip.pieces || []) {
+        const coordinate = piece.y + piece.drawHeight;
+        if (coordinate < material.plateWidth - 1) {
+          add("Y", coordinate, strip.height, "secundario", stripIndex);
+        }
+      }
+    } else {
+      const fullCoordinate = strip.y + strip.height;
+      if (fullCoordinate < material.plateWidth - 1) {
+        add("Y", fullCoordinate, material.plateLength, "completo", stripIndex);
+      }
+      for (const piece of strip.pieces || []) {
+        const coordinate = piece.x + piece.drawWidth;
+        if (coordinate < material.plateLength - 1) {
+          add("X", coordinate, strip.height, "secundario", stripIndex);
+        }
+      }
+    }
+  }
+  return cuts;
+}
+
+export function plateProductionMetrics(
+  plate,
+  material,
+  edgeBands = [],
+  kerf = 0,
+) {
   let cutMillimeters = 0;
   for (const strip of plate.strips || []) {
     const fullCutPosition = strip.y + strip.height;
@@ -1302,13 +1431,14 @@ export function plateProductionMetrics(plate, material, edgeBands = []) {
   const metersByEdge = {};
   let edgeMeters = 0;
   for (const piece of plate.pieces || []) {
+    const finished = finishedDimensions(piece, edgeBands);
     for (const side of sides) {
       const edgeId = piece.edges?.[side];
       if (!edgeId || !edgeBands.some((edge) => edge.id === edgeId)) continue;
       const millimeters =
         side === "top" || side === "bottom"
-          ? Number(piece.length) || 0
-          : Number(piece.width) || 0;
+          ? Number(finished.finishedLength) || 0
+          : Number(finished.finishedWidth) || 0;
       const meters = millimeters / 1000;
       edgeMeters += meters;
       metersByEdge[edgeId] = (metersByEdge[edgeId] || 0) + meters;
@@ -1319,6 +1449,10 @@ export function plateProductionMetrics(plate, material, edgeBands = []) {
     cutMeters: cutMillimeters / 1000,
     edgeMeters,
     metersByEdge,
+    cutCount: plateCutSequence(plate, material, kerf).length,
+    kerfMillimeters:
+      plateCutSequence(plate, material, kerf).length *
+      Math.max(0, Number(kerf) || 0),
   };
 }
 
@@ -1348,11 +1482,20 @@ export function drawCutPlan(
     leftover: true,
   }));
   const workflowRows = [...platePieceRows, ...plateLeftoverRows];
-  const width = 1400;
-  const edgeLegendRowHeight = 104;
-  const workflowRowHeight = 26;
+  const effectiveKerf = Math.max(0, Number(context.kerf) || 0);
+  const bladeThickness = Math.max(
+    0,
+    Number(context.bladeThickness) || 2,
+  );
+  const cutSequence = plateCutSequence(plate, material, effectiveKerf);
+  const width = 1500;
+  const edgeLegendRowHeight = 82;
+  const workflowRowHeight = 36;
+  const cutSequenceHeight = cutSequence.length
+    ? 42 + Math.ceil(Math.min(cutSequence.length, 24) / 2) * 17
+    : 0;
   const estimatedListTop =
-    188 +
+    188 + cutSequenceHeight +
     Math.max(
       110,
       94 + Math.max(1, usedEdgeIds.length) * edgeLegendRowHeight,
@@ -1361,7 +1504,7 @@ export function drawCutPlan(
     900,
     estimatedListTop + 76 + workflowRows.length * workflowRowHeight + 190,
   );
-  const margin = { left: 115, top: 188, right: 350, bottom: 82 };
+  const margin = { left: 115, top: 188, right: 450, bottom: 82 };
   canvas.width = width;
   canvas.height = height;
   const scale = Math.min(
@@ -1377,6 +1520,7 @@ export function drawCutPlan(
     plate,
     material,
     edgeBands,
+    effectiveKerf,
   );
 
   ctx.fillStyle = "#f6f5f2";
@@ -1444,13 +1588,35 @@ export function drawCutPlan(
     headerX,
     130,
   );
+  const usesCutMeasures = plate.pieces.some(
+    (piece) => piece.measurementMode === "cut",
+  );
+  ctx.font = "700 10.5px Arial";
+  ctx.fillStyle = "#101820";
+  ctx.fillText(
+    fittedText(
+      ctx,
+      `FACTURA: ${project.invoiceNumber || "PENDIENTE"} · GUÍA: ${
+        project.dispatchGuideNumber || "PENDIENTE"
+      } · MEDIDAS: ${
+        usesCutMeasures
+          ? "INCLUYE MEDIDAS DE CORTE YA DESCONTADAS"
+          : "TERMINADAS"
+      }`,
+      headerWidth,
+    ),
+    headerX,
+    151,
+  );
   const metricLabelX = 1070;
   const metricValueX = width - 42;
   ctx.fillStyle = "#101820";
   ctx.font = "700 12px Arial";
   ctx.textAlign = "left";
-  ctx.fillText("TOTAL ML DE CORTE", metricLabelX, 64);
-  ctx.fillText("TOTAL ML DE ENCHAPE", metricLabelX, 88);
+  ctx.fillText("TOTAL ML DE CORTE", metricLabelX, 52);
+  ctx.fillText("TOTAL ML DE ENCHAPE", metricLabelX, 76);
+  ctx.fillText("PASADAS / PÉRDIDA TOTAL", metricLabelX, 100);
+  ctx.fillText("DISCO NOMINAL / POR PASADA", metricLabelX, 124);
   ctx.textAlign = "right";
   ctx.fillText(
     productionMetrics.cutMeters.toLocaleString("es-CL", {
@@ -1458,7 +1624,7 @@ export function drawCutPlan(
       maximumFractionDigits: 2,
     }),
     metricValueX,
-    64,
+    52,
   );
   ctx.fillText(
     productionMetrics.edgeMeters.toLocaleString("es-CL", {
@@ -1466,14 +1632,28 @@ export function drawCutPlan(
       maximumFractionDigits: 2,
     }),
     metricValueX,
-    88,
+    76,
+  );
+  ctx.fillText(
+    `${productionMetrics.cutCount} / ${productionMetrics.kerfMillimeters.toLocaleString(
+      "es-CL",
+    )} mm`,
+    metricValueX,
+    100,
+  );
+  ctx.fillText(
+    `${bladeThickness.toLocaleString("es-CL")} / ${effectiveKerf.toLocaleString(
+      "es-CL",
+    )} mm`,
+    metricValueX,
+    124,
   );
   ctx.textAlign = "left";
   ctx.strokeStyle = "#a9b0b7";
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(38, 153);
-  ctx.lineTo(width - 38, 153);
+  ctx.moveTo(38, 170);
+  ctx.lineTo(width - 38, 170);
   ctx.stroke();
 
   ctx.fillStyle = "#fff";
@@ -1534,7 +1714,7 @@ export function drawCutPlan(
           left: originalEdges.bottom,
         }
       : originalEdges;
-    const edgeInset = 6;
+    const edgeInset = 4;
     const edgeLines = [
       ["top", x, y + edgeInset, x + w, y + edgeInset],
       [
@@ -1564,22 +1744,20 @@ export function drawCutPlan(
 
     ctx.fillStyle = "#101820";
     ctx.textAlign = "center";
-    ctx.font = `700 ${Math.max(9, Math.min(15, h / 5))}px Arial`;
-    const pieceLabel = piece.name
-      ? `${piece.code || "S/C"} · ${piece.name}`
-      : piece.code || "S/C";
+    ctx.font = `700 ${Math.max(12, Math.min(18, h / 4))}px Arial`;
+    const pieceLabel = piece.code || "S/C";
     ctx.fillText(
       fittedText(ctx, pieceLabel, Math.max(25, w - 28)),
       x + w / 2,
       y + h / 2,
     );
 
-    if (w > 48 && h > 36) {
+    {
       const horizontalMeasure = Math.round(piece.drawWidth);
       const verticalMeasure = Math.round(piece.drawHeight);
-      ctx.font = `700 ${w > 100 && h > 70 ? 12 : 10}px Arial`;
-      const horizontalInset = Math.min(29, Math.max(18, h * 0.18));
-      const verticalInset = Math.min(29, Math.max(18, w * 0.12));
+      ctx.font = `700 ${w > 100 && h > 70 ? 15 : 12}px Arial`;
+      const horizontalInset = Math.min(32, Math.max(15, h * 0.2));
+      const verticalInset = Math.min(32, Math.max(15, w * 0.14));
       drawMeasureLabel(
         ctx,
         `${horizontalMeasure}`,
@@ -1612,22 +1790,6 @@ export function drawCutPlan(
       );
     }
 
-    if (piece.grain !== "sin-veta" && w > 70 && h > 55) {
-      const horizontal = piece.grain === "longitudinal" !== piece.rotated;
-      ctx.strokeStyle = "#4a535c";
-      ctx.lineWidth = 1.6;
-      ctx.beginPath();
-      if (horizontal) {
-        ctx.moveTo(x + w * 0.3, y + h * 0.7);
-        ctx.lineTo(x + w * 0.7, y + h * 0.7);
-        ctx.lineTo(x + w * 0.63, y + h * 0.64);
-      } else {
-        ctx.moveTo(x + w * 0.7, y + h * 0.7);
-        ctx.lineTo(x + w * 0.7, y + h * 0.3);
-        ctx.lineTo(x + w * 0.64, y + h * 0.37);
-      }
-      ctx.stroke();
-    }
   });
 
   ctx.textAlign = "left";
@@ -1636,10 +1798,16 @@ export function drawCutPlan(
   ctx.fillStyle = "#101820";
   ctx.lineWidth = 2.2;
   ctx.setLineDash([14, 6]);
+  let cutNumber = 0;
   for (const strip of plate.strips) {
     if (plate.cutAxis === "transversal") {
       const cutX = ox + (strip.y + strip.height) * scale;
       if (cutX < ox + plateW - 1) {
+        cutNumber += 1;
+        if (effectiveKerf > 0) {
+          ctx.fillStyle = "rgba(16,24,32,.12)";
+          ctx.fillRect(cutX, oy, effectiveKerf * scale, plateH);
+        }
         ctx.beginPath();
         ctx.moveTo(cutX, oy);
         ctx.lineTo(cutX, oy + plateH);
@@ -1649,10 +1817,27 @@ export function drawCutPlan(
         ctx.rotate(-Math.PI / 2);
         drawCutTag(ctx, "CORTE TRANSVERSAL COMPLETO", 0, 0, 170);
         ctx.restore();
+        drawCutTag(
+          ctx,
+          `C${cutNumber} · ${Math.round(strip.y + strip.height)} mm · K${effectiveKerf}`,
+          cutX + 5,
+          oy + 16,
+          145,
+        );
       }
       for (const piece of strip.pieces) {
         const cutY = oy + (piece.y + piece.drawHeight) * scale;
         if (cutY < oy + plateH - 1) {
+          cutNumber += 1;
+          if (effectiveKerf > 0) {
+            ctx.fillStyle = "rgba(16,24,32,.10)";
+            ctx.fillRect(
+              ox + strip.y * scale,
+              cutY,
+              strip.height * scale,
+              effectiveKerf * scale,
+            );
+          }
           ctx.strokeStyle = "#6b747d";
           ctx.lineWidth = 1;
           ctx.setLineDash([3, 4]);
@@ -1660,11 +1845,23 @@ export function drawCutPlan(
           ctx.moveTo(ox + strip.y * scale, cutY);
           ctx.lineTo(ox + (strip.y + strip.height) * scale, cutY);
           ctx.stroke();
+          drawCutTag(
+            ctx,
+            `C${cutNumber} · ${Math.round(piece.y + piece.drawHeight)} · K${effectiveKerf}`,
+            ox + strip.y * scale + 3,
+            cutY - 3,
+            Math.max(70, strip.height * scale - 6),
+          );
         }
       }
     } else {
       const cutY = oy + (strip.y + strip.height) * scale;
       if (cutY < oy + plateH - 1) {
+        cutNumber += 1;
+        if (effectiveKerf > 0) {
+          ctx.fillStyle = "rgba(16,24,32,.12)";
+          ctx.fillRect(ox, cutY, plateW, effectiveKerf * scale);
+        }
         ctx.strokeStyle = "#101820";
         ctx.lineWidth = 2.2;
         ctx.setLineDash([14, 6]);
@@ -1674,7 +1871,9 @@ export function drawCutPlan(
         ctx.stroke();
         drawCutTag(
           ctx,
-          "CORTE LONGITUDINAL COMPLETO",
+          `C${cutNumber} · LONGITUDINAL · ${Math.round(
+            strip.y + strip.height,
+          )} mm · K${effectiveKerf}`,
           ox + plateW - 185,
           cutY - 3,
           180,
@@ -1683,6 +1882,16 @@ export function drawCutPlan(
       for (const piece of strip.pieces) {
         const cutX = ox + (piece.x + piece.drawWidth) * scale;
         if (cutX < ox + plateW - 1) {
+          cutNumber += 1;
+          if (effectiveKerf > 0) {
+            ctx.fillStyle = "rgba(16,24,32,.10)";
+            ctx.fillRect(
+              cutX,
+              oy + strip.y * scale,
+              effectiveKerf * scale,
+              strip.height * scale,
+            );
+          }
           ctx.strokeStyle = "#6b747d";
           ctx.lineWidth = 1;
           ctx.setLineDash([3, 4]);
@@ -1690,6 +1899,13 @@ export function drawCutPlan(
           ctx.moveTo(cutX, oy + strip.y * scale);
           ctx.lineTo(cutX, oy + (strip.y + strip.height) * scale);
           ctx.stroke();
+          drawCutTag(
+            ctx,
+            `C${cutNumber} · ${Math.round(piece.x + piece.drawWidth)} · K${effectiveKerf}`,
+            cutX + 3,
+            oy + strip.y * scale + 15,
+            115,
+          );
         }
       }
     }
@@ -1753,7 +1969,7 @@ export function drawCutPlan(
   ctx.fillText("LEYENDA TAPACANTOS", legendX, oy + 24);
   ctx.fillStyle = "#59636d";
   ctx.font = "10px Arial";
-  ctx.fillText("Código + color + patrón + espesor", legendX, oy + 42);
+  ctx.fillText("Código + patrón de línea + espesor", legendX, oy + 42);
   usedEdgeIds.forEach((id, index) => {
     const edge = edgeBands.find((item) => item.id === id);
     if (!edge) return;
@@ -1805,12 +2021,57 @@ export function drawCutPlan(
     ctx.fillText("Sin tapacantos asignados", legendX, oy + 52);
   }
 
-  const listTop =
-    oy +
-    Math.max(
-      110,
-      94 + Math.max(1, usedEdgeIds.length) * edgeLegendRowHeight,
+  const edgeBlockHeight = Math.max(
+    110,
+    94 + Math.max(1, usedEdgeIds.length) * edgeLegendRowHeight,
+  );
+  if (cutSequence.length) {
+    const sequenceTop = oy + edgeBlockHeight;
+    ctx.fillStyle = "#101820";
+    ctx.font = "700 14px Arial";
+    ctx.textAlign = "left";
+    ctx.fillText("SECUENCIA ACUMULADA DE CORTES", legendX, sequenceTop);
+    ctx.font = "11px Arial";
+    ctx.fillStyle = "#4d5862";
+    ctx.fillText(
+      fittedText(
+        ctx,
+        `${cutSequence.length} pasadas · ${productionMetrics.kerfMillimeters.toLocaleString(
+          "es-CL",
+        )} mm de pérdida acumulada · ${effectiveKerf} mm c/u`,
+        margin.right - 64,
+      ),
+      legendX,
+      sequenceTop + 18,
     );
+    const sequenceRows = cutSequence.slice(0, 24);
+    const sequenceColumnWidth = (margin.right - 64) / 2;
+    const perColumn = Math.ceil(sequenceRows.length / 2);
+    sequenceRows.forEach((cut, index) => {
+      const column = index >= perColumn ? 1 : 0;
+      const rowIndex = column ? index - perColumn : index;
+      const x = legendX + column * sequenceColumnWidth;
+      const y = sequenceTop + 38 + rowIndex * 17;
+      ctx.fillStyle = "#101820";
+      ctx.font = "700 11px Arial";
+      ctx.fillText(
+        `C${cut.number} · ${cut.axis} ${Math.round(cut.coordinate)} mm`,
+        x,
+        y,
+      );
+    });
+    if (cutSequence.length > 24) {
+      ctx.font = "10px Arial";
+      ctx.fillText(
+        `+ ${cutSequence.length - 24} cortes indicados en el plano`,
+        legendX,
+        sequenceTop + cutSequenceHeight - 5,
+      );
+    }
+  }
+
+  const listTop =
+    oy + edgeBlockHeight + cutSequenceHeight;
   ctx.fillStyle = "#101820";
   ctx.font = "700 14px Arial";
   ctx.textAlign = "left";
@@ -1835,7 +2096,7 @@ export function drawCutPlan(
   ctx.fillStyle = "#e1e4e6";
   ctx.fillRect(legendX, listTop + 38, listWidth, 20);
   ctx.fillStyle = "#303a44";
-  ctx.font = "700 9px Arial";
+  ctx.font = "700 13px Arial";
   ctx.fillText("CÓDIGO / ELEMENTO", legendX + 5, listTop + 52);
   ctx.textAlign = "right";
   ctx.fillText("MEDIDA", measureX, listTop + 52);
@@ -1852,10 +2113,10 @@ export function drawCutPlan(
       ctx.fillRect(legendX, y - 15, listWidth, workflowRowHeight - 1);
     }
     ctx.fillStyle = "#303a44";
-    ctx.font = "700 8px Arial";
+    ctx.font = "700 16px Arial";
     ctx.textAlign = "left";
     ctx.fillText(row.code || "S/C", legendX + 5, y - 3);
-    ctx.font = "7.5px Arial";
+    ctx.font = "13px Arial";
     ctx.fillText(
       fittedText(
         ctx,
@@ -1865,7 +2126,7 @@ export function drawCutPlan(
       legendX + 5,
       y + 8,
     );
-    ctx.font = "8px Arial";
+    ctx.font = "700 15px Arial";
     ctx.textAlign = "right";
     ctx.fillText(
       `${Math.round(row.cutLength)}×${Math.round(row.cutWidth)}`,
@@ -1877,7 +2138,7 @@ export function drawCutPlan(
     ctx.lineWidth = 1.2;
     ctx.setLineDash([]);
     checkCenters.forEach((center) => {
-      ctx.strokeRect(center - 5, y - 7, 10, 10);
+      ctx.strokeRect(center - 7, y - 10, 14, 14);
     });
   });
 

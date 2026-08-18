@@ -11,7 +11,11 @@ import pg from "pg";
 import unzipper from "unzipper";
 
 import { categories as baseCategories, edgeBands, materials } from "./src/data.js";
-import { optimizeProject, pieceFitsMaterial, validateRut } from "./src/logic.js";
+import {
+  optimizeProject,
+  pieceProductionError,
+  validateRut,
+} from "./src/logic.js";
 
 const { Pool } = pg;
 const root = fileURLToPath(new URL(".", import.meta.url));
@@ -1268,31 +1272,81 @@ function projectRecord(body, ownerId, current = null) {
         body.submissionSource || current?.submissionSource || "usuario",
       ),
       collaboratorIds: collaboratorIds.filter((id) => id !== assignedTo),
+      invoiceNumber: String(
+        body.invoiceNumber ?? current?.invoiceNumber ?? "",
+      ).trim(),
+      dispatchGuideNumber: String(
+        body.dispatchGuideNumber ?? current?.dispatchGuideNumber ?? "",
+      ).trim(),
     },
     summary: body.summary && typeof body.summary === "object" ? body.summary : null,
   };
 }
 
-function projectDimensionError(record, catalogMaterials = materials) {
+function projectDimensionError(
+  record,
+  catalogMaterials = materials,
+  catalogEdges = edgeBands,
+) {
   const pieces = record.payload.pieces;
   if (!pieces.length) return "";
-  const invalidIndex = pieces.findIndex((piece) => {
+  for (let invalidIndex = 0; invalidIndex < pieces.length; invalidIndex += 1) {
+    const piece = pieces[invalidIndex];
     const material = catalogMaterials.find(
       (item) => item.id === piece.materialId,
     );
-    return (
-      !material ||
-      !record.payload.materialIds.includes(material.id) ||
-      !pieceFitsMaterial(piece, material)
-    );
-  });
-  if (invalidIndex < 0) return "";
-  const piece = pieces[invalidIndex];
-  const material = catalogMaterials.find((item) => item.id === piece.materialId);
-  if (!material) {
-    return `La pieza ${piece.code || invalidIndex + 1} no tiene un tablero válido asignado.`;
+    if (!material || !record.payload.materialIds.includes(material.id)) {
+      return `La pieza ${piece.code || invalidIndex + 1} no tiene un tablero válido asignado.`;
+    }
+    const error = pieceProductionError(piece, material, catalogEdges);
+    if (error) {
+      return `La pieza ${piece.code || invalidIndex + 1}: ${error}`;
+    }
   }
-  return `La pieza ${piece.code || invalidIndex + 1} excede la plancha de ${material.plateLength} × ${material.plateWidth} mm para la veta seleccionada.`;
+  for (const materialId of record.payload.materialIds) {
+    const usedEdges = new Set(
+      pieces
+        .filter((piece) => piece.materialId === materialId)
+        .flatMap((piece) => Object.values(piece.edges || {}))
+        .filter(Boolean),
+    );
+    if (usedEdges.size > 3) {
+      const material = catalogMaterials.find((item) => item.id === materialId);
+      return `El tablero ${material?.sku || materialId} utiliza ${usedEdges.size} tapacantos distintos. El máximo operativo por placa es 3.`;
+    }
+  }
+  return "";
+}
+
+function projectProductionSignature(project = {}) {
+  const materialIds = [
+    ...new Set(
+      [
+        ...(Array.isArray(project.materialIds) ? project.materialIds : []),
+        project.materialId,
+      ]
+        .map((value) => String(value || ""))
+        .filter(Boolean),
+    ),
+  ].sort();
+  const pieces = (Array.isArray(project.pieces) ? project.pieces : []).map(
+    (piece) => ({
+      id: String(piece.id || ""),
+      materialId: String(piece.materialId || project.materialId || ""),
+      length: Number(piece.length) || 0,
+      width: Number(piece.width) || 0,
+      quantity: Number(piece.quantity) || 0,
+      grain: String(piece.grain || "sin-veta"),
+      measurementMode: piece.measurementMode === "cut" ? "cut" : "finished",
+      edges: {
+        top: piece.edges?.top || null,
+        right: piece.edges?.right || null,
+        bottom: piece.edges?.bottom || null,
+        left: piece.edges?.left || null,
+      },
+    }),
+  );
+  return JSON.stringify({ materialIds, pieces });
 }
 
 export async function createApplication({ store, useMemory = false } = {}) {
@@ -2119,7 +2173,11 @@ export async function createApplication({ store, useMemory = false } = {}) {
         return response.status(400).json({ error: assignmentError });
       }
       const catalog = await buildRuntimeCatalog(database);
-      const dimensionError = projectDimensionError(record, catalog.materials);
+      const dimensionError = projectDimensionError(
+        record,
+        catalog.materials,
+        catalog.edgeBands,
+      );
       if (dimensionError) {
         return response.status(400).json({ error: dimensionError });
       }
@@ -2177,7 +2235,11 @@ export async function createApplication({ store, useMemory = false } = {}) {
       return response.status(400).json({ error: "El nombre del cliente es obligatorio." });
     }
     const catalog = await buildRuntimeCatalog(database);
-    const dimensionError = projectDimensionError(record, catalog.materials);
+    const dimensionError = projectDimensionError(
+      record,
+      catalog.materials,
+      catalog.edgeBands,
+    );
     if (dimensionError) {
       return response.status(400).json({ error: dimensionError });
     }
@@ -2234,9 +2296,38 @@ export async function createApplication({ store, useMemory = false } = {}) {
       return response.status(400).json({ error: "El nombre del cliente es obligatorio." });
     }
     const catalog = await buildRuntimeCatalog(database);
-    const dimensionError = projectDimensionError(record, catalog.materials);
+    const productionChanged =
+      projectProductionSignature(record.payload) !==
+      projectProductionSignature(current);
+    const dimensionError = productionChanged
+      ? projectDimensionError(record, catalog.materials, catalog.edgeBands)
+      : "";
     if (dimensionError) {
       return response.status(400).json({ error: dimensionError });
+    }
+    const paidStatuses = new Set([
+      "facturado_pagado",
+      "produccion",
+      "despacho",
+      "entregado",
+    ]);
+    const enteredPaidStatus =
+      !paidStatuses.has(current.project.status) &&
+      paidStatuses.has(record.project.status);
+    if (enteredPaidStatus && !record.payload.invoiceNumber) {
+      return response.status(400).json({
+        error:
+          "El número de factura es obligatorio para pasar a Facturado y pagado.",
+      });
+    }
+    const enteredDeliveredStatus =
+      current.project.status !== "entregado" &&
+      record.project.status === "entregado";
+    if (enteredDeliveredStatus && !record.payload.dispatchGuideNumber) {
+      return response.status(400).json({
+        error:
+          "El número de guía de despacho es obligatorio para marcar el pedido como Entregado.",
+      });
     }
     if (request.auth.user.role === "cliente") {
       record.project.status = "cotizacion";
@@ -2287,7 +2378,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
           projectId: saved.id,
           type: "paid_order",
           title: "Pedido facturado y pagado",
-          message: `${saved.project.clientName} · ${
+          message: `Factura ${saved.invoiceNumber} · ${saved.project.clientName} · ${
             saved.project.projectName || "Proyecto sin nombre"
           } · liberado por ${request.auth.user.fullName}`,
         });

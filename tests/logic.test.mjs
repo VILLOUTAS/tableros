@@ -7,13 +7,16 @@ import {
   cutDimensions,
   drawCutPlan,
   edgeImportLabel,
+  finishedDimensions,
   isBlankPieceImportRow,
   materialImportLabel,
   optimize,
   optimizeProject,
   parsePieceImportTable,
+  plateCutSequence,
   plateProductionMetrics,
   pieceFitsMaterial,
+  pieceProductionError,
   resolveCatalogReference,
   summarizeOptimizedPieces,
   summarizePlateLeftovers,
@@ -179,6 +182,7 @@ test("incorpora desde Excel piezas, medidas, cantidades, tableros y tapacantos",
     width: 450,
     quantity: 3,
     grain: "longitudinal",
+    measurementMode: "finished",
     materialId: "tablero-2",
     notes: "",
     edges: { top: "edge-1", right: null, bottom: null, left: null },
@@ -250,6 +254,26 @@ test("descuenta el tapacanto según el lado", () => {
     cutLength: 719,
     cutWidth: 559,
   });
+});
+
+test("permite medidas de corte ya descontadas y exige un mínimo de 50 mm", () => {
+  const alreadyDiscounted = piece({ measurementMode: "cut" });
+  assert.deepEqual(cutDimensions(alreadyDiscounted, edges), {
+    cutLength: 720,
+    cutWidth: 560,
+  });
+  assert.deepEqual(finishedDimensions(alreadyDiscounted, edges), {
+    finishedLength: 721,
+    finishedWidth: 561,
+  });
+  assert.match(
+    pieceProductionError(
+      piece({ length: 49, width: 200, measurementMode: "cut" }),
+      material,
+      edges,
+    ),
+    /mínimo permitido es 50 × 50 mm/,
+  );
 });
 
 test("limita las piezas a las dimensiones del tablero y respeta la veta", () => {
@@ -500,10 +524,14 @@ test("la hoja de producción mantiene plano, listado, retazos y controles C/E/S"
       projectName: "Cocina QA",
       clientName: "Cliente QA",
       status: "produccion",
+      invoiceNumber: "F-100",
+      dispatchGuideNumber: "GD-200",
     },
     statusLabel: "Producción",
     createdBy: "Operador QA",
     generatedAt: "31-07-2026",
+    bladeThickness: 2,
+    kerf: 3,
   });
   assert.ok(drawnText.includes("PIEZAS Y RETAZOS DE ESTA PLACA"));
   assert.ok(drawnText.includes("C"));
@@ -511,6 +539,10 @@ test("la hoja de producción mantiene plano, listado, retazos y controles C/E/S"
   assert.ok(drawnText.includes("S"));
   assert.ok(drawnText.includes("TOTAL ML DE CORTE"));
   assert.ok(drawnText.includes("TOTAL ML DE ENCHAPE"));
+  assert.ok(drawnText.includes("PASADAS / PÉRDIDA TOTAL"));
+  assert.ok(drawnText.includes("DISCO NOMINAL / POR PASADA"));
+  assert.ok(drawnText.includes("SECUENCIA ACUMULADA DE CORTES"));
+  assert.ok(drawnText.some((value) => value.includes("FACTURA: F-100")));
   assert.ok(drawnText.includes("NOMBRE CORTADOR"));
   assert.ok(drawnText.includes("NOMBRE ENCHAPADOR"));
   assert.ok(drawnText.includes("NOMBRE SUPERVISOR"));
@@ -535,4 +567,9 @@ test("calcula metros de corte y enchape por cada hoja", () => {
   assert.ok(metrics.cutMeters > 0);
   assert.equal(metrics.edgeMeters, 2.56);
   assert.equal(metrics.metersByEdge["pvc-1"], 2.56);
+  const cuts = plateCutSequence(result.plates[0], board, 3);
+  const kerfMetrics = plateProductionMetrics(result.plates[0], board, edges, 3);
+  assert.equal(kerfMetrics.cutCount, cuts.length);
+  assert.equal(kerfMetrics.kerfMillimeters, cuts.length * 3);
+  assert.ok(cuts.every((cut) => cut.kerf === 3));
 });
