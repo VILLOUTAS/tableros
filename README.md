@@ -1,6 +1,6 @@
 # Cotizador online — Casa Diseño Multiespacio
 
-Versión 3.4.0 del cotizador y optimizador de cortes. Incluye acceso seguro con
+Versión 3.4.1 del cotizador y optimizador de cortes. Incluye acceso seguro con
 usuarios diferenciados, base PostgreSQL, catálogo completo importado desde
 Excel y persistencia de proyectos.
 
@@ -42,7 +42,7 @@ Excel y persistencia de proyectos.
   fábrica y registro en tiempo real de pedidos entregados.
 - Cada hoja de corte informa ML de corte, ML total de enchape y ML por tipo de
   tapacanto. Las leyendas se distribuyen en líneas separadas y se incluyen
-  espacios manuscritos para Cortador, Enchapador, Supervisor y Despachador.
+  firmas para Cortador, Enchapador, Supervisor, Despacho y recepción conforme.
 - Logo oficial Casa Diseño Multiespacio.
 - Inicio de sesión real: claves cifradas con bcrypt, cookie `HttpOnly`, token
   CSRF y bloqueo temporal por intentos repetidos.
@@ -120,6 +120,10 @@ Excel y persistencia de proyectos.
 - PDF de fabricación con una hoja inseparable por placa: plano, lista completa
   de piezas y retazos, y casillas impresas para Corte, Enchape y
   Supervisión/Despacho.
+- Hoja A4 apaisada de proporción fija, con márgenes mínimos, plano y listado
+  ampliados y una franja horizontal inferior para las cinco firmas.
+- Menú lateral y panel de parámetros con desplazamiento independiente, más una
+  barra rápida para saltar directamente a cualquier hoja de corte.
 - Retazos reutilizables codificados en el plano y en los listados.
 - Etiquetas térmicas PDF de 50 × 70 mm para Administrador y Producción.
 - Catálogo visual V3 con 273 imágenes incorporadas desde un único ZIP. Render
@@ -168,6 +172,10 @@ estados, cotizaciones, imágenes ni revisiones del catálogo. Los números de
 factura y guía se guardan dentro del JSON existente del proyecto, por lo que no
 requieren una migración destructiva. Los proyectos antiguos siguen abriendo
 aunque todavía no tengan esos documentos.
+
+La corrección V3.4.1 modifica únicamente la presentación del PDF y la
+navegación en pantalla. Mantiene la misma base de datos y no altera usuarios,
+proyectos, cotizaciones, estados, productos ni imágenes existentes.
 
 Antes de desplegar se recomienda generar un respaldo de PostgreSQL. No crees
 otra base de datos ni reemplaces `DATABASE_URL`, porque eso haría que la

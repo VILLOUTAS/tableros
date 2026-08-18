@@ -1665,11 +1665,22 @@ function optimizeStep() {
         : ""
     }
     ${optimizedPiecesTable()}
+    <nav class="plate-quick-nav" aria-label="Navegación rápida entre hojas de corte">
+      <b>Ir a hoja</b>
+      <div>
+        ${latestResult.plates
+          .map(
+            (plate, index) => `<button type="button" class="ghost small" data-action="jump-plate" data-target="plan-card-${plate.index}" aria-label="Ir a hoja ${index + 1}">${index + 1}</button>`,
+          )
+          .join("")}
+      </div>
+      <small>${latestResult.plates.length} hoja(s)</small>
+    </nav>
     <div class="result-layout">
       <section class="plans">
         ${latestResult.plates
           .map(
-            (plate) => `<article class="card plan-card">
+            (plate) => `<article class="card plan-card" id="plan-card-${plate.index}">
               <header><div><small>${safe(plate.material.sku)} · ${safe(plate.material.name)}</small><h3>Placa ${plate.materialPlateIndex} de este tablero</h3></div><b>${plate.utilization.toFixed(1)} % utilizado</b></header>
               <div class="canvas-wrap"><canvas id="plan-${plate.index}"></canvas></div>
               ${platePiecesTable(plate)}
@@ -3174,8 +3185,8 @@ function exportPdf() {
     if (index) pdf.addPage("a4", "landscape");
     const canvas = document.querySelector(`#plan-${plate.index}`);
     if (!canvas) return;
-    const maximumWidth = 283;
-    const maximumHeight = 194;
+    const maximumWidth = 292;
+    const maximumHeight = 205;
     const imageScale = Math.min(
       maximumWidth / canvas.width,
       maximumHeight / canvas.height,
@@ -3186,7 +3197,7 @@ function exportPdf() {
       canvas.toDataURL("image/png"),
       "PNG",
       (297 - imageWidth) / 2,
-      (210 - imageHeight) / 2,
+      2,
       imageWidth,
       imageHeight,
     );
@@ -3196,7 +3207,7 @@ function exportPdf() {
     pdf.text(
       `Hoja ${index + 1} de ${latestResult.plates.length} · Plano y listado inseparables`,
       290,
-      206,
+      206.4,
       { align: "right" },
     );
   });
@@ -3555,6 +3566,13 @@ app.addEventListener("click", async (event) => {
   if (action === "piece-entry-mode") {
     state.pieceEntryMode = button.dataset.mode === "manual" ? "manual" : "paste";
     render();
+    return;
+  }
+  if (action === "jump-plate") {
+    document.getElementById(button.dataset.target)?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
     return;
   }
   if (button.dataset.catalogMaterial) {

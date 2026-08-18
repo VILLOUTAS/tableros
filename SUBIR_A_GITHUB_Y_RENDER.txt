@@ -1,4 +1,4 @@
-COTIZADOR CASA DISEÑO V3.4.0 — ACTUALIZACIÓN SEGURA
+COTIZADOR CASA DISEÑO V3.4.1 — ACTUALIZACIÓN SEGURA
 
 1. Descomprime este paquete.
 2. Reemplaza el contenido del repositorio GitHub con todos estos archivos.
@@ -53,6 +53,10 @@ IMPORTANTE
 - El paso 5 muestra la optimización y el listado de cada placa.
 - Cada hoja del PDF mantiene unidos el plano, el listado de esa placa y las
   casillas de control para Corte, Enchape y Supervisión/Despacho.
+- El PDF usa casi toda la hoja A4 apaisada, con plano y listado ampliados y las
+  cinco firmas distribuidas horizontalmente en la franja inferior.
+- El menú y el panel de parámetros tienen desplazamiento independiente; una
+  barra rápida permite saltar a cualquier hoja sin recorrer todas las placas.
 - Los códigos de pieza se asignan al generar la hoja de corte.
 - Los retazos se codifican y figuran en plano, listado y PDF.
 - Administrador y Producción pueden descargar etiquetas térmicas de 50 mm.

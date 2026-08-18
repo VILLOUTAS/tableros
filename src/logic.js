@@ -1488,23 +1488,23 @@ export function drawCutPlan(
     Number(context.bladeThickness) || 2,
   );
   const cutSequence = plateCutSequence(plate, material, effectiveKerf);
-  const width = 1500;
-  const edgeLegendRowHeight = 82;
-  const workflowRowHeight = 36;
+  // Lienzo A4 apaisado fijo. Antes la altura crecía con el listado y al
+  // exportar se reducía toda la hoja, dejando márgenes grandes y texto pequeño.
+  const width = 1680;
+  const height = 1188;
+  const signatureTop = 1074;
+  const edgeLegendRowHeight = 72;
+  const sequenceColumns = 3;
+  const visibleCuts = cutSequence.slice(0, 30);
   const cutSequenceHeight = cutSequence.length
-    ? 42 + Math.ceil(Math.min(cutSequence.length, 24) / 2) * 17
+    ? 38 + Math.ceil(visibleCuts.length / sequenceColumns) * 16 +
+      (cutSequence.length > visibleCuts.length ? 14 : 0)
     : 0;
-  const estimatedListTop =
-    188 + cutSequenceHeight +
-    Math.max(
-      110,
-      94 + Math.max(1, usedEdgeIds.length) * edgeLegendRowHeight,
-    );
-  const height = Math.max(
-    900,
-    estimatedListTop + 76 + workflowRows.length * workflowRowHeight + 190,
+  const edgeBlockHeight = Math.max(
+    104,
+    76 + Math.max(1, usedEdgeIds.length) * edgeLegendRowHeight,
   );
-  const margin = { left: 115, top: 188, right: 450, bottom: 82 };
+  const margin = { left: 72, top: 185, right: 499, bottom: 183 };
   canvas.width = width;
   canvas.height = height;
   const scale = Math.min(
@@ -1526,15 +1526,15 @@ export function drawCutPlan(
   ctx.fillStyle = "#f6f5f2";
   ctx.fillRect(0, 0, width, height);
   if (logoImage?.complete && logoImage.naturalWidth) {
-    ctx.drawImage(logoImage, 38, 24, 190, 68);
+    ctx.drawImage(logoImage, 28, 18, 200, 72);
   } else {
     ctx.fillStyle = "#101820";
     ctx.font = "700 26px Arial";
     ctx.fillText("CASA DISEÑO", 38, 55);
   }
   const project = context.project || {};
-  const headerX = 260;
-  const headerWidth = 780;
+  const headerX = 250;
+  const headerWidth = 820;
   ctx.fillStyle = "#101820";
   ctx.font = "700 22px Arial";
   ctx.fillText("PLANO DE CORTE", headerX, 42);
@@ -1608,8 +1608,8 @@ export function drawCutPlan(
     headerX,
     151,
   );
-  const metricLabelX = 1070;
-  const metricValueX = width - 42;
+  const metricLabelX = 1120;
+  const metricValueX = width - 34;
   ctx.fillStyle = "#101820";
   ctx.font = "700 12px Arial";
   ctx.textAlign = "left";
@@ -1652,8 +1652,8 @@ export function drawCutPlan(
   ctx.strokeStyle = "#a9b0b7";
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(38, 170);
-  ctx.lineTo(width - 38, 170);
+  ctx.moveTo(28, 166);
+  ctx.lineTo(width - 28, 166);
   ctx.stroke();
 
   ctx.fillStyle = "#fff";
@@ -2021,10 +2021,6 @@ export function drawCutPlan(
     ctx.fillText("Sin tapacantos asignados", legendX, oy + 52);
   }
 
-  const edgeBlockHeight = Math.max(
-    110,
-    94 + Math.max(1, usedEdgeIds.length) * edgeLegendRowHeight,
-  );
   if (cutSequence.length) {
     const sequenceTop = oy + edgeBlockHeight;
     ctx.fillStyle = "#101820";
@@ -2044,34 +2040,39 @@ export function drawCutPlan(
       legendX,
       sequenceTop + 18,
     );
-    const sequenceRows = cutSequence.slice(0, 24);
-    const sequenceColumnWidth = (margin.right - 64) / 2;
-    const perColumn = Math.ceil(sequenceRows.length / 2);
-    sequenceRows.forEach((cut, index) => {
-      const column = index >= perColumn ? 1 : 0;
-      const rowIndex = column ? index - perColumn : index;
+    const sequenceColumnWidth = (margin.right - 64) / sequenceColumns;
+    const perColumn = Math.ceil(visibleCuts.length / sequenceColumns);
+    visibleCuts.forEach((cut, index) => {
+      const column = Math.floor(index / perColumn);
+      const rowIndex = index % perColumn;
       const x = legendX + column * sequenceColumnWidth;
-      const y = sequenceTop + 38 + rowIndex * 17;
+      const y = sequenceTop + 38 + rowIndex * 16;
       ctx.fillStyle = "#101820";
-      ctx.font = "700 11px Arial";
+      ctx.font = "700 10.5px Arial";
       ctx.fillText(
         `C${cut.number} · ${cut.axis} ${Math.round(cut.coordinate)} mm`,
         x,
         y,
       );
     });
-    if (cutSequence.length > 24) {
+    if (cutSequence.length > visibleCuts.length) {
       ctx.font = "10px Arial";
       ctx.fillText(
-        `+ ${cutSequence.length - 24} cortes indicados en el plano`,
+        `+ ${cutSequence.length - visibleCuts.length} cortes indicados en el plano`,
         legendX,
         sequenceTop + cutSequenceHeight - 5,
       );
     }
   }
 
-  const listTop =
-    oy + edgeBlockHeight + cutSequenceHeight;
+  const listTop = oy + edgeBlockHeight + cutSequenceHeight;
+  const listAvailableHeight = Math.max(170, signatureTop - listTop - 82);
+  const workflowRowHeight = workflowRows.length
+    ? Math.min(34, Math.max(18, Math.floor(listAvailableHeight / workflowRows.length)))
+    : 30;
+  const rowCodeFont = Math.min(16, Math.max(11, workflowRowHeight * 0.48));
+  const rowNameFont = Math.min(13, Math.max(9, workflowRowHeight * 0.36));
+  const rowMeasureFont = Math.min(15, Math.max(10, workflowRowHeight * 0.43));
   ctx.fillStyle = "#101820";
   ctx.font = "700 14px Arial";
   ctx.textAlign = "left";
@@ -2113,10 +2114,10 @@ export function drawCutPlan(
       ctx.fillRect(legendX, y - 15, listWidth, workflowRowHeight - 1);
     }
     ctx.fillStyle = "#303a44";
-    ctx.font = "700 16px Arial";
+    ctx.font = `700 ${rowCodeFont}px Arial`;
     ctx.textAlign = "left";
     ctx.fillText(row.code || "S/C", legendX + 5, y - 3);
-    ctx.font = "13px Arial";
+    ctx.font = `${rowNameFont}px Arial`;
     ctx.fillText(
       fittedText(
         ctx,
@@ -2126,7 +2127,7 @@ export function drawCutPlan(
       legendX + 5,
       y + 8,
     );
-    ctx.font = "700 15px Arial";
+    ctx.font = `700 ${rowMeasureFont}px Arial`;
     ctx.textAlign = "right";
     ctx.fillText(
       `${Math.round(row.cutLength)}×${Math.round(row.cutWidth)}`,
@@ -2142,20 +2143,30 @@ export function drawCutPlan(
     });
   });
 
-  const staffTop =
-    listTop + 76 + workflowRows.length * workflowRowHeight + 24;
-  const staffRoles = ["CORTADOR", "ENCHAPADOR", "SUPERVISOR", "DESPACHADOR"];
+  const staffRoles = [
+    "FIRMA CORTADOR",
+    "FIRMA ENCHAPADOR",
+    "FIRMA SUPERVISOR",
+    "FIRMA DESPACHO",
+    "NOMBRE Y FIRMA RECEPCIÓN CONFORME",
+  ];
+  const signatureLeft = 38;
+  const signatureRight = width - 38;
+  const signatureGap = 18;
+  const signatureWidth =
+    (signatureRight - signatureLeft - signatureGap * (staffRoles.length - 1)) /
+    staffRoles.length;
   staffRoles.forEach((role, index) => {
-    const y = staffTop + index * 36;
+    const x = signatureLeft + index * (signatureWidth + signatureGap);
     ctx.fillStyle = "#101820";
-    ctx.font = "700 11px Arial";
+    ctx.font = `700 ${index === staffRoles.length - 1 ? 11 : 13}px Arial`;
     ctx.textAlign = "left";
-    ctx.fillText(`NOMBRE ${role}`, legendX, y);
+    ctx.fillText(role, x, signatureTop + 18);
     ctx.strokeStyle = "#101820";
     ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.moveTo(legendX, y + 14);
-    ctx.lineTo(Math.min(width - 42, legendX + listWidth - 70), y + 14);
+    ctx.moveTo(x, signatureTop + 48);
+    ctx.lineTo(x + signatureWidth, signatureTop + 48);
     ctx.stroke();
   });
 
@@ -2164,8 +2175,8 @@ export function drawCutPlan(
   ctx.textAlign = "left";
   ctx.fillText(
     "Medidas interiores: parciales · Exteriores: acumuladas · T#: tapacanto por lado · RET: retazo reutilizable · C/E/S: controles de producción · Unidades en mm.",
-    39,
-    height - 28,
+    38,
+    height - 20,
   );
 }
 

@@ -543,10 +543,11 @@ test("la hoja de producción mantiene plano, listado, retazos y controles C/E/S"
   assert.ok(drawnText.includes("DISCO NOMINAL / POR PASADA"));
   assert.ok(drawnText.includes("SECUENCIA ACUMULADA DE CORTES"));
   assert.ok(drawnText.some((value) => value.includes("FACTURA: F-100")));
-  assert.ok(drawnText.includes("NOMBRE CORTADOR"));
-  assert.ok(drawnText.includes("NOMBRE ENCHAPADOR"));
-  assert.ok(drawnText.includes("NOMBRE SUPERVISOR"));
-  assert.ok(drawnText.includes("NOMBRE DESPACHADOR"));
+  assert.ok(drawnText.includes("FIRMA CORTADOR"));
+  assert.ok(drawnText.includes("NOMBRE Y FIRMA RECEPCIÓN CONFORME"));
+  assert.ok(drawnText.includes("FIRMA ENCHAPADOR"));
+  assert.ok(drawnText.includes("FIRMA SUPERVISOR"));
+  assert.ok(drawnText.includes("FIRMA DESPACHO"));
   assert.ok(drawnText.some((value) => value.includes("RET-QA-001")));
   assert.ok(canvas.width >= 1400);
   assert.ok(canvas.height >= 900);
