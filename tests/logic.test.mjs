@@ -464,6 +464,12 @@ test("agrupa las repeticiones de una pieza dentro de cada placa", () => {
   assert.equal(rows.length, 1);
   assert.equal(rows[0].code, "P-001");
   assert.equal(rows[0].quantity, 3);
+  assert.deepEqual(rows[0].edges, {
+    top: null,
+    bottom: null,
+    left: null,
+    right: null,
+  });
 });
 
 test("la hoja de producción mantiene plano, listado, retazos y controles C/E/S", () => {
@@ -537,6 +543,11 @@ test("la hoja de producción mantiene plano, listado, retazos y controles C/E/S"
   assert.ok(drawnText.includes("C"));
   assert.ok(drawnText.includes("E"));
   assert.ok(drawnText.includes("S"));
+  assert.ok(drawnText.includes("L1"));
+  assert.ok(drawnText.includes("L2"));
+  assert.ok(drawnText.includes("A1"));
+  assert.ok(drawnText.includes("A2"));
+  assert.ok(drawnText.includes("T1"));
   assert.ok(drawnText.includes("TOTAL ML DE CORTE"));
   assert.ok(drawnText.includes("TOTAL ML DE ENCHAPE"));
   assert.ok(drawnText.includes("PASADAS / PÉRDIDA TOTAL"));

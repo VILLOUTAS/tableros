@@ -1,6 +1,6 @@
 # Cotizador online — Casa Diseño Multiespacio
 
-Versión 3.4.1 del cotizador y optimizador de cortes. Incluye acceso seguro con
+Versión 3.4.2 del cotizador y optimizador de cortes. Incluye acceso seguro con
 usuarios diferenciados, base PostgreSQL, catálogo completo importado desde
 Excel y persistencia de proyectos.
 
@@ -122,6 +122,14 @@ Excel y persistencia de proyectos.
   Supervisión/Despacho.
 - Hoja A4 apaisada de proporción fija, con márgenes mínimos, plano y listado
   ampliados y una franja horizontal inferior para las cinco firmas.
+- Rotulación adaptativa de piezas: las piezas grandes conservan sus cuatro
+  cotas; las franjas bajas muestran código y medida compacta; los perfiles
+  angostos rotan su identificación y las piezas mínimas usan el sufijo del
+  código, siempre vinculado al detalle completo del listado.
+- Matriz de tapacantos por pieza en el listado de producción. Las columnas L1,
+  L2, A1 y A2 muestran directamente T1, T2 o T3 según el tipo aplicado.
+- Medidas, códigos y cantidades del listado ampliados para impresión, con las
+  secuencias de corte compactadas para dar más espacio a la información útil.
 - Menú lateral y panel de parámetros con desplazamiento independiente, más una
   barra rápida para saltar directamente a cualquier hoja de corte.
 - Retazos reutilizables codificados en el plano y en los listados.
@@ -176,6 +184,10 @@ aunque todavía no tengan esos documentos.
 La corrección V3.4.1 modifica únicamente la presentación del PDF y la
 navegación en pantalla. Mantiene la misma base de datos y no altera usuarios,
 proyectos, cotizaciones, estados, productos ni imágenes existentes.
+
+La corrección V3.4.2 mejora exclusivamente la legibilidad de producción:
+adapta la rotulación de piezas pequeñas, amplía el listado y agrega la matriz
+L1/L2/A1/A2. No requiere migraciones ni modifica datos existentes.
 
 Antes de desplegar se recomienda generar un respaldo de PostgreSQL. No crees
 otra base de datos ni reemplaces `DATABASE_URL`, porque eso haría que la

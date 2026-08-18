@@ -1144,11 +1144,16 @@ export function summarizePlateLeftovers(plate) {
 export function summarizePlatePieces(plate) {
   const grouped = new Map();
   for (const piece of plate?.pieces || []) {
+    const pieceEdges = piece.edges || {};
     const key = [
       piece.id || piece.code || piece.instanceId,
       piece.cutLength,
       piece.cutWidth,
       piece.grain,
+      pieceEdges.top || "",
+      pieceEdges.bottom || "",
+      pieceEdges.left || "",
+      pieceEdges.right || "",
     ].join("|");
     const current = grouped.get(key);
     if (current) {
@@ -1165,6 +1170,12 @@ export function summarizePlatePieces(plate) {
       cutLength: Number(piece.cutLength) || 0,
       cutWidth: Number(piece.cutWidth) || 0,
       grain: piece.grain || "sin-veta",
+      edges: {
+        top: pieceEdges.top || null,
+        bottom: pieceEdges.bottom || null,
+        left: pieceEdges.left || null,
+        right: pieceEdges.right || null,
+      },
       quantity: 1,
     });
   }
@@ -1298,7 +1309,9 @@ function drawEdgeLine(ctx, edge, visual, x1, y1, x2, y2) {
 }
 
 function drawEdgeCode(ctx, visual, side, x, y, width, height) {
-  if (!visual || width < 48 || height < 44) return;
+  // En piezas pequeñas el código sobre el borde tapa las cotas. En esos casos
+  // el tipo de tapacanto se consulta en la matriz L1/L2/A1/A2 del listado.
+  if (!visual || width < 72 || height < 62) return;
   const positions = {
     top: [x + 22, y + 13],
     right: [x + width - 14, y + 23],
@@ -1340,6 +1353,39 @@ function drawMeasureLabel(ctx, text, x, y, maxWidth, rotation = 0) {
   ctx.fillStyle = "#101820";
   ctx.textAlign = "center";
   ctx.fillText(label, 0, 3);
+  ctx.restore();
+}
+
+function drawCompactPieceTag(
+  ctx,
+  text,
+  x,
+  y,
+  maxWidth,
+  maxHeight,
+  rotation = 0,
+) {
+  const value = String(text || "");
+  if (!value || maxWidth < 8 || maxHeight < 8) return;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(rotation);
+  const estimatedCharacterWidth = Math.max(1, value.length * 0.62);
+  const fontSize = Math.max(
+    6,
+    Math.min(12, maxHeight - 3, (maxWidth - 4) / estimatedCharacterWidth),
+  );
+  ctx.font = `700 ${fontSize}px Arial`;
+  const label = fittedText(ctx, value, Math.max(5, maxWidth - 4));
+  const boxWidth = Math.min(maxWidth, ctx.measureText(label).width + 4);
+  const boxHeight = Math.min(maxHeight, fontSize + 4);
+  ctx.fillStyle = "rgba(255,255,255,.94)";
+  ctx.fillRect(-boxWidth / 2, -boxHeight / 2, boxWidth, boxHeight);
+  ctx.fillStyle = "#101820";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, 0, 0.5);
+  ctx.textBaseline = "alphabetic";
   ctx.restore();
 }
 
@@ -1493,16 +1539,16 @@ export function drawCutPlan(
   const width = 1680;
   const height = 1188;
   const signatureTop = 1074;
-  const edgeLegendRowHeight = 72;
-  const sequenceColumns = 3;
-  const visibleCuts = cutSequence.slice(0, 30);
+  const edgeLegendRowHeight = 62;
+  const sequenceColumns = 5;
+  const visibleCuts = cutSequence.slice(0, 35);
   const cutSequenceHeight = cutSequence.length
-    ? 38 + Math.ceil(visibleCuts.length / sequenceColumns) * 16 +
+    ? 38 + Math.ceil(visibleCuts.length / sequenceColumns) * 13 +
       (cutSequence.length > visibleCuts.length ? 14 : 0)
     : 0;
   const edgeBlockHeight = Math.max(
     104,
-    76 + Math.max(1, usedEdgeIds.length) * edgeLegendRowHeight,
+    70 + Math.max(1, usedEdgeIds.length) * edgeLegendRowHeight,
   );
   const margin = { left: 72, top: 185, right: 499, bottom: 183 };
   canvas.width = width;
@@ -1742,42 +1788,43 @@ export function drawCutPlan(
     }
     ctx.setLineDash([]);
 
-    ctx.fillStyle = "#101820";
-    ctx.textAlign = "center";
-    ctx.font = `700 ${Math.max(12, Math.min(18, h / 4))}px Arial`;
     const pieceLabel = piece.code || "S/C";
-    ctx.fillText(
-      fittedText(ctx, pieceLabel, Math.max(25, w - 28)),
-      x + w / 2,
-      y + h / 2,
-    );
+    const horizontalMeasure = Math.round(piece.drawWidth);
+    const verticalMeasure = Math.round(piece.drawHeight);
+    const fullPieceLayout = w >= 110 && h >= 94;
+    const horizontalCompactLayout = !fullPieceLayout && w >= 72 && h >= 36;
+    const verticalCompactLayout =
+      !fullPieceLayout && !horizontalCompactLayout && h >= 72 && w >= 34;
 
-    {
-      const horizontalMeasure = Math.round(piece.drawWidth);
-      const verticalMeasure = Math.round(piece.drawHeight);
-      ctx.font = `700 ${w > 100 && h > 70 ? 15 : 12}px Arial`;
-      const horizontalInset = Math.min(32, Math.max(15, h * 0.2));
-      const verticalInset = Math.min(32, Math.max(15, w * 0.14));
+    if (fullPieceLayout) {
+      ctx.fillStyle = "#101820";
+      ctx.textAlign = "center";
+      ctx.font = `700 ${Math.max(13, Math.min(18, h / 4))}px Arial`;
+      drawMeasureLabel(ctx, pieceLabel, x + w / 2, y + h / 2, w - 42);
+
+      ctx.font = "700 15px Arial";
+      const horizontalInset = Math.min(31, Math.max(18, h * 0.2));
+      const verticalInset = Math.min(31, Math.max(18, w * 0.14));
       drawMeasureLabel(
         ctx,
         `${horizontalMeasure}`,
         x + w / 2,
         y + horizontalInset,
-        Math.max(18, w - 58),
+        w - 54,
       );
       drawMeasureLabel(
         ctx,
         `${horizontalMeasure}`,
         x + w / 2,
         y + h - horizontalInset,
-        Math.max(18, w - 58),
+        w - 54,
       );
       drawMeasureLabel(
         ctx,
         `${verticalMeasure}`,
         x + verticalInset,
         y + h / 2,
-        Math.max(18, h - 58),
+        h - 54,
         -Math.PI / 2,
       );
       drawMeasureLabel(
@@ -1785,11 +1832,54 @@ export function drawCutPlan(
         `${verticalMeasure}`,
         x + w - verticalInset,
         y + h / 2,
-        Math.max(18, h - 58),
+        h - 54,
         Math.PI / 2,
       );
+    } else if (horizontalCompactLayout) {
+      // En franjas bajas se muestran código y medida completa en dos líneas,
+      // sin repetir cotas que terminarían recortadas o superpuestas.
+      drawCompactPieceTag(
+        ctx,
+        pieceLabel,
+        x + w / 2,
+        y + h * 0.36,
+        w - 10,
+        Math.max(11, h * 0.38),
+      );
+      drawCompactPieceTag(
+        ctx,
+        `${horizontalMeasure}×${verticalMeasure}`,
+        x + w / 2,
+        y + h * 0.72,
+        w - 10,
+        Math.max(10, h * 0.3),
+      );
+    } else if (verticalCompactLayout) {
+      drawCompactPieceTag(
+        ctx,
+        `${pieceLabel} ${horizontalMeasure}×${verticalMeasure}`,
+        x + w / 2,
+        y + h / 2,
+        h - 10,
+        Math.max(10, w - 6),
+        -Math.PI / 2,
+      );
+    } else {
+      // Para piezas mínimas se conserva al menos el sufijo inequívoco del
+      // código. La medida y los cuatro lados quedan completos en el listado.
+      const compactCode =
+        String(pieceLabel).match(/(\d+)$/)?.[1]?.slice(-3) || pieceLabel;
+      const rotate = h > w * 1.3;
+      drawCompactPieceTag(
+        ctx,
+        compactCode,
+        x + w / 2,
+        y + h / 2,
+        Math.max(8, (rotate ? h : w) - 4),
+        Math.max(8, (rotate ? w : h) - 4),
+        rotate ? -Math.PI / 2 : 0,
+      );
     }
-
   });
 
   ctx.textAlign = "left";
@@ -1845,12 +1935,17 @@ export function drawCutPlan(
           ctx.moveTo(ox + strip.y * scale, cutY);
           ctx.lineTo(ox + (strip.y + strip.height) * scale, cutY);
           ctx.stroke();
+          const tagSpace = Math.max(26, strip.height * scale - 6);
+          const compactCutTag =
+            tagSpace < 78 || piece.drawHeight * scale < 52;
           drawCutTag(
             ctx,
-            `C${cutNumber} · ${Math.round(piece.y + piece.drawHeight)} · K${effectiveKerf}`,
+            compactCutTag
+              ? `C${cutNumber}`
+              : `C${cutNumber} · ${Math.round(piece.y + piece.drawHeight)} · K${effectiveKerf}`,
             ox + strip.y * scale + 3,
             cutY - 3,
-            Math.max(70, strip.height * scale - 6),
+            compactCutTag ? Math.min(36, tagSpace) : tagSpace,
           );
         }
       }
@@ -1899,12 +1994,19 @@ export function drawCutPlan(
           ctx.moveTo(cutX, oy + strip.y * scale);
           ctx.lineTo(cutX, oy + (strip.y + strip.height) * scale);
           ctx.stroke();
+          const tagSpace = Math.max(
+            26,
+            Math.min(115, ox + plateW - cutX - 6),
+          );
+          const compactCutTag = strip.height * scale < 52 || tagSpace < 78;
           drawCutTag(
             ctx,
-            `C${cutNumber} · ${Math.round(piece.x + piece.drawWidth)} · K${effectiveKerf}`,
+            compactCutTag
+              ? `C${cutNumber}`
+              : `C${cutNumber} · ${Math.round(piece.x + piece.drawWidth)} · K${effectiveKerf}`,
             cutX + 3,
-            oy + strip.y * scale + 15,
-            115,
+            oy + strip.y * scale + Math.min(15, strip.height * scale * 0.42),
+            compactCutTag ? Math.min(36, tagSpace) : tagSpace,
           );
         }
       }
@@ -2046,11 +2148,11 @@ export function drawCutPlan(
       const column = Math.floor(index / perColumn);
       const rowIndex = index % perColumn;
       const x = legendX + column * sequenceColumnWidth;
-      const y = sequenceTop + 38 + rowIndex * 16;
+      const y = sequenceTop + 38 + rowIndex * 13;
       ctx.fillStyle = "#101820";
-      ctx.font = "700 10.5px Arial";
+      ctx.font = "700 9.5px Arial";
       ctx.fillText(
-        `C${cut.number} · ${cut.axis} ${Math.round(cut.coordinate)} mm`,
+        `C${cut.number}·${cut.axis} ${Math.round(cut.coordinate)}`,
         x,
         y,
       );
@@ -2066,13 +2168,13 @@ export function drawCutPlan(
   }
 
   const listTop = oy + edgeBlockHeight + cutSequenceHeight;
-  const listAvailableHeight = Math.max(170, signatureTop - listTop - 82);
+  const listAvailableHeight = Math.max(170, signatureTop - listTop - 78);
   const workflowRowHeight = workflowRows.length
     ? Math.min(34, Math.max(18, Math.floor(listAvailableHeight / workflowRows.length)))
     : 30;
-  const rowCodeFont = Math.min(16, Math.max(11, workflowRowHeight * 0.48));
-  const rowNameFont = Math.min(13, Math.max(9, workflowRowHeight * 0.36));
-  const rowMeasureFont = Math.min(15, Math.max(10, workflowRowHeight * 0.43));
+  const rowCodeFont = Math.min(16, Math.max(13, workflowRowHeight * 0.62));
+  const rowNameFont = Math.min(11.5, Math.max(9.5, workflowRowHeight * 0.44));
+  const rowMeasureFont = Math.min(17, Math.max(15, workflowRowHeight * 0.68));
   ctx.fillStyle = "#101820";
   ctx.font = "700 14px Arial";
   ctx.textAlign = "left";
@@ -2086,55 +2188,95 @@ export function drawCutPlan(
   );
   const listWidth = margin.right - 56;
   const listRight = legendX + listWidth;
-  const measureX = listRight - 113;
-  const quantityX = listRight - 74;
+  const measureX = listRight - 190;
+  const edgeCenters = [
+    listRight - 168,
+    listRight - 146,
+    listRight - 124,
+    listRight - 102,
+  ];
+  const quantityX = listRight - 75;
   const checkCenters = [listRight - 51, listRight - 31, listRight - 11];
   ctx.fillText(
-    "Controles: C corte · E enchape · S supervisión/despacho",
+    fittedText(
+      ctx,
+      "L1 sup. · L2 inf. · A1 izq. · A2 der. · C/E/S: controles",
+      listWidth,
+    ),
     legendX,
     listTop + 30,
   );
   ctx.fillStyle = "#e1e4e6";
   ctx.fillRect(legendX, listTop + 38, listWidth, 20);
   ctx.fillStyle = "#303a44";
-  ctx.font = "700 13px Arial";
+  ctx.font = "700 12px Arial";
   ctx.fillText("CÓDIGO / ELEMENTO", legendX + 5, listTop + 52);
   ctx.textAlign = "right";
   ctx.fillText("MEDIDA", measureX, listTop + 52);
-  ctx.fillText("UD.", quantityX, listTop + 52);
   ctx.textAlign = "center";
+  ["L1", "L2", "A1", "A2"].forEach((label, index) => {
+    ctx.fillText(label, edgeCenters[index], listTop + 52);
+  });
+  ctx.fillText("UD.", quantityX, listTop + 52);
   ["C", "E", "S"].forEach((label, index) => {
     ctx.fillText(label, checkCenters[index], listTop + 52);
   });
   ctx.textAlign = "left";
   workflowRows.forEach((row, index) => {
-    const y = listTop + 76 + index * workflowRowHeight;
+    const y = listTop + 70 + index * workflowRowHeight;
     if (index % 2) {
       ctx.fillStyle = "rgba(255,255,255,.58)";
-      ctx.fillRect(legendX, y - 15, listWidth, workflowRowHeight - 1);
+      ctx.fillRect(
+        legendX,
+        y - workflowRowHeight / 2,
+        listWidth,
+        workflowRowHeight - 1,
+      );
     }
     ctx.fillStyle = "#303a44";
     ctx.font = `700 ${rowCodeFont}px Arial`;
     ctx.textAlign = "left";
-    ctx.fillText(row.code || "S/C", legendX + 5, y - 3);
-    ctx.font = `${rowNameFont}px Arial`;
-    ctx.fillText(
-      fittedText(
-        ctx,
-        row.name || "",
-        measureX - legendX - 40,
-      ),
-      legendX + 5,
-      y + 8,
+    const rowCode = row.code || "S/C";
+    const codeColumnWidth = measureX - legendX - 76;
+    const fittedCode = fittedText(ctx, rowCode, codeColumnWidth);
+    ctx.fillText(fittedCode, legendX + 5, y + 4);
+    const codeWidth = Math.min(
+      codeColumnWidth,
+      ctx.measureText(fittedCode).width + (row.name ? 7 : 0),
     );
+    if (row.name && codeWidth < codeColumnWidth - 8) {
+      ctx.font = `${rowNameFont}px Arial`;
+      ctx.fillText(
+        fittedText(ctx, `· ${row.name}`, codeColumnWidth - codeWidth),
+        legendX + 5 + codeWidth,
+        y + 4,
+      );
+    }
     ctx.font = `700 ${rowMeasureFont}px Arial`;
     ctx.textAlign = "right";
     ctx.fillText(
       `${Math.round(row.cutLength)}×${Math.round(row.cutWidth)}`,
       measureX,
-      y + 2,
+      y + 4,
     );
-    ctx.fillText(`${row.quantity}`, quantityX, y + 2);
+    ctx.textAlign = "center";
+    const edgeSides = ["top", "bottom", "left", "right"];
+    edgeSides.forEach((side, sideIndex) => {
+      const center = edgeCenters[sideIndex];
+      const edgeCode = edgeVisuals.get(row.edges?.[side])?.code || "";
+      ctx.strokeStyle = "#77818a";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(center - 9, y - 8, 18, 16);
+      if (!edgeCode) return;
+      ctx.fillStyle = "#101820";
+      ctx.fillRect(center - 9, y - 8, 18, 16);
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "700 9.5px Arial";
+      ctx.fillText(edgeCode, center, y + 3);
+    });
+    ctx.fillStyle = "#303a44";
+    ctx.font = `700 ${rowMeasureFont}px Arial`;
+    ctx.fillText(`${row.quantity}`, quantityX, y + 4);
     ctx.strokeStyle = "#101820";
     ctx.lineWidth = 1.2;
     ctx.setLineDash([]);
@@ -2174,7 +2316,7 @@ export function drawCutPlan(
   ctx.font = "11px Arial";
   ctx.textAlign = "left";
   ctx.fillText(
-    "Medidas interiores: parciales · Exteriores: acumuladas · T#: tapacanto por lado · RET: retazo reutilizable · C/E/S: controles de producción · Unidades en mm.",
+    "Medidas interiores: parciales · Exteriores: acumuladas · T#: tapacanto por lado · Piezas mínimas: sufijo del código y detalle completo en tabla · RET: retazo reutilizable · C/E/S: controles · Unidades en mm.",
     38,
     height - 20,
   );

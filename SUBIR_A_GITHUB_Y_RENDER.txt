@@ -1,4 +1,4 @@
-COTIZADOR CASA DISEÑO V3.4.1 — ACTUALIZACIÓN SEGURA
+COTIZADOR CASA DISEÑO V3.4.2 — ACTUALIZACIÓN SEGURA
 
 1. Descomprime este paquete.
 2. Reemplaza el contenido del repositorio GitHub con todos estos archivos.
@@ -55,6 +55,10 @@ IMPORTANTE
   casillas de control para Corte, Enchape y Supervisión/Despacho.
 - El PDF usa casi toda la hoja A4 apaisada, con plano y listado ampliados y las
   cinco firmas distribuidas horizontalmente en la franja inferior.
+- Las piezas pequeñas usan una rotulación adaptativa para evitar números
+  recortados; el detalle completo se conserva siempre en el listado lateral.
+- El listado amplía códigos, medidas y cantidades e incorpora una matriz
+  L1/L2/A1/A2 con T1/T2/T3 para identificar cada tapacanto por lado.
 - El menú y el panel de parámetros tienen desplazamiento independiente; una
   barra rápida permite saltar a cualquier hoja sin recorrer todas las placas.
 - Los códigos de pieza se asignan al generar la hoja de corte.

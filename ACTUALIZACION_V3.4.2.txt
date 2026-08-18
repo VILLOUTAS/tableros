@@ -1,0 +1,27 @@
+COTIZADOR CASA DISEÑO V3.4.2
+
+ACTUALIZACIÓN SEGURA
+
+- Mantén el mismo Web Service y la misma DATABASE_URL.
+- No elimina ni modifica usuarios, proyectos, cotizaciones, estados, imágenes,
+  productos ni revisiones del catálogo.
+- No requiere ejecutar SQL ni crear otra base de datos.
+- Antes de desplegar, se recomienda respaldar PostgreSQL.
+
+CORRECCIONES DEL PDF
+
+- Piezas grandes: mantienen código y cuatro cotas interiores.
+- Piezas bajas: muestran código y medida completa en una composición compacta.
+- Perfiles angostos: rotan la identificación para aprovechar su lado mayor.
+- Piezas mínimas: muestran el sufijo inequívoco del código; su medida y detalle
+  completo permanecen en el listado de la misma hoja.
+- Etiquetas de secuencia reducidas en cortes estrechos para que no tapen piezas.
+- Códigos, medidas y cantidades del listado aumentados para impresión.
+- Nueva matriz de tapacantos por pieza: L1, L2, A1 y A2 muestran T1/T2/T3.
+- Secuencia acumulada compactada para entregar más altura al listado.
+
+VERIFICACIÓN REALIZADA
+
+- 31 pruebas automáticas aprobadas.
+- Compilación Vite de producción aprobada.
+- PDF A4 con 22 tipos de pieza y 3 tapacantos renderizado e inspeccionado.
