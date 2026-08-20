@@ -1120,6 +1120,7 @@ export function optimizeProject(
       name: material.name,
       brand: material.brand,
       boardCount: result.summary.boardCount,
+      unitPrice: Number(material.netPrice) || 0,
       boardSubtotal: result.summary.boardSubtotal,
       cuttingSubtotal: result.summary.cuttingSubtotal,
       cutRatePerBoard:
@@ -1128,6 +1129,36 @@ export function optimizeProject(
           : 0,
       utilization: 100 - result.summary.waste,
     })),
+    edgeSummaries: Object.entries(summary.metersByEdge)
+      .map(([edgeId, meters]) => {
+        const edge = edgeBands.find((item) => item.id === edgeId);
+        if (!edge) return null;
+        const unitPrice = Number(edge.price) || 0;
+        const serviceRate = Number(edge.serviceRate) || 0;
+        return {
+          edgeId,
+          sku: edge.sku || "S/C",
+          name: edge.name || "Tapacanto sin nombre",
+          group: edge.group || edge.material || "Tapacanto",
+          material: edge.material || "",
+          thickness: Number(edge.thickness) || 0,
+          meters: Number(meters) || 0,
+          unitPrice,
+          materialSubtotal: (Number(meters) || 0) * unitPrice,
+          serviceRate,
+          serviceSubtotal: (Number(meters) || 0) * serviceRate,
+        };
+      })
+      .filter(Boolean)
+      .sort(
+        (a, b) =>
+          String(a.group).localeCompare(String(b.group), "es", {
+            numeric: true,
+          }) ||
+          String(a.sku).localeCompare(String(b.sku), "es", {
+            numeric: true,
+          }),
+      ),
   };
 }
 

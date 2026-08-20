@@ -1476,20 +1476,20 @@ function clearFastEdges() {
 
 function summaryRows(summary) {
   return `
-    <div class="summary-row"><span>Tableros <small>${summary.boardCount} placa(s)</small></span><b>${clp(summary.boardSubtotal)}</b></div>
+    <div class="summary-row"><span>Total tableros <small>${summary.boardCount} placa(s)</small></span><b>${clp(summary.boardSubtotal)}</b></div>
     ${
       summary.boardDiscount
         ? `<div class="summary-row discount"><span>Descuento tableros <small>${summary.boardDiscount} %</small></span><b>− ${clp(summary.boardDiscountAmount)}</b></div>`
         : ""
     }
-    <div class="summary-row"><span>Tapacantos <small>${summary.edgeMeters.toFixed(2)} m</small></span><b>${clp(summary.edgeSubtotal)}</b></div>
+    <div class="summary-row"><span>Total tapacantos <small>${summary.edgeMeters.toFixed(2)} m</small></span><b>${clp(summary.edgeSubtotal)}</b></div>
     ${
       summary.edgeDiscount
         ? `<div class="summary-row discount"><span>Descuento tapacantos <small>${summary.edgeDiscount} %</small></span><b>− ${clp(summary.edgeDiscountAmount)}</b></div>`
         : ""
     }
-    <div class="summary-row"><span>Servicio de corte <small>${summary.boardCount} tablero(s) · ${summary.cutCount} cortes estimados</small></span><b>${clp(summary.cuttingSubtotal)}</b></div>
-    <div class="summary-row"><span>Servicio de tapacanto <small>Tarifa según espesor</small></span><b>${clp(summary.bandingSubtotal)}</b></div>
+    <div class="summary-row"><span>Total servicio de corte <small>${summary.boardCount} tablero(s) · ${summary.cutCount} cortes estimados</small></span><b>${clp(summary.cuttingSubtotal)}</b></div>
+    <div class="summary-row"><span>Total servicio de tapacanto <small>Tarifa según espesor</small></span><b>${clp(summary.bandingSubtotal)}</b></div>
     ${
       summary.servicesDiscount
         ? `<div class="summary-row discount"><span>Descuento servicios <small>${summary.servicesDiscount} %</small></span><b>− ${clp(summary.servicesDiscountAmount)}</b></div>`
@@ -1499,6 +1499,64 @@ function summaryRows(summary) {
     <div class="summary-row"><span>IVA 19 %</span><b>${clp(summary.vat)}</b></div>
     <div class="summary-row total"><span>Total</span><b>${clp(summary.total)}</b></div>
   `;
+}
+
+function invoiceBreakdown(result) {
+  const materialRows = result.materialSummaries || [];
+  const edgeRows = result.edgeSummaries || [];
+  const meters = (value) =>
+    Number(value || 0).toLocaleString("es-CL", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+  return `<div class="invoice-breakdown">
+    <section class="invoice-group">
+      <div class="invoice-group-title">
+        <b>Tableros por tipo</b>
+        <span>${materialRows.length} producto(s)</span>
+      </div>
+      ${materialRows
+        .map(
+          (item) => `<article class="invoice-item">
+            <header><b>${safe(item.sku)}</b><span>${safe(item.name)}</span></header>
+            <div class="invoice-line">
+              <span>Tablero<small>${item.boardCount} placa(s) × ${clp(item.unitPrice)}</small></span>
+              <strong>${clp(item.boardSubtotal)}</strong>
+            </div>
+            <div class="invoice-line service">
+              <span>Servicio de corte<small>${item.boardCount} placa(s) × ${clp(item.cutRatePerBoard)}</small></span>
+              <strong>${clp(item.cuttingSubtotal)}</strong>
+            </div>
+          </article>`,
+        )
+        .join("")}
+    </section>
+    <section class="invoice-group">
+      <div class="invoice-group-title">
+        <b>Tapacantos por tipo</b>
+        <span>${edgeRows.length} producto(s)</span>
+      </div>
+      ${
+        edgeRows.length
+          ? edgeRows
+              .map(
+                (item) => `<article class="invoice-item">
+                  <header><b>${safe(item.sku)}</b><span>${safe(item.group)} · ${safe(item.name)}</span></header>
+                  <div class="invoice-line">
+                    <span>Tapacanto<small>${meters(item.meters)} ml × ${clp(item.unitPrice)}/ml</small></span>
+                    <strong>${clp(item.materialSubtotal)}</strong>
+                  </div>
+                  <div class="invoice-line service">
+                    <span>Servicio de tapacanto<small>${meters(item.meters)} ml × ${clp(item.serviceRate)}/ml</small></span>
+                    <strong>${clp(item.serviceSubtotal)}</strong>
+                  </div>
+                </article>`,
+              )
+              .join("")
+          : `<div class="invoice-empty">Sin tapacantos asignados.</div>`
+      }
+    </section>
+  </div>`;
 }
 
 function millimeters(value) {
@@ -1690,19 +1748,7 @@ function optimizeStep() {
       </section>
       <aside class="quote-side">
         <section class="card summary-card"><p class="eyebrow">RESUMEN ECONÓMICO</p><h3>Subtotales</h3>
-          <div class="material-summary-list">
-            ${latestResult.materialSummaries
-              .map(
-                (item) => `<div><span><b>${safe(item.sku)}</b><small>${safe(
-                  item.name,
-                )} · ${item.boardCount} placa(s) · corte ${clp(
-                  item.cutRatePerBoard,
-                )}/placa</small></span><strong>${clp(
-                  item.boardSubtotal + item.cuttingSubtotal,
-                )}</strong></div>`,
-              )
-              .join("")}
-          </div>
+          ${invoiceBreakdown(latestResult)}
           ${summaryRows(summary)}
         </section>
         <section class="card settings-card">

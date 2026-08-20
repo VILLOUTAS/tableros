@@ -398,6 +398,8 @@ test("optimiza y subtotaliza por separado los tableros de un proyecto", () => {
   );
 
   assert.equal(result.materialSummaries.length, 2);
+  assert.equal(result.materialSummaries[0].unitPrice, 50000);
+  assert.equal(result.materialSummaries[1].unitPrice, 70000);
   assert.equal(result.plates.length, 2);
   assert.deepEqual(
     result.plates.map((plate) => plate.materialId),
@@ -422,6 +424,75 @@ test("optimiza y subtotaliza por separado los tableros de un proyecto", () => {
   assert.equal(optimizedPieces.length, 2);
   assert.equal(optimizedPieces[0].optimizedQuantity, 1);
   assert.match(optimizedPieces[0].plates[0], /A · Placa 1/);
+});
+
+test("desglosa tableros y tapacantos por producto para facturación", () => {
+  const projectMaterial = {
+    ...material,
+    id: "tablero-factura",
+    sku: "TAB-FACT",
+    name: "Tablero facturable",
+    brand: "CASA DISEÑO",
+  };
+  const invoiceEdges = [
+    {
+      id: "edge-a",
+      sku: "EDGE-A",
+      name: "Tapacanto A",
+      group: "PVC 0,4 mm",
+      thickness: 0.4,
+      price: 400,
+      serviceRate: 500,
+    },
+    {
+      id: "edge-b",
+      sku: "EDGE-B",
+      name: "Tapacanto B",
+      group: "ABS 2 mm",
+      thickness: 2,
+      price: 650,
+      serviceRate: 850,
+    },
+  ];
+  const result = optimizeProject(
+    [projectMaterial],
+    [
+      piece({
+        id: "factura-a",
+        materialId: projectMaterial.id,
+        edges: { top: "edge-a", right: null, bottom: null, left: null },
+      }),
+      piece({
+        id: "factura-b",
+        materialId: projectMaterial.id,
+        edges: { top: null, right: "edge-b", bottom: null, left: null },
+      }),
+    ],
+    invoiceEdges,
+    { kerf: 3, cutRatePerBoard: 7500, optimizationMode: "longitudinal" },
+  );
+
+  assert.equal(result.materialSummaries.length, 1);
+  assert.equal(result.materialSummaries[0].unitPrice, material.netPrice);
+  assert.equal(result.edgeSummaries.length, 2);
+  assert.deepEqual(
+    result.edgeSummaries.map((item) => item.sku),
+    ["EDGE-B", "EDGE-A"],
+  );
+  assert.equal(
+    result.edgeSummaries.reduce(
+      (sum, item) => sum + item.materialSubtotal,
+      0,
+    ),
+    result.summary.edgeSubtotal,
+  );
+  assert.equal(
+    result.edgeSummaries.reduce(
+      (sum, item) => sum + item.serviceSubtotal,
+      0,
+    ),
+    result.summary.bandingSubtotal,
+  );
 });
 
 test("asigna códigos al generar producción, calcula corte y codifica retazos", () => {

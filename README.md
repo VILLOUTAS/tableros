@@ -1,6 +1,6 @@
 # Cotizador online — Casa Diseño Multiespacio
 
-Versión 3.4.2 del cotizador y optimizador de cortes. Incluye acceso seguro con
+Versión 3.4.3 del cotizador y optimizador de cortes. Incluye acceso seguro con
 usuarios diferenciados, base PostgreSQL, catálogo completo importado desde
 Excel y persistencia de proyectos.
 
@@ -130,6 +130,9 @@ Excel y persistencia de proyectos.
   L2, A1 y A2 muestran directamente T1, T2 o T3 según el tipo aplicado.
 - Medidas, códigos y cantidades del listado ampliados para impresión, con las
   secuencias de corte compactadas para dar más espacio a la información útil.
+- Resumen económico facturable por producto: cada tablero muestra cantidad,
+  precio unitario, subtotal de material y servicio de corte; cada tapacanto
+  muestra metros lineales, precio por metro, subtotal de material y servicio.
 - Menú lateral y panel de parámetros con desplazamiento independiente, más una
   barra rápida para saltar directamente a cualquier hoja de corte.
 - Retazos reutilizables codificados en el plano y en los listados.
@@ -188,6 +191,10 @@ proyectos, cotizaciones, estados, productos ni imágenes existentes.
 La corrección V3.4.2 mejora exclusivamente la legibilidad de producción:
 adapta la rotulación de piezas pequeñas, amplía el listado y agrega la matriz
 L1/L2/A1/A2. No requiere migraciones ni modifica datos existentes.
+
+La corrección V3.4.3 agrega el desglose económico por tipo de tablero y por
+tipo de tapacanto para facilitar la facturación. Los totales, descuentos, IVA y
+reglas de cálculo existentes se conservan sin cambios y no requiere migración.
 
 Antes de desplegar se recomienda generar un respaldo de PostgreSQL. No crees
 otra base de datos ni reemplaces `DATABASE_URL`, porque eso haría que la
