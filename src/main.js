@@ -12,12 +12,15 @@ import {
 } from "./data.js";
 import {
   assignPieceCodes,
+  CALCULATION_VERSION,
   clp,
+  createEdgeCodeMap,
   cutDimensions,
   cutRateForMaterial,
   drawCutPlan,
   finishedDimensions,
   formatRut,
+  isNeolithMaterial,
   MINIMUM_CUT_SIDE,
   parsePieceImportTable,
   optimizeProject,
@@ -26,6 +29,7 @@ import {
   summarizeOptimizedPieces,
   summarizePlateLeftovers,
   summarizePlatePieces,
+  usablePlateDimensions,
   validateRut,
 } from "./logic.js";
 
@@ -76,11 +80,19 @@ function emptyState() {
     pieceEntryMode: "paste",
     defaultGrain: "longitudinal",
     pieces: [],
+    materialCustomizations: {},
+    edgeCodeMap: {},
     settings: {
+      calculationVersion: CALCULATION_VERSION,
       bladeThickness: 2,
       kerf: 3,
+      perimeterTrim: 10,
+      neolithTrim: 30,
       melamineCutRate: 7500,
       specialCutRate: 10500,
+      neolithLinearRate: 75000,
+      neolithBevelRate: 12500,
+      neolithMiter45Rate: 7500,
       optimizationMode: "longitudinal",
       boardDiscount: 0,
       edgeDiscount: 0,
@@ -90,9 +102,14 @@ function emptyState() {
     importPending: null,
     pastePreview: null,
     pastePending: null,
+    pasteRawText: "",
+    pasteColumns: [],
+    pasteMapping: {},
+    pasteTable: [],
     pasteConfig: {
       materialId: "",
       edgeId: "",
+      defaultGrain: "longitudinal",
       measurementMode: "finished",
       sides: { top: true, bottom: false, left: false, right: false },
     },
@@ -125,6 +142,27 @@ const safe = (value = "") =>
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
 
+const userRoles = (user = auth.user) => {
+  const roles = Array.isArray(user?.roles) ? user.roles : [user?.role];
+  return [...new Set(roles.filter(Boolean))];
+};
+const hasRole = (role, user = auth.user) => userRoles(user).includes(role);
+const hasAnyRole = (roles, user = auth.user) =>
+  roles.some((role) => hasRole(role, user));
+
+const projectMaterial = (material) => {
+  if (!material) return null;
+  const customization = state.materialCustomizations?.[material.id] || {};
+  if (!isNeolithMaterial(material)) return material;
+  const color = String(customization.color || "").trim();
+  return {
+    ...material,
+    name: color || material.name,
+    colorName: color,
+    netPrice: Math.max(0, Number(customization.netPrice ?? material.netPrice) || 0),
+  };
+};
+
 const selectedMaterials = () => {
   const ids = state.materialIds?.length
     ? state.materialIds
@@ -132,12 +170,12 @@ const selectedMaterials = () => {
       ? [state.materialId]
       : [];
   return ids
-    .map((id) => materials.find((item) => item.id === id))
+    .map((id) => projectMaterial(materials.find((item) => item.id === id)))
     .filter(Boolean);
 };
 
 const selectedMaterial = (id = state.materialId) =>
-  materials.find((item) => item.id === id) || selectedMaterials()[0];
+  projectMaterial(materials.find((item) => item.id === id)) || selectedMaterials()[0];
 
 const materialImageUrl = (material) =>
   `/api/material-images/${encodeURIComponent(material?.sku || material?.id || "")}`;
@@ -211,7 +249,7 @@ async function loadProjects() {
 }
 
 async function loadUsers() {
-  if (auth.user?.role !== "admin") return;
+  if (!hasRole("admin")) return;
   const payload = await api("/api/users");
   usersCache = payload.users || [];
 }
@@ -225,7 +263,7 @@ async function loadCommercials() {
 }
 
 async function loadNotifications() {
-  if (!["admin", "comercial", "produccion"].includes(auth.user?.role)) return;
+  if (!hasAnyRole(["admin", "comercial", "produccion"])) return;
   const payload = await api("/api/notifications");
   notificationsCache = payload.notifications || [];
 }
@@ -238,13 +276,13 @@ function unreadNotifications() {
 function canCreateQuote() {
   return Boolean(
     auth.visitor ||
-      ["admin", "comercial", "cliente"].includes(auth.user?.role),
+      hasAnyRole(["admin", "comercial", "cliente"]),
   );
 }
 
 function newQuoteState() {
   const fresh = emptyState();
-  if (auth.user?.role === "cliente") {
+  if (hasRole("cliente")) {
     fresh.project.clientName =
       auth.user.clientName || auth.user.fullName || "";
     fresh.project.rut = auth.user.rut || "";
@@ -256,7 +294,7 @@ function newQuoteState() {
       city: auth.user.location || "",
     };
   }
-  if (auth.user?.role === "comercial") {
+  if (hasRole("comercial")) {
     fresh.assignedTo = auth.user.id;
   }
   return fresh;
@@ -265,25 +303,19 @@ function newQuoteState() {
 function canEditCurrent() {
   if (auth.visitor) return !state.visitorSubmitted;
   if (!auth.user) return false;
-  if (auth.user.role === "admin") return true;
-  if (auth.user.role === "produccion") {
-    return [
+  if (hasRole("admin")) return true;
+  const productionCanEdit = hasRole("produccion") && [
       "facturado_pagado",
       "produccion",
       "despacho",
       "entregado",
     ].includes(state.project.status);
-  }
-  if (
-    auth.user.role === "comercial" &&
-    !["cotizacion", "facturacion"].includes(state.project.status)
-  ) {
-    return false;
-  }
-  if (auth.user.role === "cliente" && state.project.status !== "cotizacion") {
-    return false;
-  }
-  return true;
+  const commercialCanEdit =
+    hasRole("comercial") &&
+    ["cotizacion", "facturacion"].includes(state.project.status);
+  const clientCanEdit =
+    hasRole("cliente") && state.project.status === "cotizacion";
+  return productionCanEdit || commercialCanEdit || clientCanEdit;
 }
 
 function statusEntriesForRole(
@@ -291,26 +323,26 @@ function statusEntriesForRole(
   currentStatus = state.project.status,
 ) {
   const entries = Object.entries(statusLabels);
-  let allowed;
-  if (!role || role === "cliente") allowed = ["cotizacion"];
-  else if (role === "admin") allowed = entries.map(([value]) => value);
-  else if (role === "produccion") {
-    if (currentStatus === "facturado_pagado") {
-      allowed = ["facturado_pagado", "produccion"];
-    } else if (currentStatus === "produccion") {
-      allowed = ["produccion", "despacho"];
-    } else if (currentStatus === "despacho") {
-      allowed = ["despacho", "entregado"];
-    }
-    else allowed = [currentStatus];
-  } else if (currentStatus === "cotizacion") {
-    allowed = ["cotizacion", "facturacion"];
-  } else if (currentStatus === "facturacion") {
-    allowed = ["facturacion", "facturado_pagado"];
-  } else {
-    allowed = [currentStatus];
+  const roles = role === auth.user?.role ? userRoles() : [role];
+  if (roles.includes("admin")) return entries;
+  if (!roles.length || roles.includes("cliente")) {
+    return entries.filter(([value]) => value === "cotizacion");
   }
-  return entries.filter(([value]) => allowed.includes(value));
+  const allowed = new Set([currentStatus]);
+  if (roles.includes("produccion")) {
+    if (currentStatus === "facturado_pagado") {
+      allowed.add("produccion");
+    } else if (currentStatus === "produccion") {
+      allowed.add("despacho");
+    } else if (currentStatus === "despacho") {
+      allowed.add("entregado");
+    }
+  }
+  if (roles.includes("comercial")) {
+    if (currentStatus === "cotizacion") allowed.add("facturacion");
+    if (currentStatus === "facturacion") allowed.add("facturado_pagado");
+  }
+  return entries.filter(([value]) => allowed.has(value));
 }
 
 function notify(text, type = "success") {
@@ -344,13 +376,24 @@ function validateCurrentStep() {
       notify("Ingresa un RUT chileno válido.", "error");
       return false;
     }
-    if ((auth.visitor || auth.user?.role === "cliente") && !state.assignedTo) {
+    if ((auth.visitor || hasRole("cliente")) && !state.assignedTo) {
       notify("Selecciona el comercial que atenderá tu cotización.", "error");
       return false;
     }
   }
   if (state.step === 1 && selectedMaterials().length === 0) {
     notify("Selecciona al menos un tablero para el proyecto.", "error");
+    return false;
+  }
+  if (
+    state.step === 1 &&
+    selectedMaterials().some(
+      (material) =>
+        isNeolithMaterial(material) &&
+        !String(state.materialCustomizations?.[material.id]?.color || "").trim(),
+    )
+  ) {
+    notify("Escribe el nombre del color para cada formato Neolith seleccionado.", "error");
     return false;
   }
   if (state.step === 2 && state.pieces.length === 0) {
@@ -376,10 +419,21 @@ async function saveProject(showMessage = true) {
     notify("Faltan datos obligatorios para guardar el proyecto.", "error");
     return false;
   }
-  if ((auth.visitor || auth.user?.role === "cliente") && !state.assignedTo) {
+  if (
+    selectedMaterials().some(
+      (material) =>
+        isNeolithMaterial(material) &&
+        !String(state.materialCustomizations?.[material.id]?.color || "").trim(),
+    )
+  ) {
+    notify("Falta escribir el color de una plancha Neolith.", "error");
+    return false;
+  }
+  if ((auth.visitor || hasRole("cliente")) && !state.assignedTo) {
     notify("Selecciona un comercial antes de guardar.", "error");
     return false;
   }
+  state.edgeCodeMap = createEdgeCodeMap(state.pieces, state.edgeCodeMap);
   const result = optimizeProject(
     selectedMaterials(),
     state.pieces,
@@ -392,6 +446,8 @@ async function saveProject(showMessage = true) {
     categoryId: state.categoryId,
     materialId: state.materialId,
     materialIds: state.materialIds,
+    materialCustomizations: state.materialCustomizations,
+    edgeCodeMap: state.edgeCodeMap,
     defaultGrain: state.defaultGrain,
     pieces: state.pieces,
     settings: state.settings,
@@ -427,7 +483,7 @@ async function saveProject(showMessage = true) {
     const index = projectsCache.findIndex((item) => item.id === state.projectId);
     if (index >= 0) projectsCache[index] = payload.project;
     else projectsCache.unshift(payload.project);
-    if (!exists && ["admin", "comercial"].includes(auth.user?.role)) {
+    if (!exists && hasAnyRole(["admin", "comercial"])) {
       await loadNotifications();
     }
     if (showMessage) notify("Proyecto guardado correctamente.");
@@ -459,6 +515,16 @@ function grainIcon(grain) {
   if (grain === "longitudinal") return "⟶";
   if (grain === "transversal") return "⟰";
   return "✣";
+}
+
+function finishOptions(selected = "rough") {
+  return [
+    ["rough", "Lineal · terminación bruta"],
+    ["bevel", "Biselado - Pulido"],
+    ["miter45", "45°"],
+  ]
+    .map(([value, label]) => `<option value="${value}" ${value === selected ? "selected" : ""}>${label}</option>`)
+    .join("");
 }
 
 const roleLabels = {
@@ -609,19 +675,19 @@ function shell(content) {
             : ""
         }
         ${
-          ["admin", "produccion"].includes(auth.user?.role)
+          hasAnyRole(["admin", "produccion"])
             ? `<button class="step-link ${state.view === "production" ? "active" : ""}" data-action="production-dashboard">
                 <span>▥</span><b>Producción<small>Agenda e indicadores</small></b>
               </button>`
             : ""
         }
         ${
-          ["admin", "comercial", "produccion"].includes(auth.user?.role)
+          hasAnyRole(["admin", "comercial", "produccion"])
             ? `<button class="step-link ${state.view === "notifications" ? "active" : ""}" data-action="notifications">
                 <span>♢</span><b>Notificaciones<small><i class="notification-badge" ${unreadNotifications() ? "" : "hidden"}>${unreadNotifications()}</i> Alertas</small></b>
               </button>
               ${
-                auth.user?.role === "admin"
+                hasRole("admin")
                   ? `<button class="step-link ${state.view === "users" ? "active" : ""}" data-action="users">
                       <span>♙</span><b>Usuarios<small>Perfiles y accesos</small></b>
                     </button>
@@ -634,7 +700,7 @@ function shell(content) {
         }
         <div class="sidebar-user">
           <b>${safe(auth.user?.fullName || "Visitante")}</b>
-          <span>${auth.visitor ? "Catálogo y cotización sin descarga" : roleLabels[auth.user?.role] || ""}</span>
+          <span>${auth.visitor ? "Catálogo y cotización sin descarga" : userRoles().map((role) => roleLabels[role] || role).join(" · ")}</span>
           <button data-action="${auth.visitor ? "visitor-exit" : "logout"}">${auth.visitor ? "Volver al acceso" : "Cerrar sesión"}</button>
         </div>
       </aside>
@@ -743,6 +809,32 @@ function pieceImportPreview() {
   </div>`;
 }
 
+const pasteMapFields = [
+  ["name", "Nombre / pieza"],
+  ["quantity", "Cantidad *"],
+  ["length", "Largo *"],
+  ["width", "Ancho *"],
+  ["grain", "Sentido de veta"],
+  ["top", "L1 · superior"],
+  ["bottom", "L2 · inferior"],
+  ["left", "A1 · izquierdo"],
+  ["right", "A2 · derecho"],
+];
+
+function pasteMappingPanel() {
+  if (!state.pasteColumns?.length) return "";
+  const options = (selected) => [
+    `<option value="">No usar</option>`,
+    ...state.pasteColumns.map((column, index) => `<option value="${index}" ${String(index) === String(selected) ? "selected" : ""}>${safe(column || `Columna ${index + 1}`)}</option>`),
+  ].join("");
+  return `<section class="paste-mapping">
+    <div><b>Asignar columnas del Excel</b><span>Confirma cómo debe leerse cada columna, aunque el cliente use nombres u orden distintos.</span></div>
+    <div class="paste-mapping-grid">
+      ${pasteMapFields.map(([field, label]) => `<label>${label}<select data-paste-map="${field}">${options(state.pasteMapping?.[field])}</select></label>`).join("")}
+    </div>
+  </section>`;
+}
+
 function pastedPiecesPreview() {
   const preview = state.pastePreview;
   if (!preview) return "";
@@ -752,7 +844,14 @@ function pastedPiecesPreview() {
     <span>${safe(preview.formatMessage || "")}</span>
     ${
       ready
-        ? `<div class="paste-sample"><b>Vista previa</b>${state.pastePending.rows.slice(0, 5).map((piece) => `<span>${safe(piece.name || "Sin nombre")} · ${piece.length} × ${piece.width} mm · ${piece.quantity} ud.</span>`).join("")}</div>
+        ? `<div class="table-wrap paste-review-table"><table><thead><tr><th>Pieza</th><th>Medidas</th><th>Cant.</th><th>Veta</th><th>L1</th><th>L2</th><th>A1</th><th>A2</th></tr></thead><tbody>${state.pastePending.rows.map((piece, index) => {
+            const material = selectedMaterial(piece.materialId);
+            const neolith = isNeolithMaterial(material);
+            const sideControl = (side) => neolith
+              ? `<select data-paste-row-finish="${index}" data-side="${side}">${finishOptions(piece.finishes?.[side] || "rough")}</select>`
+              : `<select data-paste-row-edge="${index}" data-side="${side}">${edgeOptions(piece.edges?.[side] || "")}</select>`;
+            return `<tr><td>${safe(piece.name || `Pieza ${index + 1}`)}</td><td>${piece.length} × ${piece.width}</td><td>${piece.quantity}</td><td><select data-paste-row-grain="${index}">${["longitudinal", "transversal", "sin-veta"].map((grain) => `<option value="${grain}" ${piece.grain === grain ? "selected" : ""}>${grainLabels[grain]}</option>`).join("")}</select></td><td>${sideControl("top")}</td><td>${sideControl("bottom")}</td><td>${sideControl("left")}</td><td>${sideControl("right")}</td></tr>`;
+          }).join("")}</tbody></table></div>
           <div class="import-confirm">
             <button class="primary" type="button" data-action="confirm-piece-paste">Incorporar este lote (${preview.totalUnits})</button>
             <span>Después podrás pegar otro bloque para un tablero o color diferente.</span>
@@ -768,6 +867,7 @@ function pastePiecesPanel() {
   const configuredMaterial = materials.find(
     (item) => item.id === configuredMaterialId,
   );
+  const configuredNeolith = isNeolithMaterial(configuredMaterial);
   const configuredEdgeId =
     state.pasteConfig.edgeId || configuredMaterial?.suggestedEdgeId || "";
   const configuredMeasurementMode =
@@ -784,12 +884,21 @@ function pastePiecesPanel() {
             ${selectedMaterials().map((item) => `<option value="${item.id}" ${item.id === configuredMaterialId ? "selected" : ""}>${safe(item.sku)} · ${safe(item.name)} · ${item.thickness} mm</option>`).join("")}
           </select>
         </label>
-        <label>Tapacanto del lote
+        <label>Veta predeterminada
+          <select id="paste-default-grain">
+            ${["longitudinal", "transversal", "sin-veta"].map((grain) => `<option value="${grain}" ${grain === (state.pasteConfig.defaultGrain || "longitudinal") ? "selected" : ""}>${grainLabels[grain]}</option>`).join("")}
+          </select>
+          <small>Solo se usa cuando el Excel no incluye una columna de veta.</small>
+        </label>
+        ${configuredNeolith ? `<label>Terminaciones Neolith
+          <span class="readonly-field">Se leen por columna L1, L2, A1 y A2</span>
+          <small>Valores admitidos: Bruta, Biselado-Pulido o 45°.</small>
+        </label>` : `<label>Tapacanto del lote
           <select id="paste-edge">
             <option value="">Sin tapacanto</option>
             ${activeEdgeBands().map((item) => `<option value="${item.id}" ${item.id === configuredEdgeId ? "selected" : ""}>${safe(item.sku)} · ${safe(item.name)} · ${String(item.thickness).replace(".", ",")} mm</option>`).join("")}
           </select>
-        </label>
+        </label>`}
         <label class="form-span">Interpretación de las medidas
           <select id="paste-measurement-mode">
             <option value="finished" ${configuredMeasurementMode === "finished" ? "selected" : ""}>Medidas terminadas - descontar tapacanto automáticamente</option>
@@ -798,18 +907,19 @@ function pastePiecesPanel() {
           <small>La opción terminada es la predeterminada. Usa “de corte” solo cuando el cliente ya descontó los tapacantos.</small>
         </label>
       </div>
-      <div class="paste-side-picker">
+      ${configuredNeolith ? "" : `<div class="paste-side-picker">
         <span>Aplicar ese tapacanto en:</span>
         <label class="side-top"><input type="checkbox" data-paste-side="top" ${configSides.top ? "checked" : ""} /><b>L1</b><small>Superior</small></label>
         <label class="side-left"><input type="checkbox" data-paste-side="left" ${configSides.left ? "checked" : ""} /><b>A1</b><small>Izquierdo</small></label>
         <i>PIEZA</i>
         <label class="side-right"><input type="checkbox" data-paste-side="right" ${configSides.right ? "checked" : ""} /><b>A2</b><small>Derecho</small></label>
         <label class="side-bottom"><input type="checkbox" data-paste-side="bottom" ${configSides.bottom ? "checked" : ""} /><b>L2</b><small>Inferior</small></label>
-      </div>
+      </div>`}
       <label>Filas copiadas desde Excel
-        <textarea id="piece-paste-text" rows="8" placeholder="Nombre de pieza    Largo    Ancho    Cantidad&#10;Costado izquierdo  720      560      2"></textarea>
+        <textarea id="piece-paste-text" rows="8" placeholder="Nombre de pieza    Largo    Ancho    Cantidad&#10;Costado izquierdo  720      560      2">${safe(state.pasteRawText || "")}</textarea>
       </label>
-      <button class="secondary" type="button" data-action="analyze-piece-paste">Revisar filas pegadas</button>
+      ${pasteMappingPanel()}
+      <button class="secondary" type="button" data-action="analyze-piece-paste">${state.pasteColumns?.length ? "Aplicar asignación y revisar" : "Detectar columnas y revisar"}</button>
       ${pastedPiecesPreview()}
     </div>
   </details>`;
@@ -824,6 +934,7 @@ function pieceImportPanel({ project = false } = {}) {
 
 function manualPiecePanel() {
   const material = selectedMaterial();
+  const neolith = isNeolithMaterial(material);
   const chosenMaterials = selectedMaterials();
   const limits = dimensionLimits(state.defaultGrain, material);
   return `<section class="card piece-entry-card">
@@ -846,16 +957,24 @@ function manualPiecePanel() {
       <label>Ancho ingresado (mm) <em>*</em><input name="width" type="number" min="${MINIMUM_CUT_SIDE}" max="${limits.maxWidth}" required placeholder="560" /></label>
       <label>Cantidad <em>*</em><input name="quantity" type="number" min="1" value="1" required /></label>
       <label>Notas<input name="notes" placeholder="Opcional" /></label>
-      <label class="form-span">Tapacanto único para los lados seleccionados
+      <div class="form-span manual-finish-grid" data-manual-neolith ${neolith ? "" : "hidden"}>
+        <b>Acabado por lado</b>
+        <label>L1 · superior<select name="finishTop">${finishOptions()}</select></label>
+        <label>L2 · inferior<select name="finishBottom">${finishOptions()}</select></label>
+        <label>A1 · izquierdo<select name="finishLeft">${finishOptions()}</select></label>
+        <label>A2 · derecho<select name="finishRight">${finishOptions()}</select></label>
+      </div>
+      <div class="form-span" data-manual-board ${neolith ? "hidden" : ""}>
+      <label>Tapacanto único para los lados seleccionados
         <select name="edgeId">${edgeOptions("")}</select>
       </label>
-      <div class="form-span manual-edge-sides">
+      <div class="manual-edge-sides">
         <span>Aplicar en:</span>
         <label><input type="checkbox" name="edgeTop" /> L1 · superior</label>
         <label><input type="checkbox" name="edgeBottom" /> L2 · inferior</label>
         <label><input type="checkbox" name="edgeLeft" /> A1 · izquierdo</label>
         <label><input type="checkbox" name="edgeRight" /> A2 · derecho</label>
-      </div>
+      </div></div>
       <div class="grain-field form-span">
         <span>Veta de la pieza</span>
         <div class="grain-options">
@@ -889,25 +1008,25 @@ function projectStep() {
     ? statusEntriesForRole()
     : [["cotizacion", statusLabels.cotizacion]];
   const statusEditable =
-    auth.user?.role !== "cliente" &&
+    !hasRole("cliente") &&
     canEditCurrent() &&
     availableStatusEntries.length > 1;
-  const commercialRequired = auth.visitor || auth.user?.role === "cliente";
+  const commercialRequired = auth.visitor || hasRole("cliente");
   const canAssignCollaborators =
     !auth.visitor &&
-    ["admin", "comercial"].includes(auth.user?.role) &&
+    hasAnyRole(["admin", "comercial"]) &&
     canEditCurrent();
   const showCommercialDocuments =
-    !auth.visitor && ["admin", "comercial", "produccion"].includes(auth.user?.role);
+    !auth.visitor && hasAnyRole(["admin", "comercial", "produccion"]);
   const canEditInvoice =
     canEditCurrent() &&
-    (auth.user?.role === "admin" ||
-      (auth.user?.role === "comercial" &&
+    (hasRole("admin") ||
+      (hasRole("comercial") &&
         ["cotizacion", "facturacion"].includes(state.project.status)));
   const canEditDispatchGuide =
     canEditCurrent() &&
-    (auth.user?.role === "admin" ||
-      (auth.user?.role === "produccion" &&
+    (hasRole("admin") ||
+      (hasRole("produccion") &&
         ["facturado_pagado", "produccion", "despacho"].includes(
           state.project.status,
         )));
@@ -963,7 +1082,7 @@ function projectStep() {
         </label>` : ""}
         <label>Ejecutivo comercial responsable ${commercialRequired ? "<em>*</em>" : ""}
           <select data-assigned-to ${commercialRequired ? "required" : ""} ${
-            ["comercial", "produccion"].includes(auth.user?.role)
+            hasAnyRole(["comercial", "produccion"])
               ? "disabled"
               : ""
           }>
@@ -1019,6 +1138,21 @@ function materialStep() {
           </section>`
         : ""
     }
+    ${chosenMaterials.some(isNeolithMaterial) ? `<section class="card neolith-config-card">
+      <div class="section-title"><span>◆</span><div><h3>Datos de Neolith para este proyecto</h3><p>El color y precio se guardan solo en esta cotización. El formato, rebaje y espesor quedan asociados al producto.</p></div></div>
+      <div class="paste-config-grid">
+        ${chosenMaterials.filter(isNeolithMaterial).map((material) => {
+          const custom = state.materialCustomizations?.[material.id] || {};
+          return `<label>${safe(material.sku)} · Color <em>*</em>
+            <input data-neolith-color="${material.id}" value="${safe(custom.color || "")}" placeholder="Ej. Calacatta Luxe" required />
+            <small>${material.plateLength} × ${material.plateWidth} × ${material.thickness} mm nominal · área útil ${material.plateLength - 60} × ${material.plateWidth - 60} mm</small>
+          </label><label>Precio neto por plancha
+            <input type="number" min="0" step="1" data-neolith-price="${material.id}" value="${Number(custom.netPrice || 0)}" />
+            <small>El servicio lineal bruto de ${clp(state.settings.neolithLinearRate)} por placa se calcula aparte.</small>
+          </label>`;
+        }).join("")}
+      </div>
+    </section>` : ""}
     <section class="card">
       <div class="section-title"><span>1</span><div><h3>Categoría del tablero</h3><p>Los listados se muestran de forma progresiva.</p></div></div>
       <div class="category-grid">
@@ -1030,9 +1164,6 @@ function materialStep() {
               </button>`,
           )
           .join("")}
-        <button class="category coming-soon" type="button" disabled aria-disabled="true">
-          <strong>◆</strong><span>Neolith</span><i>Próximamente</i>
-        </button>
       </div>
     </section>
     ${
@@ -1054,9 +1185,9 @@ function materialStep() {
                     <span class="sample" style="background:${material.texture}">
                       <img class="material-image" src="${materialImageUrl(material)}" data-fallback="${safe(material.image)}" alt="" loading="lazy" />
                     </span>
-                    <span class="product-copy"><small>${safe(material.brand)} · ${safe(material.sku)}</small><b>${safe(material.name)}</b><em>${material.plateLength} × ${material.plateWidth} × ${material.thickness} mm</em><strong>${clp(material.netPrice)} neto</strong>
+                    <span class="product-copy"><small>${safe(material.brand)} · ${safe(material.sku)}</small><b>${safe(material.name)}</b><em>${material.plateLength} × ${material.plateWidth} × ${material.thickness} mm</em><strong>${isNeolithMaterial(material) ? "Precio por proyecto" : `${clp(material.netPrice)} neto`}</strong>
                     ${
-                      auth.user?.role === "admin"
+                      hasRole("admin")
                         ? `<span class="admin-prices">Mínimo ${clp(material.minPrice)} · Compra ${clp(material.purchasePrice)}</span>`
                         : ""
                     }</span>
@@ -1107,7 +1238,7 @@ function catalogView() {
                     <strong>${category.icon}</strong><span>${safe(category.name)}</span><i>${activeMaterials().filter((item) => item.categoryId === category.id).length}</i>
                   </button>`,
                 )
-                .join("")}<button class="category coming-soon" type="button" disabled aria-disabled="true"><strong>◆</strong><span>Neolith</span><i>Próximamente</i></button>`
+                .join("")}`
             : edgeGroups
                 .map(
                   (group) => `<button class="category ${group === state.catalogEdgeGroup ? "selected" : ""}" data-action="catalog-edge-group" data-group="${safe(group)}">
@@ -1143,7 +1274,7 @@ function catalogView() {
                     ${
                       !showingBoards
                         ? `<span class="catalog-service-price">Servicio enchape: ${clp(item.serviceRate)}/ml</span>`
-                        : auth.user?.role === "admin"
+                        : hasRole("admin")
                           ? `<span class="admin-prices">Mínimo ${clp(item.minPrice)} · Compra ${clp(item.purchasePrice)}</span>`
                           : ""
                     }</span>`;
@@ -1301,7 +1432,11 @@ function piecesTable() {
                 ? `<input class="inline-quantity" type="number" min="1" step="1" value="${piece.quantity}" data-piece-field="quantity" data-id="${piece.id}" aria-label="Cantidad de ${safe(piece.code)}" />`
                 : piece.quantity
             }</td>
-            <td><i class="mini-grain">${grainIcon(piece.grain)}</i>${grainLabels[piece.grain]}</td>
+            <td>${editable
+              ? `<select class="inline-grain" data-piece-grain="${piece.id}" aria-label="Sentido de veta de ${safe(piece.code)}">
+                  ${["longitudinal", "transversal", "sin-veta"].map((grain) => `<option value="${grain}" ${grain === piece.grain ? "selected" : ""}>${grainIcon(grain)} ${grainLabels[grain]}</option>`).join("")}
+                </select>`
+              : `<i class="mini-grain">${grainIcon(piece.grain)}</i>${grainLabels[piece.grain]}`}</td>
             <td>${
               editable
                 ? `<button class="icon danger" data-action="remove-piece" data-id="${piece.id}" aria-label="Eliminar">×</button>`
@@ -1321,9 +1456,19 @@ function edgeStep() {
   const suggested = edgeBands.find((item) => item.id === material?.suggestedEdgeId);
   return `
     <section class="intro-row">
-      <div><p class="eyebrow">TERMINACIÓN</p><h2>Tapacantos por pieza y tablero</h2><p>Por defecto el espesor se descuenta de la medida terminada. Los lotes marcados “medida de corte” no se descuentan nuevamente.</p></div>
+      <div><p class="eyebrow">TERMINACIÓN</p><h2>Tapacantos y acabados por lado</h2><p>En tableros se configura tapacanto; en Neolith se elige terminación bruta, Biselado-Pulido o 45°. Largo y Ancho conservan el sentido ingresado.</p></div>
     </section>
-    <section class="card edge-bulk-card">
+    ${state.pieces.some((piece) => isNeolithMaterial(selectedMaterial(piece.materialId))) ? `<section class="card edge-bulk-card">
+      <div class="section-title"><span>◆</span><div><h3>Asignación rápida Neolith</h3><p>Aplica un acabado distinto a cada lado de todas las piezas Neolith.</p></div></div>
+      <div class="edge-bulk-grid">
+        <label>L1 · Superior<select id="finish-fast-top">${finishOptions()}</select></label>
+        <label>L2 · Inferior<select id="finish-fast-bottom">${finishOptions()}</select></label>
+        <label>A1 · Izquierdo<select id="finish-fast-left">${finishOptions()}</select></label>
+        <label>A2 · Derecho<select id="finish-fast-right">${finishOptions()}</select></label>
+      </div>
+      <button class="secondary" data-action="apply-neolith-finishes">Aplicar acabados a piezas Neolith</button>
+    </section>` : ""}
+    ${state.pieces.some((piece) => !isNeolithMaterial(selectedMaterial(piece.materialId))) ? `<section class="card edge-bulk-card">
       <div class="section-title"><span>⚡</span><div><h3>Asignación rápida por tablero o selección</h3><p>Configura L1, L2, A1 y A2 una sola vez y aplícalos a varias piezas.</p></div></div>
       <div class="edge-bulk-grid">
         <label>Aplicar a
@@ -1331,7 +1476,7 @@ function edgeStep() {
             <option value="all">Todas las piezas</option>
             <option value="selected">Solo piezas marcadas</option>
             <optgroup label="Piezas de un tablero">
-              ${selectedMaterials().map((item) => `<option value="material:${item.id}">${safe(item.sku)} · ${safe(item.name)}</option>`).join("")}
+              ${selectedMaterials().filter((item) => !isNeolithMaterial(item)).map((item) => `<option value="material:${item.id}">${safe(item.sku)} · ${safe(item.name)}</option>`).join("")}
             </optgroup>
           </select>
         </label>
@@ -1345,12 +1490,13 @@ function edgeStep() {
         <button class="ghost" data-action="copy-edge-four">Usar L1 en los 4 lados</button>
         <button class="ghost danger-text" data-action="clear-edge-scope">Limpiar el alcance</button>
       </div>
-    </section>
+    </section>` : ""}
     <div class="edge-list">
       ${state.pieces
         .map((piece) => {
           const cut = cutDimensions(piece, edgeBands);
           const pieceMaterial = selectedMaterial(piece.materialId);
+          const neolith = isNeolithMaterial(pieceMaterial);
           return `<article class="card edge-piece">
             <div class="edge-piece-head">
               <div class="edge-piece-identity"><label class="piece-check"><input type="checkbox" data-edge-piece-select="${piece.id}" /> Marcar para asignación rápida</label><small>${safe(piece.code)} · ${safe(pieceMaterial?.sku || "Sin tablero")}</small><h3>${safe(piece.name || "Pieza sin nombre")}</h3><p>${safe(pieceMaterial?.name || "")} · Terminada: ${piece.length} × ${piece.width} mm · Cantidad: ${piece.quantity}</p></div>
@@ -1361,7 +1507,12 @@ function edgeStep() {
                 <span>${piece.length} × ${piece.width} mm</span>
                 <small>L1 superior · L2 inferior · A1 izquierdo · A2 derecho</small>
               </div>
-              ${sides
+              ${neolith
+                ? sides.map(([side, label]) => `<label class="edge-control edge-${side}">
+                    <span>${label}</span>
+                    <select data-piece-finish="${piece.id}" data-side="${side}">${finishOptions(piece.finishes?.[side] || "rough")}</select>
+                  </label>`).join("")
+                : sides
                 .map(([side, label]) => {
                   const edge = edgeBands.find(
                     (item) => item.id === piece.edges?.[side],
@@ -1412,10 +1563,11 @@ function edgeBulkTargetPieces() {
 function edgeConfigurationError(pieces = state.pieces) {
   for (const piece of pieces) {
     const material = selectedMaterial(piece.materialId);
-    const error = pieceProductionError(piece, material, edgeBands);
+    const error = pieceProductionError(piece, material, edgeBands, state.settings);
     if (error) return `${piece.code || piece.name || "Pieza"}: ${error}`;
   }
   for (const material of selectedMaterials()) {
+    if (isNeolithMaterial(material)) continue;
     const usedEdges = new Set(
       pieces
         .filter((piece) => piece.materialId === material.id)
@@ -1430,7 +1582,9 @@ function edgeConfigurationError(pieces = state.pieces) {
 }
 
 function applyFastEdges(mode = "sides") {
-  const targets = edgeBulkTargetPieces();
+  const targets = edgeBulkTargetPieces().filter(
+    (piece) => !isNeolithMaterial(selectedMaterial(piece.materialId)),
+  );
   if (!targets.length) {
     notify("No hay piezas dentro del alcance seleccionado.", "error");
     return;
@@ -1462,7 +1616,9 @@ function applyFastEdges(mode = "sides") {
 }
 
 function clearFastEdges() {
-  const targets = edgeBulkTargetPieces();
+  const targets = edgeBulkTargetPieces().filter(
+    (piece) => !isNeolithMaterial(selectedMaterial(piece.materialId)),
+  );
   if (!targets.length) {
     notify("No hay piezas dentro del alcance seleccionado.", "error");
     return;
@@ -1472,6 +1628,24 @@ function clearFastEdges() {
   });
   latestResult = null;
   notify(`Tapacantos eliminados de ${targets.length} pieza(s).`);
+}
+
+function applyNeolithFinishes() {
+  const values = Object.fromEntries(
+    ["top", "bottom", "left", "right"].map((side) => [
+      side,
+      document.querySelector(`#finish-fast-${side}`)?.value || "rough",
+    ]),
+  );
+  const targets = state.pieces.filter((piece) =>
+    isNeolithMaterial(selectedMaterial(piece.materialId)),
+  );
+  targets.forEach((piece) => {
+    piece.edges = { top: null, right: null, bottom: null, left: null };
+    piece.finishes = { ...values };
+  });
+  latestResult = null;
+  notify(`Acabados aplicados a ${targets.length} pieza(s) Neolith.`);
 }
 
 function summaryRows(summary) {
@@ -1490,6 +1664,7 @@ function summaryRows(summary) {
     }
     <div class="summary-row"><span>Total servicio de corte <small>${summary.boardCount} tablero(s) · ${summary.cutCount} cortes estimados</small></span><b>${clp(summary.cuttingSubtotal)}</b></div>
     <div class="summary-row"><span>Total servicio de tapacanto <small>Tarifa según espesor</small></span><b>${clp(summary.bandingSubtotal)}</b></div>
+    ${summary.finishSubtotal ? `<div class="summary-row"><span>Acabados Neolith <small>${Number(summary.finishMetersByType?.bevel || 0).toFixed(2)} ml bisel · ${Number(summary.finishMetersByType?.miter45 || 0).toFixed(2)} ml a 45°</small></span><b>${clp(summary.finishSubtotal)}</b></div>` : ""}
     ${
       summary.servicesDiscount
         ? `<div class="summary-row discount"><span>Descuento servicios <small>${summary.servicesDiscount} %</small></span><b>− ${clp(summary.servicesDiscountAmount)}</b></div>`
@@ -1504,6 +1679,7 @@ function summaryRows(summary) {
 function invoiceBreakdown(result) {
   const materialRows = result.materialSummaries || [];
   const edgeRows = result.edgeSummaries || [];
+  const finishRows = result.finishSummaries || [];
   const meters = (value) =>
     Number(value || 0).toLocaleString("es-CL", {
       minimumFractionDigits: 2,
@@ -1556,6 +1732,10 @@ function invoiceBreakdown(result) {
           : `<div class="invoice-empty">Sin tapacantos asignados.</div>`
       }
     </section>
+    ${finishRows.length ? `<section class="invoice-group">
+      <div class="invoice-group-title"><b>Acabados Neolith</b><span>${finishRows.length} servicio(s)</span></div>
+      ${finishRows.map((item) => `<article class="invoice-item"><header><b>${safe(item.name)}</b></header><div class="invoice-line service"><span>Acabado<small>${meters(item.meters)} ml × ${clp(item.unitPrice)}/ml</small></span><strong>${clp(item.serviceSubtotal)}</strong></div></article>`).join("")}
+    </section>` : ""}
   </div>`;
 }
 
@@ -1667,6 +1847,7 @@ function platePiecesTable(plate) {
 
 function optimizeStep() {
   assignPieceCodes(state.pieces);
+  state.edgeCodeMap = createEdgeCodeMap(state.pieces, state.edgeCodeMap);
   latestResult = optimizeProject(
     selectedMaterials(),
     state.pieces,
@@ -1684,7 +1865,7 @@ function optimizeStep() {
             : `<button class="secondary" data-action="pdf">↓ Descargar PDF</button>`
         }
         ${
-          ["admin", "produccion"].includes(auth.user?.role)
+          hasAnyRole(["admin", "produccion"])
             ? `<button class="secondary" data-action="labels-pdf">↓ Etiquetas 50 mm</button>`
             : ""
         }
@@ -1711,7 +1892,7 @@ function optimizeStep() {
     ${
       !canEditCurrent()
         ? `<div class="alert"><b>Pedido de solo lectura:</b> ${
-            auth.user?.role === "comercial"
+            hasRole("comercial")
               ? "ya fue enviado a Producción y no admite cambios comerciales."
               : "puedes revisar planos y descargar documentos sin alterar el pedido."
           }</div>`
@@ -1722,6 +1903,7 @@ function optimizeStep() {
         ? `<div class="alert"><b>Revisar piezas:</b> ${latestResult.warnings.map(safe).join(" · ")}</div>`
         : ""
     }
+    ${state.settings.calculationVersion === "legacy-v3" ? `<div class="alert"><b>Proyecto histórico protegido:</b> conserva la geometría y reglas con que fue guardado. <button class="secondary small" type="button" data-action="migrate-calculation-v4">Reoptimizar explícitamente con rebaje V4</button></div>` : ""}
     ${optimizedPiecesTable()}
     <nav class="plate-quick-nav" aria-label="Navegación rápida entre hojas de corte">
       <b>Ir a hoja</b>
@@ -1755,7 +1937,7 @@ function optimizeStep() {
           <p class="eyebrow">PARÁMETROS</p>
           <label>Espesor nominal del disco (mm)<input type="number" min="0" step="0.1" data-setting="bladeThickness" value="${state.settings.bladeThickness || 2}" /></label>
           <label>Consumo efectivo por corte (mm)<input type="number" min="0" step="0.1" data-setting="kerf" value="${state.settings.kerf}" /></label>
-          <small>Valor predeterminado: disco 2 mm y consumo real 3 mm por cada corte.</small>
+          <small>Valor predeterminado: disco 2 mm y consumo real 3 mm por cada corte. Rebaje: tableros 10 mm/lado; Neolith 30 mm/lado.</small>
           <label>Modo de optimización<select data-setting-text="optimizationMode">
             <option value="longitudinal" ${state.settings.optimizationMode === "longitudinal" ? "selected" : ""}>Priorizar primer corte longitudinal</option>
             <option value="free" ${state.settings.optimizationMode === "free" ? "selected" : ""}>Sin priorizar</option>
@@ -1768,6 +1950,12 @@ function optimizeStep() {
             <span>EGR y otros <strong>${clp(
               state.settings.specialCutRate,
             )}</strong></span>
+            <span>Neolith lineal bruto <strong>${clp(state.settings.neolithLinearRate)}</strong></span>
+          </div>
+          <div class="rate-table">
+            <b>Acabados Neolith / ml</b>
+            <span>Biselado - Pulido <strong>${clp(state.settings.neolithBevelRate)}</strong></span>
+            <span>45° <strong>${clp(state.settings.neolithMiter45Rate)}</strong></span>
           </div>
           <div class="rate-table">
             <b>Servicio tapacanto / ml</b>
@@ -1844,7 +2032,7 @@ function projectsView() {
             }
             <div class="project-actions">
               <button class="secondary" data-action="open-project" data-id="${item.id}">Abrir proyecto</button>
-              ${auth.user?.role === "admin" ? `<button class="ghost danger-text" data-action="delete-project" data-id="${item.id}">Eliminar</button>` : ""}
+              ${hasRole("admin") ? `<button class="ghost danger-text" data-action="delete-project" data-id="${item.id}">Eliminar</button>` : ""}
             </div>
           </article>`,
         )
@@ -1999,8 +2187,8 @@ function productionDashboardView() {
                         );
                         const canMoveStatus = transitionEntries.length > 1;
                         const canSchedule =
-                          auth.user?.role === "admin" ||
-                          (auth.user?.role === "produccion" &&
+                          hasRole("admin") ||
+                          (hasRole("produccion") &&
                             [
                               "facturado_pagado",
                               "produccion",
@@ -2164,7 +2352,7 @@ function bulkUserPreviewHtml() {
                 (user) => `<tr>
                   <td><b>${safe(user.fullName)}</b></td>
                   <td>${safe(user.email)}</td>
-                  <td>${safe(roleLabels[user.role])}</td>
+                  <td>${safe((user.roles || [user.role]).map((role) => roleLabels[role] || role).join(" · "))}</td>
                   <td>${safe(user.clientName || "—")}</td>
                   <td>${user.active ? "Sí" : "No"}</td>
                 </tr>`,
@@ -2203,11 +2391,11 @@ function usersView() {
         <form id="user-form" class="access-form">
           <label>Nombre completo <em>*</em><input name="fullName" required /></label>
           <label>Correo <em>*</em><input name="email" type="email" required /></label>
-          <label>Perfil <em>*</em><select name="role" required>
+          <label>Perfiles <em>*</em><select name="roles" multiple size="4" required>
             ${Object.entries(roleLabels)
               .map(([value, label]) => `<option value="${value}">${label}</option>`)
               .join("")}
-          </select></label>
+          </select><small>Ctrl/Cmd permite combinar perfiles internos. Cliente debe usarse solo.</small></label>
           <label>Cliente o empresa<small>Útil para el perfil Cliente.</small><input name="clientName" /></label>
           <label>Teléfono<small>Obligatorio solo para autoregistro de Cliente.</small><input name="phone" type="tel" /></label>
           <label>Clave inicial <em>*</em><input name="password" type="password" minlength="10" required /></label>
@@ -2220,11 +2408,11 @@ function usersView() {
           ${usersCache
             .map(
               (user) => `<article class="user-row">
-                <div><b>${safe(user.fullName)}</b><span>${safe(user.email)} · ${roleLabels[user.role]}</span></div>
+                <div><b>${safe(user.fullName)}</b><span>${safe(user.email)} · ${(user.roles || [user.role]).map((role) => roleLabels[role] || role).join(" · ")}</span></div>
                 <span class="account-state ${user.active ? "" : "inactive"}">${user.active ? "Activo" : "Inactivo"}${user.mustChangePassword ? " · Clave temporal" : ""}</span>
                 <div class="user-controls">
-                  <label>Perfil<select data-user-role="${user.id}">
-                    ${Object.entries(roleLabels).map(([value, label]) => `<option value="${value}" ${value === user.role ? "selected" : ""}>${label}</option>`).join("")}
+                  <label>Perfiles<select data-user-roles="${user.id}" multiple size="4">
+                    ${Object.entries(roleLabels).map(([value, label]) => `<option value="${value}" ${(user.roles || [user.role]).includes(value) ? "selected" : ""}>${label}</option>`).join("")}
                   </select></label>
                   <form class="password-reset-form" data-user-id="${user.id}">
                     <input name="password" type="password" minlength="10" required placeholder="Nueva clave" aria-label="Nueva clave para ${safe(user.fullName)}" />
@@ -2372,7 +2560,7 @@ function render() {
     renderEnhancements();
     return;
   }
-  if (state.view === "catalog-admin" && auth.user?.role === "admin") {
+  if (state.view === "catalog-admin" && hasRole("admin")) {
     app.innerHTML = catalogAdminView();
     renderEnhancements();
     return;
@@ -2404,6 +2592,7 @@ function render() {
               generatedAt: new Date().toLocaleString("es-CL"),
               kerf: state.settings.kerf,
               bladeThickness: state.settings.bladeThickness || 2,
+              edgeCodeMap: state.edgeCodeMap,
             });
           }
         });
@@ -2546,25 +2735,26 @@ function dimensionLimits(grain, material = selectedMaterial()) {
       note: "Selecciona un tablero para aplicar sus límites.",
     };
   }
+  const usable = usablePlateDimensions(material, state.settings);
   if (grain === "transversal") {
     return {
-      maxLength: material.plateWidth,
-      maxWidth: material.plateLength,
-      note: `Máximo con veta transversal: ${material.plateWidth} × ${material.plateLength} mm.`,
+      maxLength: usable.plateWidth,
+      maxWidth: usable.plateLength,
+      note: `Veta por el Ancho ingresado. Área útil: ${usable.plateLength} × ${usable.plateWidth} mm; Largo y Ancho no se reordenan.`,
     };
   }
   if (grain === "sin-veta") {
-    const maximum = Math.max(material.plateLength, material.plateWidth);
+    const maximum = Math.max(usable.plateLength, usable.plateWidth);
     return {
       maxLength: maximum,
       maxWidth: maximum,
-      note: `Debe caber en ${material.plateLength} × ${material.plateWidth} mm; se permite girar la pieza.`,
+      note: `Debe caber en el área útil ${usable.plateLength} × ${usable.plateWidth} mm; se permite girar la pieza.`,
     };
   }
   return {
-    maxLength: material.plateLength,
-    maxWidth: material.plateWidth,
-    note: `Máximo con veta longitudinal: ${material.plateLength} × ${material.plateWidth} mm.`,
+    maxLength: usable.plateLength,
+    maxWidth: usable.plateWidth,
+    note: `Veta por el Largo ingresado. Área útil: ${usable.plateLength} × ${usable.plateWidth} mm; Largo puede ser numéricamente menor que Ancho.`,
   };
 }
 
@@ -2591,14 +2781,25 @@ function addPiece(form) {
   const grain = String(data.get("grain") || "sin-veta");
   const materialId = String(data.get("materialId") || "");
   const material = selectedMaterial(materialId);
+  const neolith = isNeolithMaterial(material);
   const measurementMode = data.get("measurementMode") === "cut" ? "cut" : "finished";
   const edgeId = String(data.get("edgeId") || "");
-  const edges = {
-    top: edgeId && data.get("edgeTop") ? edgeId : null,
-    right: edgeId && data.get("edgeRight") ? edgeId : null,
-    bottom: edgeId && data.get("edgeBottom") ? edgeId : null,
-    left: edgeId && data.get("edgeLeft") ? edgeId : null,
-  };
+  const edges = neolith
+    ? { top: null, right: null, bottom: null, left: null }
+    : {
+        top: edgeId && data.get("edgeTop") ? edgeId : null,
+        right: edgeId && data.get("edgeRight") ? edgeId : null,
+        bottom: edgeId && data.get("edgeBottom") ? edgeId : null,
+        left: edgeId && data.get("edgeLeft") ? edgeId : null,
+      };
+  const finishes = neolith
+    ? {
+        top: String(data.get("finishTop") || "rough"),
+        right: String(data.get("finishRight") || "rough"),
+        bottom: String(data.get("finishBottom") || "rough"),
+        left: String(data.get("finishLeft") || "rough"),
+      }
+    : {};
   if (length <= 0 || width <= 0 || quantity <= 0) {
     notify("Revisa los datos obligatorios de la pieza.", "error");
     return;
@@ -2607,8 +2808,13 @@ function addPiece(form) {
     notify("Selecciona un tablero válido para la pieza.", "error");
     return;
   }
-  const candidate = { length, width, grain, measurementMode, edges };
-  const productionError = pieceProductionError(candidate, material, edgeBands);
+  const candidate = { length, width, grain, measurementMode, edges, finishes };
+  const productionError = pieceProductionError(
+    candidate,
+    material,
+    edgeBands,
+    state.settings,
+  );
   if (productionError) {
     notify(`No se puede agregar la pieza: ${productionError}`, "error");
     return;
@@ -2626,6 +2832,7 @@ function addPiece(form) {
     materialId: material.id,
     notes: String(data.get("notes") || "").trim(),
     edges,
+    finishes,
   });
   notify("Pieza agregada.");
 }
@@ -2655,7 +2862,7 @@ function updatePieceField(target) {
   const material = materials.find((item) => item.id === piece.materialId);
   const candidate = { ...piece, [field]: value };
   const productionError = !isQuantity
-    ? pieceProductionError(candidate, material, edgeBands)
+    ? pieceProductionError(candidate, material, edgeBands, state.settings)
     : "";
   if (productionError) {
     target.value = String(previous);
@@ -2744,6 +2951,8 @@ async function importExcel(file) {
       catalogMaterials: materials,
       catalogEdges: edgeBands,
       fallbackMaterialId: state.materialId,
+      fallbackGrain: state.defaultGrain,
+      settings: state.settings,
       idFactory: () => crypto.randomUUID(),
     });
 
@@ -2837,6 +3046,10 @@ function addImportedPieceBatch(pending, previewKey) {
   } else {
     state.pastePending = null;
     state.pastePreview = null;
+    state.pasteRawText = "";
+    state.pasteColumns = [];
+    state.pasteMapping = {};
+    state.pasteTable = [];
   }
   state.view = "quote";
   state.step = previewKey === "paste" ? 1 : 2;
@@ -2864,10 +3077,44 @@ function splitPastedExcel(text = "") {
   return lines.map((line) => line.split(delimiter).map((cell) => cell.trim()));
 }
 
+function autoPasteMapping(columns = []) {
+  const normalized = columns.map(normalizeHeader);
+  const aliases = {
+    name: ["nombre", "pieza", "elemento", "descripcion", "detalle"],
+    quantity: ["cantidad", "cant", "qty", "unidades", "ud"],
+    length: ["largo", "longitud", "alto", "length", "medida 1"],
+    width: ["ancho", "fondo", "profundidad", "width", "medida 2"],
+    grain: ["veta", "sentido", "orientacion", "fibra", "grain"],
+    top: ["l1", "superior", "arriba"],
+    bottom: ["l2", "inferior", "abajo"],
+    left: ["a1", "izquierdo", "izquierda", "l4"],
+    right: ["a2", "derecho", "derecha", "l3"],
+  };
+  return Object.fromEntries(
+    Object.entries(aliases).map(([field, candidates]) => [
+      field,
+      normalized.findIndex((header) =>
+        candidates.some((candidate) =>
+          header === candidate || header.includes(candidate),
+        ),
+      ),
+    ]).filter(([, index]) => index >= 0),
+  );
+}
+
+function neolithFinishFromImport(value) {
+  const normalized = normalizeHeader(value);
+  if (normalized.includes("bisel") || normalized.includes("pulid")) return "bevel";
+  if (normalized.includes("45") || normalized.includes("inglete")) return "miter45";
+  return "rough";
+}
+
 function analyzePastedPieces() {
-  const text = document.querySelector("#piece-paste-text")?.value || "";
-  const materialId = document.querySelector("#paste-material")?.value || "";
-  const edgeId = document.querySelector("#paste-edge")?.value || "";
+  const text = document.querySelector("#piece-paste-text")?.value || state.pasteRawText || "";
+  const previousText = state.pasteRawText;
+  const materialId = document.querySelector("#paste-material")?.value || state.pasteConfig.materialId || "";
+  const edgeId = document.querySelector("#paste-edge")?.value || state.pasteConfig.edgeId || "";
+  const defaultGrain = document.querySelector("#paste-default-grain")?.value || state.pasteConfig.defaultGrain || "longitudinal";
   const measurementMode =
     document.querySelector("#paste-measurement-mode")?.value === "cut"
       ? "cut"
@@ -2878,81 +3125,99 @@ function analyzePastedPieces() {
       Boolean(document.querySelector(`[data-paste-side="${side}"]`)?.checked),
     ]),
   );
-  state.pasteConfig = {
-    materialId,
-    edgeId,
-    measurementMode,
-    sides: sidesForEdge,
-  };
-  if (!text.trim()) {
+  state.pasteConfig = { materialId, edgeId, defaultGrain, measurementMode, sides: sidesForEdge };
+  state.pasteRawText = text;
+  if (!text.trim() || !materialId) {
     state.pastePending = null;
     state.pastePreview = {
       status: "error",
-      errors: ["Pega primero las filas copiadas desde Excel."],
+      errors: [!text.trim() ? "Pega primero las filas copiadas desde Excel." : "Selecciona el tablero o color correspondiente a este lote."],
     };
     render();
     return;
   }
-  if (!materialId) {
-    state.pastePending = null;
-    state.pastePreview = {
-      status: "error",
-      errors: ["Selecciona el tablero o color correspondiente a este lote."],
-    };
-    render();
-    return;
-  }
+
   const pastedTable = splitPastedExcel(text);
-  const importOptions = {
-    catalogMaterials: materials,
+  const currentMapInputs = [...document.querySelectorAll("[data-paste-map]")];
+  const textChanged = text !== previousText || !state.pasteColumns.length;
+  if (!state.pasteColumns.length || textChanged) {
+    const firstRow = pastedTable[0] || [];
+    const numericCells = firstRow.filter((value) => Number.isFinite(Number(String(value).replace(",", ".")))).length;
+    const hasHeader = numericCells < Math.ceil(firstRow.length / 2);
+    state.pasteColumns = hasHeader
+      ? firstRow.map((value, index) => String(value || `Columna ${index + 1}`))
+      : firstRow.map((_, index) => `Columna ${String.fromCharCode(65 + index)}`);
+    state.pasteTable = hasHeader ? pastedTable.slice(1) : pastedTable;
+    state.pasteMapping = autoPasteMapping(state.pasteColumns);
+    if (!hasHeader && firstRow.length === 3) {
+      state.pasteMapping = { length: 0, width: 1, quantity: 2 };
+    } else if (!hasHeader && firstRow.length >= 4) {
+      state.pasteMapping = { name: 0, length: 1, width: 2, quantity: 3 };
+    }
+  } else if (currentMapInputs.length) {
+    state.pasteMapping = Object.fromEntries(
+      currentMapInputs
+        .filter((input) => input.value !== "")
+        .map((input) => [input.dataset.pasteMap, Number(input.value)]),
+    );
+  }
+
+  if (["length", "width", "quantity"].some((field) => state.pasteMapping[field] === undefined)) {
+    state.pastePending = null;
+    state.pastePreview = {
+      status: "error",
+      errors: ["Asigna las columnas Largo, Ancho y Cantidad para continuar."],
+      formatMessage: "El Excel puede tener cualquier orden: usa los selectores de columnas.",
+    };
+    render();
+    return;
+  }
+
+  const material = selectedMaterial(materialId);
+  const neolith = isNeolithMaterial(material);
+  const canonicalHeaders = ["nombre", "largo", "ancho", "cantidad", "veta", "l1 tapacanto", "l2 tapacanto", "a1 tapacanto", "a2 tapacanto"];
+  const canonicalFields = ["name", "length", "width", "quantity", "grain", "top", "bottom", "left", "right"];
+  const canonicalRows = state.pasteTable.map((row) =>
+    canonicalFields.map((field) => {
+      if (neolith && ["top", "bottom", "left", "right"].includes(field)) return "";
+      const index = state.pasteMapping[field];
+      return index === undefined ? "" : row[index] ?? "";
+    }),
+  );
+  const imported = parsePieceImportTable([canonicalHeaders, ...canonicalRows], {
+    catalogMaterials: selectedMaterials(),
     catalogEdges: edgeBands,
     fallbackMaterialId: materialId,
+    fallbackGrain: defaultGrain,
+    fallbackEdgeId: edgeId,
+    fallbackEdges: sidesForEdge,
+    settings: state.settings,
     idFactory: () => crypto.randomUUID(),
-  };
-  let assumedColumnOrder = false;
-  let imported = parsePieceImportTable(pastedTable, importOptions);
-  if (
-    !imported.rows.length &&
-    imported.headerRow === 0 &&
-    [3, 4].includes(pastedTable[0]?.length)
-  ) {
-    const assumedHeaders =
-      pastedTable[0].length === 3
-        ? ["largo", "ancho", "cantidad"]
-        : ["nombre", "largo", "ancho", "cantidad"];
-    imported = parsePieceImportTable(
-      [assumedHeaders, ...pastedTable],
-      importOptions,
-    );
-    assumedColumnOrder = imported.rows.length > 0;
-  }
-  const material = materials.find((item) => item.id === materialId);
+  });
   const validRows = [];
   const productionErrors = [];
   imported.rows.forEach((piece, index) => {
     piece.measurementMode = measurementMode;
-    piece.edges = {
-      top: edgeId && sidesForEdge.top ? edgeId : null,
-      right: edgeId && sidesForEdge.right ? edgeId : null,
-      bottom: edgeId && sidesForEdge.bottom ? edgeId : null,
-      left: edgeId && sidesForEdge.left ? edgeId : null,
-    };
-    const error = pieceProductionError(piece, material, edgeBands);
-    if (error) {
-      productionErrors.push(
-        `Fila ${imported.headerRow + index + 1}: ${error}`,
+    if (neolith) {
+      piece.edges = { top: null, right: null, bottom: null, left: null };
+      const source = state.pasteTable[index] || [];
+      piece.finishes = Object.fromEntries(
+        ["top", "bottom", "left", "right"].map((side) => [
+          side,
+          state.pasteMapping[side] === undefined
+            ? "rough"
+            : neolithFinishFromImport(source[state.pasteMapping[side]]),
+        ]),
       );
-    } else {
-      validRows.push(piece);
     }
+    const error = pieceProductionError(piece, material, edgeBands, state.settings);
+    if (error) productionErrors.push(`Fila ${index + 2}: ${error}`);
+    else validRows.push(piece);
   });
   imported.rows = validRows;
   imported.errors = [...(imported.errors || []), ...productionErrors];
   imported.rejectedRows = Number(imported.rejectedRows || 0) + productionErrors.length;
-  const totalUnits = imported.rows.reduce(
-    (sum, row) => sum + Number(row.quantity || 0),
-    0,
-  );
+  const totalUnits = imported.rows.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
   state.pastePending = imported.rows.length
     ? { rows: imported.rows, materialIds: [materialId] }
     : null;
@@ -2962,8 +3227,8 @@ function analyzePastedPieces() {
     validCount: imported.rows.length,
     totalUnits,
     formatMessage: imported.rows.length
-      ? `${assumedColumnOrder ? "Se aplicó el orden Nombre (opcional), Largo, Ancho y Cantidad." : `Encabezados reconocidos en la fila ${imported.headerRow}.`} ${imported.rejectedRows ? `${imported.rejectedRows} fila(s) fueron descartadas.` : "Todas las filas son válidas."}`
-      : imported.errors[0] || "No se reconocieron las columnas necesarias.",
+      ? `Columnas asignadas. ${imported.rejectedRows ? `${imported.rejectedRows} fila(s) fueron descartadas.` : "Todas las filas son válidas."} Revisa veta y lados antes de incorporar.`
+      : imported.errors[0] || "No se reconocieron filas válidas.",
   };
   render();
 }
@@ -2992,13 +3257,22 @@ function downloadImportReport() {
   URL.revokeObjectURL(url);
 }
 
-function normalizeImportedRole(value) {
-  const role = normalizeHeader(value);
-  if (["admin", "administrador"].includes(role)) return "admin";
-  if (role === "comercial") return "comercial";
-  if (role === "produccion") return "produccion";
-  if (role === "cliente") return "cliente";
-  return "";
+function normalizeImportedRoles(value) {
+  const aliases = {
+    admin: "admin",
+    administrador: "admin",
+    comercial: "comercial",
+    produccion: "produccion",
+    cliente: "cliente",
+  };
+  const roles = [...new Set(
+    String(value || "")
+      .split(/[,;|+\/]|\s+y\s+/i)
+      .map((item) => aliases[normalizeHeader(item)])
+      .filter(Boolean),
+  )];
+  if (roles.includes("cliente") && roles.length > 1) return [];
+  return roles;
 }
 
 function parseImportedActive(value) {
@@ -3044,7 +3318,8 @@ async function importUsersExcel(file) {
       )
         .trim()
         .toLowerCase();
-      const role = normalizeImportedRole(pick(row, ["perfil", "rol", "role"]));
+      const roles = normalizeImportedRoles(pick(row, ["perfil", "roles", "rol", "role"]));
+      const role = roles.includes("admin") ? "admin" : roles[0] || "";
       const clientName = String(
         pick(row, [
           "cliente_empresa",
@@ -3089,6 +3364,7 @@ async function importUsersExcel(file) {
         fullName,
         email,
         role,
+        roles,
         clientName,
         password,
         active,
@@ -3227,8 +3503,122 @@ function exportPdf() {
     author: "Casa Diseño Multiespacio",
   });
 
+  const summary = latestResult.summary;
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  pdf.setFillColor(23, 50, 77);
+  pdf.rect(0, 0, pageWidth, 34, "F");
+  pdf.setTextColor(255, 255, 255);
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(9);
+  pdf.text("CASA DISEÑO MULTIESPACIO", 12, 10);
+  pdf.setFontSize(18);
+  pdf.text("RESUMEN DE OPTIMIZACIÓN", 12, 22);
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(8);
+  pdf.text(`Cotización ${projectCode()} · ${new Date().toLocaleString("es-CL")}`, 12, 29);
+  pdf.setTextColor(37, 49, 60);
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(12);
+  pdf.text(state.project.projectName || "Proyecto sin nombre", 12, 44);
+  pdf.setFont("helvetica", "normal");
+  pdf.setFontSize(8.5);
+  pdf.text(`Cliente: ${state.project.clientName || "Sin identificar"} · Estado: ${statusLabels[state.project.status]}`, 12, 51);
+  const metrics = [
+    ["PLACAS", summary.boardCount],
+    ["APROVECHAMIENTO", `${(100 - summary.waste).toFixed(1)} %`],
+    ["PIEZAS", state.pieces.reduce((sum, piece) => sum + Number(piece.quantity || 0), 0)],
+    ["TOTAL", clp(summary.total)],
+  ];
+  metrics.forEach(([label, value], index) => {
+    const x = 12 + index * 69;
+    pdf.setFillColor(index === 3 ? 232 : 242, index === 3 ? 239 : 244, index === 3 ? 231 : 246);
+    pdf.roundedRect(x, 59, 63, 24, 2, 2, "F");
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(7);
+    pdf.text(String(label), x + 4, 67);
+    pdf.setFontSize(13);
+    pdf.text(String(value), x + 4, 77);
+  });
+  pdf.setFontSize(10);
+  pdf.text("MATERIALES Y SERVICIOS", 12, 94);
+  let summaryY = 102;
+  pdf.setFontSize(8);
+  latestResult.materialSummaries.forEach((item) => {
+    pdf.setFont("helvetica", "bold");
+    pdf.text(`${item.sku} · ${item.name}`, 12, summaryY);
+    pdf.setFont("helvetica", "normal");
+    pdf.text(
+      `${item.boardCount} placa(s) · nominal ${selectedMaterial(item.materialId)?.plateLength} × ${selectedMaterial(item.materialId)?.plateWidth} mm · útil ${item.usablePlateLength} × ${item.usablePlateWidth} mm · rebaje ${item.perimeterTrim} mm/lado`,
+      80,
+      summaryY,
+    );
+    summaryY += 7;
+  });
+  const edgeEntries = Object.entries(state.edgeCodeMap || {}).sort(
+    (a, b) => Number(a[1].slice(1)) - Number(b[1].slice(1)),
+  );
+  if (edgeEntries.length) {
+    summaryY += 4;
+    pdf.setFont("helvetica", "bold");
+    pdf.text("LEYENDA GLOBAL DE TAPACANTOS", 12, summaryY);
+    summaryY += 7;
+    edgeEntries.forEach(([edgeId, code]) => {
+      const edge = edgeBands.find((item) => item.id === edgeId);
+      pdf.text(`${code}`, 12, summaryY);
+      pdf.setFont("helvetica", "normal");
+      pdf.text(`${edge?.sku || edgeId} · ${edge?.name || "Tapacanto"}`, 27, summaryY);
+      pdf.setFont("helvetica", "bold");
+      summaryY += 6;
+    });
+  }
+  if (latestResult.finishSummaries?.length) {
+    summaryY += 4;
+    pdf.text("ACABADOS NEOLITH", 12, summaryY);
+    summaryY += 7;
+    pdf.setFont("helvetica", "normal");
+    latestResult.finishSummaries.forEach((item) => {
+      pdf.text(`${item.name}: ${item.meters.toFixed(2)} ml × ${clp(item.unitPrice)}/ml = ${clp(item.serviceSubtotal)}`, 12, summaryY);
+      summaryY += 6;
+    });
+  }
+  pdf.setFillColor(247, 244, 232);
+  pdf.roundedRect(12, 183, 273, 16, 2, 2, "F");
+  pdf.setTextColor(70, 61, 42);
+  pdf.setFont("helvetica", "bold");
+  pdf.setFontSize(8);
+  pdf.text("Regla de veta:", 16, 190);
+  pdf.setFont("helvetica", "normal");
+  pdf.text("Longitudinal sigue el Largo ingresado; Transversal sigue el Ancho ingresado. Los valores nunca se ordenan por tamaño.", 42, 190);
+  pdf.text("La numeración T1, T2… es única y se mantiene en todas las hojas de este proyecto.", 16, 196);
+
+  const sideValue = (piece, side) => {
+    const material = selectedMaterial(piece.materialId);
+    if (isNeolithMaterial(material)) {
+      return { rough: "Bruta", bevel: "Bisel", miter45: "45°" }[piece.finishes?.[side] || "rough"];
+    }
+    return state.edgeCodeMap?.[piece.edges?.[side]] || "—";
+  };
+  addPdfTable(pdf, {
+    title: "LISTADO COMPLETO DE PIEZAS",
+    subtitle: "Dimensiones semánticas ingresadas, sentido de veta y terminación de los cuatro lados.",
+    columns: [
+      { title: "Código", key: "code", width: 18 },
+      { title: "Elemento", key: "name", width: 45 },
+      { title: "Material", value: (row) => selectedMaterial(row.materialId)?.name || "", width: 44 },
+      { title: "Largo", value: (row) => String(row.length), width: 22, align: "right" },
+      { title: "Ancho", value: (row) => String(row.width), width: 22, align: "right" },
+      { title: "Cant.", key: "quantity", width: 14, align: "right" },
+      { title: "Veta", value: (row) => grainLabels[row.grain] || row.grain, width: 28 },
+      { title: "L1", value: (row) => sideValue(row, "top"), width: 20 },
+      { title: "L2", value: (row) => sideValue(row, "bottom"), width: 20 },
+      { title: "A1", value: (row) => sideValue(row, "left"), width: 20 },
+      { title: "A2", value: (row) => sideValue(row, "right"), width: 20 },
+    ],
+    rows: state.pieces,
+  });
+
   latestResult.plates.forEach((plate, index) => {
-    if (index) pdf.addPage("a4", "landscape");
+    pdf.addPage("a4", "landscape");
     const canvas = document.querySelector(`#plan-${plate.index}`);
     if (!canvas) return;
     const maximumWidth = 292;
@@ -3251,7 +3641,7 @@ function exportPdf() {
     pdf.setFontSize(6.5);
     pdf.setTextColor(83, 94, 104);
     pdf.text(
-      `Hoja ${index + 1} de ${latestResult.plates.length} · Plano y listado inseparables`,
+      `Plano ${index + 1} de ${latestResult.plates.length} · Resumen y listado incluidos al inicio`,
       290,
       206.4,
       { align: "right" },
@@ -3358,7 +3748,11 @@ app.addEventListener("submit", async (event) => {
     return;
   }
   if (form.id === "user-form") {
-    const data = Object.fromEntries(new FormData(form));
+    const formData = new FormData(form);
+    const data = {
+      ...Object.fromEntries(formData),
+      roles: formData.getAll("roles"),
+    };
     try {
       await api("/api/users", { method: "POST", body: data });
       await loadUsers();
@@ -3368,7 +3762,7 @@ app.addEventListener("submit", async (event) => {
     }
     return;
   }
-  if (form.id === "admin-catalog-form" && auth.user?.role === "admin") {
+  if (form.id === "admin-catalog-form" && hasRole("admin")) {
     const formData = new FormData(form);
     const productType = formData.get("productType") === "edge" ? "edge" : "board";
     const productId = String(formData.get("productId") || "");
@@ -3437,6 +3831,22 @@ app.addEventListener("input", (event) => {
   if (target.dataset.assignedTo !== undefined) {
     state.assignedTo = target.value;
   }
+  if (target.dataset.neolithColor) {
+    const id = target.dataset.neolithColor;
+    state.materialCustomizations[id] = {
+      ...(state.materialCustomizations[id] || {}),
+      color: target.value,
+    };
+    latestResult = null;
+  }
+  if (target.dataset.neolithPrice) {
+    const id = target.dataset.neolithPrice;
+    state.materialCustomizations[id] = {
+      ...(state.materialCustomizations[id] || {}),
+      netPrice: Math.max(0, Number(target.value) || 0),
+    };
+    latestResult = null;
+  }
   if (target.id === "material-search") {
     state.productSearch = target.value;
     applyProductFilter(target.value);
@@ -3462,15 +3872,47 @@ app.addEventListener("change", async (event) => {
     updatePieceField(target);
     return;
   }
+  if (target.dataset.pieceGrain) {
+    const piece = state.pieces.find((item) => item.id === target.dataset.pieceGrain);
+    if (!piece) return;
+    const previous = piece.grain;
+    const material = selectedMaterial(piece.materialId);
+    const candidate = { ...piece, grain: target.value };
+    const error = pieceProductionError(candidate, material, edgeBands, state.settings);
+    if (error) {
+      target.value = previous;
+      notify(`No se cambió la veta: ${error}`, "error");
+      return;
+    }
+    piece.grain = target.value;
+    latestResult = null;
+    notify("Sentido de veta actualizado sin intercambiar Largo y Ancho.");
+    return;
+  }
   if (target.name === "grain") {
     updateDimensionInputs(target.value);
   }
   if (target.name === "materialId" && target.closest("#piece-form")) {
     state.materialId = target.value;
+    const neolith = isNeolithMaterial(selectedMaterial(target.value));
+    const neolithControls = document.querySelector("[data-manual-neolith]");
+    const boardControls = document.querySelector("[data-manual-board]");
+    if (neolithControls) neolithControls.hidden = !neolith;
+    if (boardControls) boardControls.hidden = neolith;
     const grain =
       document.querySelector('#piece-form input[name="grain"]:checked')?.value ||
       state.defaultGrain;
     updateDimensionInputs(grain, target.value);
+  }
+  if (target.id === "paste-material") {
+    state.pasteRawText = document.querySelector("#piece-paste-text")?.value || "";
+    state.pasteConfig.materialId = target.value;
+    state.pasteColumns = [];
+    state.pasteMapping = {};
+    state.pastePreview = null;
+    state.pastePending = null;
+    render();
+    return;
   }
   if (target.dataset.project === "rut") {
     state.project.rut = formatRut(target.value);
@@ -3509,6 +3951,39 @@ app.addEventListener("change", async (event) => {
       notify(error.message, "error");
     }
   }
+  if (target.dataset.pasteRowGrain !== undefined) {
+    const piece = state.pastePending?.rows?.[Number(target.dataset.pasteRowGrain)];
+    if (piece) {
+      const previous = piece.grain;
+      piece.grain = target.value;
+      const error = pieceProductionError(
+        piece,
+        selectedMaterial(piece.materialId),
+        edgeBands,
+        state.settings,
+      );
+      if (error) {
+        piece.grain = previous;
+        notify(`Veta no aplicada: ${error}`, "error");
+      }
+    }
+    render();
+    return;
+  }
+  if (target.dataset.pasteRowEdge !== undefined) {
+    const piece = state.pastePending?.rows?.[Number(target.dataset.pasteRowEdge)];
+    if (piece) piece.edges[target.dataset.side] = target.value || null;
+    render();
+    return;
+  }
+  if (target.dataset.pasteRowFinish !== undefined) {
+    const piece = state.pastePending?.rows?.[Number(target.dataset.pasteRowFinish)];
+    if (piece) {
+      piece.finishes = { ...(piece.finishes || {}), [target.dataset.side]: target.value || "rough" };
+    }
+    render();
+    return;
+  }
   if (target.dataset.pieceEdge) {
     const piece = state.pieces.find((item) => item.id === target.dataset.pieceEdge);
     if (piece) {
@@ -3519,6 +3994,17 @@ app.addEventListener("change", async (event) => {
         piece.edges[target.dataset.side] = previous;
         notify(`No se aplicó el tapacanto: ${error}`, "error");
       }
+    }
+    render();
+  }
+  if (target.dataset.pieceFinish) {
+    const piece = state.pieces.find((item) => item.id === target.dataset.pieceFinish);
+    if (piece) {
+      piece.finishes = {
+        ...(piece.finishes || {}),
+        [target.dataset.side]: target.value || "rough",
+      };
+      latestResult = null;
     }
     render();
   }
@@ -3591,14 +4077,14 @@ app.addEventListener("change", async (event) => {
       render();
     }
   }
-  if (target.dataset.userRole) {
+  if (target.dataset.userRoles) {
     try {
-      await api(`/api/users/${target.dataset.userRole}`, {
+      await api(`/api/users/${target.dataset.userRoles}`, {
         method: "PATCH",
-        body: { role: target.value },
+        body: { roles: [...target.selectedOptions].map((option) => option.value) },
       });
       await loadUsers();
-      notify("Perfil actualizado.");
+      notify("Perfiles actualizados.");
     } catch (error) {
       notify(error.message, "error");
     }
@@ -3619,6 +4105,22 @@ app.addEventListener("click", async (event) => {
       behavior: "smooth",
       block: "start",
     });
+    return;
+  }
+  if (action === "migrate-calculation-v4") {
+    const confirmed = window.confirm(
+      "Se recalcularán los planos de este proyecto con rebaje perimetral y reglas V4. El registro existente no se elimina. ¿Continuar?",
+    );
+    if (!confirmed) return;
+    state.settings = {
+      ...state.settings,
+      calculationVersion: CALCULATION_VERSION,
+      perimeterTrim: 10,
+      neolithTrim: 30,
+      kerf: 3,
+    };
+    latestResult = null;
+    notify("Reglas V4 aplicadas. Revisa los planos antes de guardar.");
     return;
   }
   if (button.dataset.catalogMaterial) {
@@ -3721,7 +4223,7 @@ app.addEventListener("click", async (event) => {
   }
   if (
     action === "production-dashboard" &&
-    ["admin", "produccion"].includes(auth.user?.role)
+    hasAnyRole(["admin", "produccion"])
   ) {
     try {
       await loadProjects();
@@ -3735,7 +4237,7 @@ app.addEventListener("click", async (event) => {
     state.productionPeriod = button.dataset.period || "week";
     render();
   }
-  if (action === "users" && auth.user?.role === "admin") {
+  if (action === "users" && hasRole("admin")) {
     try {
       await loadUsers();
       state.view = "users";
@@ -3744,7 +4246,7 @@ app.addEventListener("click", async (event) => {
       notify(error.message, "error");
     }
   }
-  if (action === "catalog-admin" && auth.user?.role === "admin") {
+  if (action === "catalog-admin" && hasRole("admin")) {
     try {
       await loadCatalog();
       state.catalogEditingId = "";
@@ -3754,23 +4256,23 @@ app.addEventListener("click", async (event) => {
       notify(error.message, "error");
     }
   }
-  if (action === "catalog-admin-kind" && auth.user?.role === "admin") {
+  if (action === "catalog-admin-kind" && hasRole("admin")) {
     state.catalogAdminKind = button.dataset.kind === "edge" ? "edge" : "board";
     state.catalogEditingId = "";
     state.catalogAdminSearch = "";
     render();
   }
-  if (action === "catalog-admin-new" && auth.user?.role === "admin") {
+  if (action === "catalog-admin-new" && hasRole("admin")) {
     state.catalogEditingId = "";
     render();
   }
-  if (action === "catalog-admin-edit" && auth.user?.role === "admin") {
+  if (action === "catalog-admin-edit" && hasRole("admin")) {
     state.catalogEditingId = button.dataset.id || "";
     render();
   }
   if (
     action === "notifications" &&
-    ["admin", "comercial", "produccion"].includes(auth.user?.role)
+    hasAnyRole(["admin", "comercial", "produccion"])
   ) {
     try {
       await Promise.all([loadNotifications(), loadProjects()]);
@@ -3855,6 +4357,7 @@ app.addEventListener("click", async (event) => {
   if (action === "apply-all") {
     const edgeId = document.querySelector("#global-edge")?.value || null;
     state.pieces.forEach((piece) => {
+      if (isNeolithMaterial(selectedMaterial(piece.materialId))) return;
       piece.edges = { top: edgeId, right: edgeId, bottom: edgeId, left: edgeId };
     });
     render();
@@ -3868,8 +4371,12 @@ app.addEventListener("click", async (event) => {
   if (action === "clear-edge-scope") {
     clearFastEdges();
   }
+  if (action === "apply-neolith-finishes") {
+    applyNeolithFinishes();
+  }
   if (action === "clear-edges") {
     state.pieces.forEach((piece) => {
+      if (isNeolithMaterial(selectedMaterial(piece.materialId))) return;
       piece.edges = { top: null, right: null, bottom: null, left: null };
     });
     render();
@@ -3880,7 +4387,7 @@ app.addEventListener("click", async (event) => {
   if (action === "save") await saveProject();
   if (action === "pdf") exportPdf();
   if (action === "labels-pdf") exportLabelsPdf();
-  if (action === "delete-project" && auth.user?.role === "admin") {
+  if (action === "delete-project" && hasRole("admin")) {
     const item = projectsCache.find((project) => project.id === button.dataset.id);
     if (!item) return;
     const confirmed = window.confirm(
@@ -3937,7 +4444,17 @@ app.addEventListener("click", async (event) => {
         collaboratorIds: [...(item.collaboratorIds || [])],
         materialId: primaryMaterialId || "",
         materialIds,
-        settings: { ...defaults.settings, ...(item.settings || {}) },
+        materialCustomizations: { ...(item.materialCustomizations || {}) },
+        edgeCodeMap: { ...(item.edgeCodeMap || {}) },
+        settings: item.settings?.calculationVersion
+          ? { ...defaults.settings, ...(item.settings || {}) }
+          : {
+              ...defaults.settings,
+              ...(item.settings || {}),
+              calculationVersion: "legacy-v3",
+              perimeterTrim: 0,
+              neolithTrim: 0,
+            },
         pieces: (item.pieces || []).map((piece) => ({
           ...piece,
           materialId: piece.materialId || primaryMaterialId || "",
@@ -3947,6 +4464,13 @@ app.addEventListener("click", async (event) => {
             bottom: null,
             left: null,
             ...(piece.edges || {}),
+          },
+          finishes: {
+            top: "rough",
+            right: "rough",
+            bottom: "rough",
+            left: "rough",
+            ...(piece.finishes || {}),
           },
         })),
         view: "quote",
@@ -4040,7 +4564,7 @@ async function initialize() {
 initialize();
 
 window.setInterval(async () => {
-  if (!["admin", "comercial", "produccion"].includes(auth.user?.role)) return;
+  if (!hasAnyRole(["admin", "comercial", "produccion"])) return;
   try {
     await loadNotifications();
     if (state.view === "notifications") {

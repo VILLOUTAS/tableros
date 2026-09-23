@@ -9,6 +9,26 @@ import {
   quoteEmailRecipients,
 } from "../server.mjs";
 
+test("combina permisos internos cuando un usuario tiene más de un rol", () => {
+  const user = { id: "u-mixto", role: "comercial", roles: ["comercial", "produccion"] };
+  const project = {
+    ownerId: "otro",
+    assignedTo: "u-mixto",
+    collaboratorIds: [],
+    project: { status: "cotizacion" },
+  };
+  assert.equal(canEditProject(user, project), true);
+  assert.equal(
+    canTransitionProjectStatus(user, "cotizacion", "facturacion"),
+    true,
+  );
+  assert.equal(
+    canTransitionProjectStatus(user, "produccion", "despacho"),
+    true,
+  );
+  assert.equal(projectVisibility(user).where, "TRUE");
+});
+
 async function request(base, path, options = {}) {
   const response = await fetch(`${base}${path}`, options);
   const body = response.status === 204 ? null : await response.json();
@@ -58,6 +78,19 @@ test("protege acceso, crea perfiles y permite guardar proyectos por perfil", asy
     });
     assert.equal(user.response.status, 201);
     assert.equal(user.body.user.mustChangePassword, true);
+
+    const mixedUser = await request(base, "/api/users", {
+      method: "POST",
+      headers: adminHeaders,
+      body: JSON.stringify({
+        fullName: "Equipo Mixto",
+        email: "mixto@prueba.local",
+        password: "ClaveSeguraMixta123",
+        roles: ["comercial", "produccion"],
+      }),
+    });
+    assert.equal(mixedUser.response.status, 201);
+    assert.deepEqual(mixedUser.body.user.roles, ["comercial", "produccion"]);
 
     const bulkUsers = await request(base, "/api/users/bulk", {
       method: "POST",

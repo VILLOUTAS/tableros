@@ -33,6 +33,21 @@ const validStatuses = new Set([
   "entregado",
 ]);
 
+function rolesOf(user = {}) {
+  const roles = Array.isArray(user.roles) ? user.roles : [user.role];
+  return [...new Set(roles.map((role) => String(role || "").toLowerCase()).filter((role) => validRoles.has(role)))];
+}
+
+function userHasRole(user, role) {
+  return rolesOf(user).includes(role);
+}
+
+function normalizeRoles(value, fallback = "") {
+  const values = Array.isArray(value) ? value : String(value || fallback).split(/[;,|]/);
+  const roles = [...new Set(values.map((role) => String(role || "").trim().toLowerCase()).filter((role) => validRoles.has(role)))];
+  return roles;
+}
+
 const hashToken = (token) =>
   createHash("sha256").update(String(token)).digest("hex");
 
@@ -42,6 +57,7 @@ const publicUser = (user) =>
     email: user.email,
     fullName: user.fullName,
     role: user.role,
+    roles: rolesOf(user),
     clientName: user.clientName || "",
     phone: user.phone || "",
     rut: user.rut || "",
@@ -67,11 +83,13 @@ function parseActive(value, fallback = true) {
 }
 
 function normalizeUserInput(body = {}) {
+  const roles = normalizeRoles(body.roles, body.role);
   return {
     email: normalizeEmail(body.email),
     fullName: String(body.fullName || "").trim(),
     password: String(body.password || ""),
-    role: String(body.role || "").trim().toLowerCase(),
+    role: roles.includes("admin") ? "admin" : roles[0] || "",
+    roles,
     clientName: String(body.clientName || "").trim(),
     phone: String(body.phone || "").trim(),
     rut: String(body.rut || "").trim(),
@@ -91,7 +109,10 @@ function userInputError(user) {
   if (user.password.length < 10) {
     return "La clave temporal requiere al menos 10 caracteres.";
   }
-  if (!validRoles.has(user.role)) return "El perfil no es válido.";
+  if (!user.roles.length || !validRoles.has(user.role)) return "El perfil no es válido.";
+  if (user.roles.includes("cliente") && user.roles.length > 1) {
+    return "El perfil Cliente es exclusivo y no puede combinarse con perfiles internos.";
+  }
   return "";
 }
 
@@ -125,6 +146,7 @@ function mapUser(row) {
     passwordHash: row.password_hash,
     fullName: row.full_name,
     role: row.role,
+    roles: normalizeRoles(row.roles, row.role),
     clientName: row.client_name,
     phone: row.phone,
     rut: row.rut,
@@ -524,6 +546,7 @@ class PostgresStore {
         password_hash TEXT NOT NULL,
         full_name TEXT NOT NULL,
         role TEXT NOT NULL CHECK (role IN ('admin','comercial','produccion','cliente')),
+        roles TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
         client_name TEXT NOT NULL DEFAULT '',
         phone TEXT NOT NULL DEFAULT '',
         rut TEXT NOT NULL DEFAULT '',
@@ -609,6 +632,15 @@ class PostgresStore {
         ADD COLUMN IF NOT EXISTS business_activity TEXT NOT NULL DEFAULT '';
       ALTER TABLE app_users
         ADD COLUMN IF NOT EXISTS project_address TEXT NOT NULL DEFAULT '';
+      ALTER TABLE app_users
+        ADD COLUMN IF NOT EXISTS roles TEXT[];
+      UPDATE app_users
+        SET roles=ARRAY[role]
+        WHERE roles IS NULL OR cardinality(roles)=0;
+      ALTER TABLE app_users
+        ALTER COLUMN roles SET DEFAULT ARRAY[]::TEXT[];
+      ALTER TABLE app_users
+        ALTER COLUMN roles SET NOT NULL;
       ALTER TABLE projects
         ADD COLUMN IF NOT EXISTS execution_date DATE;
       ALTER TABLE projects
@@ -640,10 +672,10 @@ class PostgresStore {
   async createUser(user) {
     const result = await this.pool.query(
       `INSERT INTO app_users
-        (id, email, password_hash, full_name, role, client_name, phone, rut,
+        (id, email, password_hash, full_name, role, roles, client_name, phone, rut,
          location, billing_address, business_activity, project_address,
          active, must_change_password)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
        RETURNING *`,
       [
         user.id,
@@ -651,6 +683,7 @@ class PostgresStore {
         user.passwordHash,
         user.fullName,
         user.role,
+        user.roles || [user.role],
         user.clientName || "",
         user.phone || "",
         user.rut || "",
@@ -689,14 +722,14 @@ class PostgresStore {
 
   async listActiveAdmins() {
     const result = await this.pool.query(
-      "SELECT * FROM app_users WHERE role='admin' AND active=TRUE ORDER BY created_at",
+      "SELECT * FROM app_users WHERE ('admin'=ANY(roles) OR role='admin') AND active=TRUE ORDER BY created_at",
     );
     return result.rows.map(mapUser);
   }
 
   async listActiveUsersByRole(role) {
     const result = await this.pool.query(
-      "SELECT * FROM app_users WHERE role=$1 AND active=TRUE ORDER BY full_name",
+      "SELECT * FROM app_users WHERE ($1=ANY(roles) OR role=$1) AND active=TRUE ORDER BY full_name",
       [role],
     );
     return result.rows.map(mapUser);
@@ -708,10 +741,10 @@ class PostgresStore {
     const next = { ...current, ...changes };
     const result = await this.pool.query(
       `UPDATE app_users
-       SET email=$2, password_hash=$3, full_name=$4, role=$5,
-           client_name=$6, phone=$7, rut=$8, location=$9, active=$10,
-           must_change_password=$11, billing_address=$12,
-           business_activity=$13, project_address=$14, updated_at=NOW()
+       SET email=$2, password_hash=$3, full_name=$4, role=$5, roles=$6,
+           client_name=$7, phone=$8, rut=$9, location=$10, active=$11,
+           must_change_password=$12, billing_address=$13,
+           business_activity=$14, project_address=$15, updated_at=NOW()
        WHERE id=$1 RETURNING *`,
       [
         id,
@@ -719,6 +752,7 @@ class PostgresStore {
         next.passwordHash,
         next.fullName,
         next.role,
+        next.roles || [next.role],
         next.clientName || "",
         next.phone || "",
         next.rut || "",
@@ -953,14 +987,14 @@ class PostgresStore {
 
 export function projectVisibility(user) {
   const where =
-      ["admin", "produccion"].includes(user.role)
+      (userHasRole(user, "admin") || userHasRole(user, "produccion"))
         ? "TRUE"
-        : user.role === "comercial"
+        : userHasRole(user, "comercial")
             ? "(p.owner_id=$1 OR p.assigned_to=$1 OR COALESCE(p.payload->'collaboratorIds','[]'::jsonb) ? $1::text)"
             : "p.owner_id=$1";
-  const params = ["comercial", "cliente"].includes(user.role)
-    ? [user.id]
-    : [];
+  const params = where === "TRUE"
+    ? []
+    : [user.id];
   return { where, params };
 }
 
@@ -986,6 +1020,7 @@ class MemoryStore {
     const record = {
       mustChangePassword: false,
       ...user,
+      roles: rolesOf(user),
       createdAt: new Date().toISOString(),
     };
     this.users.set(record.id, record);
@@ -1002,12 +1037,12 @@ class MemoryStore {
   }
   async listActiveAdmins() {
     return [...this.users.values()].filter(
-      (user) => user.role === "admin" && user.active,
+      (user) => userHasRole(user, "admin") && user.active,
     );
   }
   async listActiveUsersByRole(role) {
     return [...this.users.values()].filter(
-      (user) => user.role === role && user.active,
+      (user) => userHasRole(user, role) && user.active,
     );
   }
   async updateUser(id, changes) {
@@ -1087,9 +1122,9 @@ class MemoryStore {
     return [...this.projects.values()]
       .filter((project) => {
         if (project.deletedAt) return false;
-        if (user.role === "admin") return true;
-        if (user.role === "produccion") return true;
-        if (user.role === "comercial") {
+        if (userHasRole(user, "admin")) return true;
+        if (userHasRole(user, "produccion")) return true;
+        if (userHasRole(user, "comercial")) {
           return (
             project.ownerId === user.id ||
             project.assignedTo === user.id ||
@@ -1153,9 +1188,9 @@ class MemoryStore {
 }
 
 export function canReadProject(user, project) {
-  if (user.role === "admin") return true;
-  if (user.role === "produccion") return true;
-  if (user.role === "comercial") {
+  if (userHasRole(user, "admin")) return true;
+  if (userHasRole(user, "produccion")) return true;
+  if (userHasRole(user, "comercial")) {
     return (
       project.ownerId === user.id ||
       project.assignedTo === user.id ||
@@ -1166,42 +1201,35 @@ export function canReadProject(user, project) {
 }
 
 export function canEditProject(user, project) {
-  if (user.role === "admin") return true;
-  if (user.role === "produccion") {
-    return [
+  if (userHasRole(user, "admin")) return true;
+  const productionCanEdit = userHasRole(user, "produccion") && [
       "facturado_pagado",
       "produccion",
       "despacho",
       "entregado",
     ].includes(project.project.status);
-  }
-  if (user.role === "comercial") {
-    return (
+  const commercialCanEdit = userHasRole(user, "comercial") &&
       ["cotizacion", "facturacion"].includes(project.project.status) &&
       (project.ownerId === user.id ||
         project.assignedTo === user.id ||
-        project.collaboratorIds?.includes(user.id))
-    );
-  }
-  return project.ownerId === user.id && project.project.status === "cotizacion";
+        project.collaboratorIds?.includes(user.id));
+  const clientCanEdit = userHasRole(user, "cliente") &&
+    project.ownerId === user.id && project.project.status === "cotizacion";
+  return productionCanEdit || commercialCanEdit || clientCanEdit;
 }
 
 export function canTransitionProjectStatus(user, currentStatus, nextStatus) {
   if (currentStatus === nextStatus) return true;
-  if (user.role === "admin") return validStatuses.has(nextStatus);
-  if (user.role === "comercial") {
-    return (
+  if (userHasRole(user, "admin")) return validStatuses.has(nextStatus);
+  if (userHasRole(user, "comercial") && (
       (currentStatus === "cotizacion" && nextStatus === "facturacion") ||
       (currentStatus === "facturacion" && nextStatus === "facturado_pagado")
-    );
-  }
-  if (user.role === "produccion") {
-    return (
+    )) return true;
+  if (userHasRole(user, "produccion") && (
       (currentStatus === "facturado_pagado" && nextStatus === "produccion") ||
       (currentStatus === "produccion" && nextStatus === "despacho") ||
       (currentStatus === "despacho" && nextStatus === "entregado")
-    );
-  }
+    )) return true;
   return false;
 }
 
@@ -1254,6 +1282,14 @@ function projectRecord(body, ownerId, current = null) {
       categoryId: String(body.categoryId || ""),
       materialId,
       materialIds,
+      materialCustomizations:
+        body.materialCustomizations && typeof body.materialCustomizations === "object"
+          ? body.materialCustomizations
+          : current?.materialCustomizations || {},
+      edgeCodeMap:
+        body.edgeCodeMap && typeof body.edgeCodeMap === "object"
+          ? body.edgeCodeMap
+          : current?.edgeCodeMap || {},
       defaultGrain: String(body.defaultGrain || "longitudinal"),
       pieces,
       settings: body.settings && typeof body.settings === "object" ? body.settings : {},
@@ -1298,12 +1334,35 @@ function projectDimensionError(
     if (!material || !record.payload.materialIds.includes(material.id)) {
       return `La pieza ${piece.code || invalidIndex + 1} no tiene un tablero válido asignado.`;
     }
-    const error = pieceProductionError(piece, material, catalogEdges);
+    const error = pieceProductionError(
+      piece,
+      material,
+      catalogEdges,
+      record.payload.settings,
+    );
     if (error) {
       return `La pieza ${piece.code || invalidIndex + 1}: ${error}`;
     }
   }
   for (const materialId of record.payload.materialIds) {
+    const material = catalogMaterials.find((item) => item.id === materialId);
+    if (material?.materialType === "neolith" || material?.categoryId === "neolith") {
+      const color = String(
+        record.payload.materialCustomizations?.[materialId]?.color || "",
+      ).trim();
+      if (!color) {
+        return `El formato Neolith ${material?.sku || materialId} requiere el nombre del color.`;
+      }
+      const invalidPiece = pieces.find(
+        (piece) =>
+          piece.materialId === materialId &&
+          Object.values(piece.edges || {}).some(Boolean),
+      );
+      if (invalidPiece) {
+        return `La pieza ${invalidPiece.code || invalidPiece.name || "Neolith"} no puede llevar tapacanto.`;
+      }
+      continue;
+    }
     const usedEdges = new Set(
       pieces
         .filter((piece) => piece.materialId === materialId)
@@ -1311,7 +1370,6 @@ function projectDimensionError(
         .filter(Boolean),
     );
     if (usedEdges.size > 3) {
-      const material = catalogMaterials.find((item) => item.id === materialId);
       return `El tablero ${material?.sku || materialId} utiliza ${usedEdges.size} tapacantos distintos. El máximo operativo por placa es 3.`;
     }
   }
@@ -1344,9 +1402,21 @@ function projectProductionSignature(project = {}) {
         bottom: piece.edges?.bottom || null,
         left: piece.edges?.left || null,
       },
+      finishes: {
+        top: piece.finishes?.top || "rough",
+        right: piece.finishes?.right || "rough",
+        bottom: piece.finishes?.bottom || "rough",
+        left: piece.finishes?.left || "rough",
+      },
     }),
   );
-  return JSON.stringify({ materialIds, pieces });
+  const settings = {
+    calculationVersion: project.settings?.calculationVersion || "legacy-v3",
+    perimeterTrim: Number(project.settings?.perimeterTrim) || 0,
+    neolithTrim: Number(project.settings?.neolithTrim) || 0,
+    kerf: Number(project.settings?.kerf) || 0,
+  };
+  return JSON.stringify({ materialIds, pieces, settings });
 }
 
 export async function createApplication({ store, useMemory = false } = {}) {
@@ -1449,7 +1519,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
   };
 
   const adminOnly = (request, response, next) =>
-    request.auth.user.role === "admin"
+    userHasRole(request.auth.user, "admin")
       ? next()
       : response.status(403).json({ error: "Acceso exclusivo de administrador." });
 
@@ -1688,6 +1758,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
       passwordHash: await bcrypt.hash(password, 12),
       fullName,
       role: "admin",
+      roles: ["admin"],
       clientName: "",
       active: true,
       mustChangePassword: false,
@@ -1717,6 +1788,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
     const input = normalizeUserInput({
       ...request.body,
       role: "cliente",
+      roles: ["cliente"],
       active: true,
     });
     if (
@@ -1750,6 +1822,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
         passwordHash: await bcrypt.hash(input.password, 12),
         fullName: input.fullName,
         role: "cliente",
+        roles: ["cliente"],
         clientName: input.clientName,
         phone: input.phone,
         rut: input.rut,
@@ -1849,6 +1922,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
         passwordHash: await bcrypt.hash(input.password, 12),
         fullName: input.fullName,
         role: input.role,
+        roles: input.roles,
         clientName: input.clientName,
         phone: input.phone,
         rut: input.rut,
@@ -1935,6 +2009,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
               passwordHash: item.passwordHash,
               fullName: item.input.fullName,
               role: item.input.role,
+              roles: item.input.roles,
               clientName: item.input.clientName,
               phone: item.input.phone,
               rut: item.input.rut,
@@ -1996,8 +2071,20 @@ export async function createApplication({ store, useMemory = false } = {}) {
       if (request.body.projectAddress !== undefined) {
         changes.projectAddress = String(request.body.projectAddress).trim();
       }
-      if (request.body.role !== undefined && validRoles.has(request.body.role)) {
-        changes.role = request.body.role;
+      if (request.body.roles !== undefined || request.body.role !== undefined) {
+        const roles = normalizeRoles(request.body.roles, request.body.role);
+        if (!roles.length) {
+          return response.status(400).json({
+            error: "Selecciona al menos un perfil interno o usa Cliente como perfil exclusivo.",
+          });
+        }
+        if (roles.includes("cliente") && roles.length > 1) {
+          return response.status(400).json({
+            error: "Cliente es un perfil exclusivo y no puede combinarse con perfiles internos.",
+          });
+        }
+        changes.roles = roles;
+        changes.role = roles.includes("admin") ? "admin" : roles[0];
       }
       if (request.body.active !== undefined) changes.active = Boolean(request.body.active);
       if (request.body.password) {
@@ -2187,7 +2274,17 @@ export async function createApplication({ store, useMemory = false } = {}) {
         });
       }
       const selectedCatalogMaterials = record.payload.materialIds
-        .map((id) => catalog.materials.find((item) => item.id === id))
+        .map((id) => {
+          const material = catalog.materials.find((item) => item.id === id);
+          const custom = record.payload.materialCustomizations?.[id] || {};
+          return material
+            ? {
+                ...material,
+                name: String(custom.color || material.name),
+                netPrice: Math.max(0, Number(custom.netPrice ?? material.netPrice) || 0),
+              }
+            : null;
+        })
         .filter(Boolean);
       const result = optimizeProject(
         selectedCatalogMaterials,
@@ -2224,7 +2321,11 @@ export async function createApplication({ store, useMemory = false } = {}) {
   });
 
   app.post("/api/projects", authenticate, csrf, async (request, response) => {
-    if (request.auth.user.role === "produccion") {
+    if (
+      userHasRole(request.auth.user, "produccion") &&
+      !userHasRole(request.auth.user, "admin") &&
+      !userHasRole(request.auth.user, "comercial")
+    ) {
       return response.status(403).json({
         error: "Producción puede revisar todos los proyectos, pero no crear cotizaciones.",
       });
@@ -2243,11 +2344,11 @@ export async function createApplication({ store, useMemory = false } = {}) {
     if (dimensionError) {
       return response.status(400).json({ error: dimensionError });
     }
-    if (request.auth.user.role !== "admin") {
-      if (request.auth.user.role === "comercial") {
+    if (!userHasRole(request.auth.user, "admin")) {
+      if (userHasRole(request.auth.user, "comercial")) {
         record.assignedTo = request.auth.user.id;
       }
-      if (request.auth.user.role === "cliente") {
+      if (userHasRole(request.auth.user, "cliente")) {
         record.payload.collaboratorIds = [];
         record.project.status = "cotizacion";
       }
@@ -2256,7 +2357,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
       (id) => id !== record.assignedTo,
     );
     const assignmentError = await commercialAssignmentError(record, {
-      assignedRequired: request.auth.user.role === "cliente",
+      assignedRequired: userHasRole(request.auth.user, "cliente"),
     });
     if (assignmentError) {
       return response.status(400).json({ error: assignmentError });
@@ -2329,15 +2430,13 @@ export async function createApplication({ store, useMemory = false } = {}) {
           "El número de guía de despacho es obligatorio para marcar el pedido como Entregado.",
       });
     }
-    if (request.auth.user.role === "cliente") {
+    if (userHasRole(request.auth.user, "cliente")) {
       record.project.status = "cotizacion";
       record.assignedTo = current.assignedTo;
       record.payload.collaboratorIds = current.collaboratorIds || [];
-    }
-    if (request.auth.user.role === "comercial") {
+    } else if (userHasRole(request.auth.user, "comercial")) {
       record.assignedTo = current.assignedTo || request.auth.user.id;
-    }
-    if (request.auth.user.role === "produccion") {
+    } else if (userHasRole(request.auth.user, "produccion")) {
       record.assignedTo = current.assignedTo;
       record.payload.collaboratorIds = current.collaboratorIds || [];
     }
@@ -2345,7 +2444,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
       (id) => id !== record.assignedTo,
     );
     const assignmentError = await commercialAssignmentError(record, {
-      assignedRequired: request.auth.user.role === "cliente",
+      assignedRequired: userHasRole(request.auth.user, "cliente"),
     });
     if (assignmentError) {
       return response.status(400).json({ error: assignmentError });
@@ -2434,7 +2533,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
     authenticate,
     csrf,
     async (request, response) => {
-      if (!["admin", "produccion"].includes(request.auth.user.role)) {
+      if (!userHasRole(request.auth.user, "admin") && !userHasRole(request.auth.user, "produccion")) {
         return response.status(403).json({
           error: "Solo Administración o Producción pueden ajustar la agenda.",
         });
@@ -2444,7 +2543,8 @@ export async function createApplication({ store, useMemory = false } = {}) {
         return response.status(404).json({ error: "Proyecto no encontrado." });
       }
       if (
-        request.auth.user.role === "produccion" &&
+        userHasRole(request.auth.user, "produccion") &&
+        !userHasRole(request.auth.user, "admin") &&
         ![
           "facturado_pagado",
           "produccion",

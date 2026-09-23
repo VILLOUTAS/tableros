@@ -1,8 +1,30 @@
 # Cotizador online — Casa Diseño Multiespacio
 
-Versión 3.4.3 del cotizador y optimizador de cortes. Incluye acceso seguro con
+Versión 4.0.0 del cotizador y optimizador de cortes. Incluye acceso seguro con
 usuarios diferenciados, base PostgreSQL, catálogo completo importado desde
 Excel y persistencia de proyectos.
+
+## Novedades V4.0.0
+
+- `Largo` y `Ancho` son campos semánticos: nunca se ordenan por su valor. La
+  veta Longitudinal sigue el Largo ingresado, aunque sea numéricamente menor;
+  la veta Transversal sigue el Ancho y Sin veta permite rotación.
+- Rebaje perimetral previo de 10 mm por lado para tableros y de 30 mm por lado
+  para Neolith. El consumo interior de disco se mantiene en 3 mm por pasada.
+- Los códigos T1, T2, etc. se asignan por proyecto y conservan el mismo
+  producto en todas sus hojas de corte.
+- El listado de revisión permite editar Largo, Ancho, Cantidad y Veta.
+- El pegado desde cualquier Excel detecta encabezados y permite asignar
+  manualmente las columnas de pieza, cantidad, Largo, Ancho, veta y los lados
+  L1/L2/A1/A2. Antes de incorporar se puede corregir cada fila.
+- El PDF comienza con un resumen general y un listado completo, seguido por
+  una hoja de fabricación por placa.
+- Neolith habilitado en 12 mm (3200 × 1600 mm nominal) y 6 mm (3200 × 1500 mm
+  nominal), con color y precio definidos por proyecto. Incluye lineal bruto a
+  $75.000 netos por placa, Biselado-Pulido a $12.500 netos/ml y 45° a $7.500
+  netos/ml; no admite tapacantos.
+- Los usuarios internos pueden combinar Administrador, Comercial y Producción.
+  El perfil Cliente permanece exclusivo.
 
 ## Funciones incluidas
 
@@ -66,7 +88,7 @@ Excel y persistencia de proyectos.
 - Administración puede editar todo. Producción consulta las etapas previas e
   interviene desde Facturado y pagado; Comercial conserva consulta detallada
   después de liberar la orden.
-- 147 tableros y 121 tapacantos del Excel entregado, incluyendo MASISA Blanco
+- 149 materiales (147 tableros y 2 formatos Neolith) y 121 tapacantos, incluyendo MASISA Blanco
   Lisa de 15 y 18 mm en formato 2500 × 1830 mm.
 - Selección progresiva por categoría y búsqueda por código, nombre o marca.
 - Selección de múltiples tipos de tablero dentro de un mismo proyecto.
@@ -143,8 +165,8 @@ Excel y persistencia de proyectos.
 - CRM de fábrica para Administrador y Producción con fechas de ejecución y
   entrega, las seis columnas del flujo y reportes diarios, semanales y
   mensuales de carga, tableros entregados y metros lineales enchapados.
-- Categoría Neolith visible como “Próximamente”, todavía sin activar su
-  optimización para no mezclar reglas de mecanizado con las de tableros.
+- Categoría Neolith activa con reglas, rebaje, costos y acabados independientes
+  de los tableros y sin tapacantos.
 
 ## Publicar en Render
 
@@ -166,7 +188,7 @@ de datos necesitan un proceso Node.js permanente.
 
 No elimines el sitio anterior antes de probar el nuevo servicio.
 
-### Actualizar desde V3.0.x, V3.1.0 o V3.2.0 sin perder información
+### Actualizar desde una versión V3 sin perder información
 
 Usa el mismo Web Service y la misma variable `DATABASE_URL`. Al iniciar, la
 V3.3.0 agrega solamente la tabla `catalog_product_revisions` para administrar
@@ -195,6 +217,13 @@ L1/L2/A1/A2. No requiere migraciones ni modifica datos existentes.
 La corrección V3.4.3 agrega el desglose económico por tipo de tablero y por
 tipo de tapacanto para facilitar la facturación. Los totales, descuentos, IVA y
 reglas de cálculo existentes se conservan sin cambios y no requiere migración.
+
+La V4.0.0 usa la misma `DATABASE_URL` y ejecuta una migración únicamente
+aditiva: agrega `app_users.roles`, copia allí el rol histórico y mantiene
+`app_users.role` para compatibilidad. No elimina ni vacía tablas. Los proyectos
+anteriores sin `calculationVersion` se abren como `legacy-v3`, sin aplicarles
+rebaje ni recalcular su geometría. Solo pasan a las reglas V4 cuando un usuario
+presiona expresamente “Reoptimizar con rebaje V4” y luego guarda el proyecto.
 
 Antes de desplegar se recomienda generar un respaldo de PostgreSQL. No crees
 otra base de datos ni reemplaces `DATABASE_URL`, porque eso haría que la

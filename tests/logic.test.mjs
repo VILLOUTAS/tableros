@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   assignPieceCodes,
   cutRateForMaterial,
+  createEdgeCodeMap,
   cutDimensions,
   drawCutPlan,
   edgeImportLabel,
@@ -22,6 +23,7 @@ import {
   summarizePlateLeftovers,
   summarizePlatePieces,
   validateRut,
+  usablePlateDimensions,
 } from "../src/logic.js";
 
 const material = {
@@ -655,4 +657,118 @@ test("calcula metros de corte y enchape por cada hoja", () => {
   assert.equal(kerfMetrics.cutCount, cuts.length);
   assert.equal(kerfMetrics.kerfMillimeters, cuts.length * 3);
   assert.ok(cuts.every((cut) => cut.kerf === 3));
+});
+
+test("Largo y Ancho conservan su semántica aunque Largo sea el valor menor", () => {
+  const neolith = {
+    id: "neo-semantica",
+    categoryId: "neolith",
+    materialType: "neolith",
+    plateLength: 3200,
+    plateWidth: 1600,
+  };
+  const settings = { calculationVersion: "4.0", neolithTrim: 30 };
+  const semanticPiece = { length: 1200, width: 2500 };
+  assert.equal(
+    pieceFitsMaterial(
+      { ...semanticPiece, grain: "longitudinal" },
+      neolith,
+      settings,
+    ),
+    false,
+  );
+  assert.equal(
+    pieceFitsMaterial(
+      { ...semanticPiece, grain: "transversal" },
+      neolith,
+      settings,
+    ),
+    true,
+  );
+});
+
+test("aplica rebaje perimetral V4 sin alterar proyectos históricos", () => {
+  const board = { ...material, plateLength: 1000, plateWidth: 600 };
+  assert.deepEqual(usablePlateDimensions(board, {}), {
+    trim: 0,
+    plateLength: 1000,
+    plateWidth: 600,
+  });
+  const settings = { calculationVersion: "4.0", perimeterTrim: 10, kerf: 3 };
+  assert.equal(
+    pieceFitsMaterial(
+      { length: 980, width: 580, grain: "longitudinal" },
+      board,
+      settings,
+    ),
+    true,
+  );
+  assert.equal(
+    pieceFitsMaterial(
+      { length: 981, width: 580, grain: "longitudinal" },
+      board,
+      settings,
+    ),
+    false,
+  );
+  const result = optimize(
+    board,
+    [piece({ length: 980, width: 580, edges: {}, grain: "longitudinal" })],
+    edges,
+    settings,
+  );
+  assert.equal(result.plates[0].trim, 10);
+  assert.equal(result.plates[0].usablePlateLength, 980);
+  assert.equal(
+    plateCutSequence(result.plates[0], board, 3).filter(
+      (cut) => cut.type === "rebaje perimetral",
+    ).length,
+    4,
+  );
+});
+
+test("mantiene códigos globales de tapacanto entre hojas", () => {
+  const first = createEdgeCodeMap([
+    piece({ edges: { top: "pvc-1", right: "pvc-2" } }),
+  ]);
+  const second = createEdgeCodeMap(
+    [piece({ edges: { top: "pvc-2", right: "pvc-3" } })],
+    first,
+  );
+  assert.deepEqual(second, { "pvc-1": "T1", "pvc-2": "T2", "pvc-3": "T3" });
+});
+
+test("calcula Neolith con rebaje, lineal bruto por placa y acabados por ml", () => {
+  const neolith = {
+    id: "neolith-12",
+    sku: "NEO-12",
+    name: "Color proyecto",
+    categoryId: "neolith",
+    materialType: "neolith",
+    plateLength: 3200,
+    plateWidth: 1600,
+    thickness: 12,
+    netPrice: 100000,
+  };
+  const result = optimize(
+    neolith,
+    [
+      piece({
+        materialId: neolith.id,
+        length: 1000,
+        width: 500,
+        edges: {},
+        finishes: { top: "bevel", right: "miter45", bottom: "rough", left: "rough" },
+      }),
+    ],
+    edges,
+    { calculationVersion: "4.0", neolithTrim: 30, kerf: 3 },
+  );
+  assert.equal(result.plates[0].usablePlateLength, 3140);
+  assert.equal(result.plates[0].usablePlateWidth, 1540);
+  assert.equal(result.summary.cuttingSubtotal, 75000);
+  assert.equal(result.summary.finishMetersByType.bevel, 1);
+  assert.equal(result.summary.finishMetersByType.miter45, 0.5);
+  assert.equal(result.summary.finishSubtotal, 16250);
+  assert.equal(result.summary.edgeMeters, 0);
 });

@@ -1,5 +1,67 @@
 const sides = ["top", "right", "bottom", "left"];
 export const MINIMUM_CUT_SIDE = 50;
+export const CALCULATION_VERSION = "4.0";
+export const BOARD_PERIMETER_TRIM = 10;
+export const NEOLITH_PERIMETER_TRIM = 30;
+export const NEOLITH_LINEAR_RATE = 75_000;
+export const NEOLITH_FINISH_RATES = Object.freeze({
+  bevel: 12_500,
+  miter45: 7_500,
+});
+
+export function isNeolithMaterial(material = {}) {
+  return material.materialType === "neolith" || material.categoryId === "neolith";
+}
+
+export function materialPerimeterTrim(material = {}, settings = {}) {
+  if (!settings?.calculationVersion || settings.calculationVersion === "legacy-v3") {
+    return Math.max(0, Number(settings.perimeterTrim) || 0);
+  }
+  const configured = isNeolithMaterial(material)
+    ? settings.neolithTrim
+    : settings.perimeterTrim;
+  const fallback = isNeolithMaterial(material)
+    ? NEOLITH_PERIMETER_TRIM
+    : BOARD_PERIMETER_TRIM;
+  return Math.max(0, Number(configured ?? material.perimeterTrim ?? fallback) || 0);
+}
+
+export function usablePlateDimensions(material = {}, settings = {}) {
+  const trim = materialPerimeterTrim(material, settings);
+  return {
+    trim,
+    plateLength: Math.max(0, Number(material.plateLength || 0) - trim * 2),
+    plateWidth: Math.max(0, Number(material.plateWidth || 0) - trim * 2),
+  };
+}
+
+export function createEdgeCodeMap(pieces = [], existing = {}) {
+  const result = {};
+  const usedCodes = new Set();
+  Object.entries(existing || {})
+    .filter(([edgeId, code]) => edgeId && /^T\d+$/i.test(String(code)))
+    .sort((a, b) => Number(String(a[1]).slice(1)) - Number(String(b[1]).slice(1)))
+    .forEach(([edgeId, code]) => {
+      const normalized = String(code).toUpperCase();
+      if (usedCodes.has(normalized)) return;
+      result[edgeId] = normalized;
+      usedCodes.add(normalized);
+    });
+  let sequence = 1;
+  const nextCode = () => {
+    while (usedCodes.has(`T${sequence}`)) sequence += 1;
+    const code = `T${sequence}`;
+    usedCodes.add(code);
+    sequence += 1;
+    return code;
+  };
+  for (const piece of pieces || []) {
+    for (const edgeId of Object.values(piece.edges || {})) {
+      if (edgeId && !result[edgeId]) result[edgeId] = nextCode();
+    }
+  }
+  return result;
+}
 
 export function isBlankPieceImportRow(values = []) {
   return values.every((value) => String(value ?? "").trim() === "");
@@ -125,6 +187,33 @@ const requiredPieceHeaderGroups = [
   ["cantidad", "qty", "cant", "unidades", "unidad", "ud"],
 ];
 
+export function normalizeGrainValue(value, fallback = "sin-veta") {
+  const normalized = normalizeImportHeader(value || fallback);
+  if (
+    normalized.startsWith("long") ||
+    normalized === "l" ||
+    normalized.includes("segun largo") ||
+    normalized.includes("según largo")
+  ) {
+    return "longitudinal";
+  }
+  if (
+    normalized.startsWith("trans") ||
+    normalized === "t" ||
+    normalized.includes("segun ancho") ||
+    normalized.includes("según ancho")
+  ) {
+    return "transversal";
+  }
+  return "sin-veta";
+}
+
+function affirmativeImportValue(value) {
+  return ["x", "si", "sí", "s", "yes", "1", "true", "aplica"].includes(
+    normalizeImportHeader(value),
+  );
+}
+
 function pieceImportHeaderRowIndex(table = []) {
   return table.slice(0, 25).findIndex((candidate) => {
     const normalized = new Set(candidate.map(normalizeImportHeader));
@@ -140,6 +229,10 @@ export function parsePieceImportTable(
     catalogMaterials = [],
     catalogEdges = [],
     fallbackMaterialId = "",
+    fallbackGrain = "sin-veta",
+    fallbackEdgeId = "",
+    fallbackEdges = {},
+    settings = {},
     idFactory = defaultImportId,
   } = {},
 ) {
@@ -353,12 +446,7 @@ export function parsePieceImportTable(
         materialImportLabel,
       ) ||
       (!materialSelection && !materialReference ? fallbackMaterial : null);
-    const normalizedGrain = normalizeImportHeader(rawGrain || "sin-veta");
-    const grain = normalizedGrain.startsWith("long")
-      ? "longitudinal"
-      : normalizedGrain.startsWith("trans")
-        ? "transversal"
-        : "sin-veta";
+    const grain = normalizeGrainValue(rawGrain, fallbackGrain);
 
     if (
       !Number.isFinite(length) ||
@@ -381,10 +469,11 @@ export function parsePieceImportTable(
       );
       return;
     }
-    if (!pieceFitsMaterial({ length, width, grain }, material)) {
+    if (!pieceFitsMaterial({ length, width, grain }, material, settings)) {
+      const usable = usablePlateDimensions(material, settings);
       reject(
         "medidas",
-        `la pieza excede la plancha ${material.plateLength} × ${material.plateWidth} mm para la veta indicada.`,
+        `la pieza excede la plancha (área útil ${usable.plateLength} × ${usable.plateWidth} mm) para la veta indicada.`,
       );
       return;
     }
@@ -417,11 +506,11 @@ export function parsePieceImportTable(
       ([side, reference]) => {
         const value = String(reference ?? "").trim();
         if (!value) return false;
-        const edge = resolveCatalogReference(
-          catalogEdges,
-          value,
-          edgeImportLabel,
-        );
+        const edge =
+          (affirmativeImportValue(value) && fallbackEdgeId
+            ? catalogEdges.find((item) => item.id === fallbackEdgeId)
+            : null) ||
+          resolveCatalogReference(catalogEdges, value, edgeImportLabel);
         if (!edge) return true;
         importedEdges[side] = edge.id;
         return false;
@@ -435,6 +524,12 @@ export function parsePieceImportTable(
       return;
     }
 
+    for (const side of sides) {
+      if (!importedEdges[side] && fallbackEdges?.[side] && fallbackEdgeId) {
+        importedEdges[side] = fallbackEdgeId;
+      }
+    }
+
     const productionError = pieceProductionError(
       {
         length,
@@ -445,6 +540,7 @@ export function parsePieceImportTable(
       },
       material,
       catalogEdges,
+      settings,
     );
     if (productionError) {
       reject("medidas", productionError);
@@ -500,9 +596,13 @@ export function assignPieceCodes(pieces = []) {
 }
 
 export function cutRateForMaterial(material = {}, settings = {}) {
-  const melamine = ["melamina-15", "melamina-18"].includes(
-    material.categoryId,
-  );
+  if (isNeolithMaterial(material)) {
+    return Math.max(
+      0,
+      Number(settings.neolithLinearRate ?? NEOLITH_LINEAR_RATE) || 0,
+    );
+  }
+  const melamine = String(material.categoryId || "").startsWith("melamina");
   const configured = melamine
     ? settings.melamineCutRate
     : settings.specialCutRate;
@@ -569,7 +669,12 @@ export function finishedDimensions(piece, edgeBands = []) {
   };
 }
 
-export function pieceProductionError(piece, material, edgeBands = []) {
+export function pieceProductionError(
+  piece,
+  material,
+  edgeBands = [],
+  settings = {},
+) {
   const cut = cutDimensions(piece, edgeBands);
   if (
     cut.cutLength < MINIMUM_CUT_SIDE ||
@@ -583,24 +688,27 @@ export function pieceProductionError(piece, material, edgeBands = []) {
     !pieceFitsMaterial(
       { ...piece, length: cut.cutLength, width: cut.cutWidth },
       material,
+      settings,
     )
   ) {
-    return `la pieza no cabe en la plancha ${material?.plateLength || 0} × ${
-      material?.plateWidth || 0
-    } mm para la veta indicada.`;
+    const usable = usablePlateDimensions(material, settings);
+    return `la pieza no cabe en la plancha (área útil ${usable.plateLength} × ${
+      usable.plateWidth
+    } mm) para la veta indicada (Largo y Ancho no se intercambian automáticamente).`;
   }
   return "";
 }
 
-export function pieceFitsMaterial(piece, material) {
+export function pieceFitsMaterial(piece, material, settings = {}) {
   if (!material) return false;
   const length = Number(piece.length);
   const width = Number(piece.width);
   if (length <= 0 || width <= 0) return false;
+  const usable = usablePlateDimensions(material, settings);
   const direct =
-    length <= material.plateLength && width <= material.plateWidth;
+    length <= usable.plateLength && width <= usable.plateWidth;
   const rotated =
-    width <= material.plateLength && length <= material.plateWidth;
+    width <= usable.plateLength && length <= usable.plateWidth;
   if (piece.grain === "longitudinal") return direct;
   if (piece.grain === "transversal") return rotated;
   return direct || rotated;
@@ -837,8 +945,37 @@ export function calculatePlateLeftovers(plate, material, kerf = 0) {
     }));
 }
 
+function normalizeNeolithFinish(value) {
+  const normalized = normalizeCatalogReference(value).replace(/[^a-z0-9]/g, "");
+  if (["bevel", "bisel", "biseladopulido", "biseladopulir"].includes(normalized)) {
+    return "bevel";
+  }
+  if (["45", "45grados", "miter45", "inglete45"].includes(normalized)) {
+    return "miter45";
+  }
+  return "rough";
+}
+
+export function neolithFinishMeters(pieces = []) {
+  const result = { bevel: 0, miter45: 0 };
+  for (const piece of pieces) {
+    const quantity = Math.max(1, Number(piece.quantity) || 1);
+    for (const side of sides) {
+      const finish = normalizeNeolithFinish(piece.finishes?.[side]);
+      if (finish === "rough") continue;
+      const millimeters =
+        side === "top" || side === "bottom"
+          ? Number(piece.length) || 0
+          : Number(piece.width) || 0;
+      result[finish] += (millimeters * quantity) / 1000;
+    }
+  }
+  return result;
+}
+
 export function optimize(material, pieces, edgeBands, settings = {}) {
   const normalizedSettings = {
+    ...settings,
     kerf: Math.max(0, Number(settings.kerf) || 0),
     cutRatePerBoard: Math.max(
       0,
@@ -857,6 +994,12 @@ export function optimize(material, pieces, edgeBands, settings = {}) {
       Math.max(0, Number(settings.servicesDiscount) || 0),
     ),
   };
+  const usable = usablePlateDimensions(material, normalizedSettings);
+  const layoutMaterial = {
+    ...material,
+    plateLength: usable.plateLength,
+    plateWidth: usable.plateWidth,
+  };
   const expanded = pieces
     .flatMap((piece) =>
       Array.from(
@@ -871,11 +1014,11 @@ export function optimize(material, pieces, edgeBands, settings = {}) {
     );
 
   const layouts = [
-    packLayout(material, expanded, normalizedSettings, "longitudinal"),
+    packLayout(layoutMaterial, expanded, normalizedSettings, "longitudinal"),
   ];
   if (normalizedSettings.optimizationMode === "free") {
     layouts.push(
-      packLayout(material, expanded, normalizedSettings, "transversal"),
+      packLayout(layoutMaterial, expanded, normalizedSettings, "transversal"),
     );
   }
   const cutCountFor = (layout) =>
@@ -885,7 +1028,7 @@ export function optimize(material, pieces, edgeBands, settings = {}) {
     );
   const reusableScoreFor = (layout) => {
     const leftovers = layout.plates.flatMap((plate) =>
-      calculatePlateLeftovers(plate, material, normalizedSettings.kerf),
+      calculatePlateLeftovers(plate, layoutMaterial, normalizedSettings.kerf),
     );
     const largest = leftovers.reduce(
       (maximum, leftover) =>
@@ -910,12 +1053,17 @@ export function optimize(material, pieces, edgeBands, settings = {}) {
   const { plates, warnings } = layouts[0];
   const plateArea = material.plateLength * material.plateWidth;
   for (const plate of plates) {
+    plate.trim = usable.trim;
+    plate.rawPlateLength = Number(material.plateLength) || 0;
+    plate.rawPlateWidth = Number(material.plateWidth) || 0;
+    plate.usablePlateLength = usable.plateLength;
+    plate.usablePlateWidth = usable.plateWidth;
     plate.utilization = plateArea ? (plate.usedArea / plateArea) * 100 : 0;
   }
 
   const metersByEdge = {};
   let edgeMeters = 0;
-  for (const piece of pieces) {
+  for (const piece of isNeolithMaterial(material) ? [] : pieces) {
     const finished = finishedDimensions(piece, edgeBands);
     for (const side of sides) {
       const edgeId = piece.edges?.[side];
@@ -937,7 +1085,8 @@ export function optimize(material, pieces, edgeBands, settings = {}) {
     return total + meters * price;
   }, 0);
   const cutCount = plates.reduce(
-    (total, plate) => total + plate.strips.length + plate.pieces.length,
+    (total, plate) =>
+      total + plate.strips.length + plate.pieces.length + (plate.trim > 0 ? 4 : 0),
     0,
   );
   const cuttingSubtotal = plates.length * normalizedSettings.cutRatePerBoard;
@@ -948,7 +1097,23 @@ export function optimize(material, pieces, edgeBands, settings = {}) {
     },
     0,
   );
-  const servicesSubtotal = cuttingSubtotal + bandingSubtotal;
+  const finishMetersByType = isNeolithMaterial(material)
+    ? neolithFinishMeters(pieces)
+    : { bevel: 0, miter45: 0 };
+  const finishRates = {
+    bevel: Math.max(
+      0,
+      Number(settings.neolithBevelRate ?? NEOLITH_FINISH_RATES.bevel) || 0,
+    ),
+    miter45: Math.max(
+      0,
+      Number(settings.neolithMiter45Rate ?? NEOLITH_FINISH_RATES.miter45) || 0,
+    ),
+  };
+  const finishSubtotal =
+    finishMetersByType.bevel * finishRates.bevel +
+    finishMetersByType.miter45 * finishRates.miter45;
+  const servicesSubtotal = cuttingSubtotal + bandingSubtotal + finishSubtotal;
   const boardDiscountAmount =
     boardSubtotal * (normalizedSettings.boardDiscount / 100);
   const edgeDiscountAmount =
@@ -971,6 +1136,7 @@ export function optimize(material, pieces, edgeBands, settings = {}) {
       edgeSubtotal,
       cuttingSubtotal,
       bandingSubtotal,
+      finishSubtotal,
       servicesSubtotal,
       boardDiscount: normalizedSettings.boardDiscount,
       edgeDiscount: normalizedSettings.edgeDiscount,
@@ -990,6 +1156,11 @@ export function optimize(material, pieces, edgeBands, settings = {}) {
               100
           : 0,
       metersByEdge,
+      finishMetersByType,
+      finishRates,
+      perimeterTrim: usable.trim,
+      usablePlateLength: usable.plateLength,
+      usablePlateWidth: usable.plateWidth,
     },
   };
 }
@@ -1033,7 +1204,11 @@ export function optimizeProject(
       };
       mapped.leftovers = calculatePlateLeftovers(
         mapped,
-        material,
+        {
+          ...material,
+          plateLength: mapped.usablePlateLength || material.plateLength,
+          plateWidth: mapped.usablePlateWidth || material.plateWidth,
+        },
         settings.kerf,
       );
       return mapped;
@@ -1050,6 +1225,7 @@ export function optimizeProject(
     "edgeSubtotal",
     "cuttingSubtotal",
     "bandingSubtotal",
+    "finishSubtotal",
     "servicesSubtotal",
     "boardDiscountAmount",
     "edgeDiscountAmount",
@@ -1109,6 +1285,14 @@ export function optimizeProject(
     },
     {},
   );
+  summary.finishMetersByType = materialResults.reduce(
+    (totals, { result }) => {
+      totals.bevel += Number(result.summary.finishMetersByType?.bevel || 0);
+      totals.miter45 += Number(result.summary.finishMetersByType?.miter45 || 0);
+      return totals;
+    },
+    { bevel: 0, miter45: 0 },
+  );
 
   return {
     plates,
@@ -1127,6 +1311,10 @@ export function optimizeProject(
         result.summary.boardCount > 0
           ? result.summary.cuttingSubtotal / result.summary.boardCount
           : 0,
+      perimeterTrim: result.summary.perimeterTrim,
+      usablePlateLength: result.summary.usablePlateLength,
+      usablePlateWidth: result.summary.usablePlateWidth,
+      finishSubtotal: result.summary.finishSubtotal,
       utilization: 100 - result.summary.waste,
     })),
     edgeSummaries: Object.entries(summary.metersByEdge)
@@ -1159,6 +1347,31 @@ export function optimizeProject(
             numeric: true,
           }),
       ),
+    finishSummaries: [
+      {
+        finishId: "bevel",
+        name: "Biselado - Pulido",
+        meters: Number(summary.finishMetersByType.bevel) || 0,
+        unitPrice: Math.max(
+          0,
+          Number(settings.neolithBevelRate ?? NEOLITH_FINISH_RATES.bevel) || 0,
+        ),
+      },
+      {
+        finishId: "miter45",
+        name: "45°",
+        meters: Number(summary.finishMetersByType.miter45) || 0,
+        unitPrice: Math.max(
+          0,
+          Number(settings.neolithMiter45Rate ?? NEOLITH_FINISH_RATES.miter45) || 0,
+        ),
+      },
+    ]
+      .filter((item) => item.meters > 0)
+      .map((item) => ({
+        ...item,
+        serviceSubtotal: item.meters * item.unitPrice,
+      })),
   };
 }
 
@@ -1176,6 +1389,7 @@ export function summarizePlatePieces(plate) {
   const grouped = new Map();
   for (const piece of plate?.pieces || []) {
     const pieceEdges = piece.edges || {};
+    const pieceFinishes = piece.finishes || {};
     const key = [
       piece.id || piece.code || piece.instanceId,
       piece.cutLength,
@@ -1185,6 +1399,10 @@ export function summarizePlatePieces(plate) {
       pieceEdges.bottom || "",
       pieceEdges.left || "",
       pieceEdges.right || "",
+      pieceFinishes.top || "",
+      pieceFinishes.bottom || "",
+      pieceFinishes.left || "",
+      pieceFinishes.right || "",
     ].join("|");
     const current = grouped.get(key);
     if (current) {
@@ -1206,6 +1424,12 @@ export function summarizePlatePieces(plate) {
         bottom: pieceEdges.bottom || null,
         left: pieceEdges.left || null,
         right: pieceEdges.right || null,
+      },
+      finishes: {
+        top: pieceFinishes.top || "rough",
+        bottom: pieceFinishes.bottom || "rough",
+        left: pieceFinishes.left || "rough",
+        right: pieceFinishes.right || "rough",
       },
       quantity: 1,
     });
@@ -1315,16 +1539,20 @@ const edgePatterns = [
   [9, 3, 2, 3, 2, 3],
 ];
 
-function edgeVisualMap(edgeIds) {
+function edgeVisualMap(edgeIds, projectCodeMap = {}) {
   return new Map(
-    edgeIds.map((id, index) => [
-      id,
-      {
-        code: `T${index + 1}`,
+    edgeIds.map((id, index) => {
+      const code = projectCodeMap[id] || `T${index + 1}`;
+      const numericCode = Math.max(1, Number(String(code).replace(/\D/g, "")) || 1);
+      return [
+        id,
+        {
+        code,
         color: "#101820",
-        dash: edgePatterns[index % edgePatterns.length],
+        dash: edgePatterns[(numericCode - 1) % edgePatterns.length],
       },
-    ]),
+      ];
+    }),
   );
 }
 
@@ -1436,6 +1664,11 @@ function spacedMarks(values, scale, minimumPixels = 28) {
 export function plateCutSequence(plate, material, kerf = 0) {
   const cuts = [];
   const effectiveKerf = Math.max(0, Number(kerf) || 0);
+  const trim = Math.max(0, Number(plate?.trim) || 0);
+  const rawLength = Number(plate?.rawPlateLength || material?.plateLength) || 0;
+  const rawWidth = Number(plate?.rawPlateWidth || material?.plateWidth) || 0;
+  const usableLength = Number(plate?.usablePlateLength) || rawLength - trim * 2;
+  const usableWidth = Number(plate?.usablePlateWidth) || rawWidth - trim * 2;
   const add = (axis, coordinate, length, type, stripIndex) => {
     cuts.push({
       number: cuts.length + 1,
@@ -1447,27 +1680,33 @@ export function plateCutSequence(plate, material, kerf = 0) {
       kerf: effectiveKerf,
     });
   };
+  if (trim > 0) {
+    add("X", trim, rawWidth, "rebaje perimetral", null);
+    add("X", rawLength - trim, rawWidth, "rebaje perimetral", null);
+    add("Y", trim, usableLength, "rebaje perimetral", null);
+    add("Y", rawWidth - trim, usableLength, "rebaje perimetral", null);
+  }
   for (const [stripIndex, strip] of (plate.strips || []).entries()) {
     if (plate.cutAxis === "transversal") {
       const fullCoordinate = strip.y + strip.height;
-      if (fullCoordinate < material.plateLength - 1) {
-        add("X", fullCoordinate, material.plateWidth, "completo", stripIndex);
+      if (fullCoordinate < usableLength - 1) {
+        add("X", trim + fullCoordinate, usableWidth, "completo", stripIndex);
       }
       for (const piece of strip.pieces || []) {
         const coordinate = piece.y + piece.drawHeight;
-        if (coordinate < material.plateWidth - 1) {
-          add("Y", coordinate, strip.height, "secundario", stripIndex);
+        if (coordinate < usableWidth - 1) {
+          add("Y", trim + coordinate, strip.height, "secundario", stripIndex);
         }
       }
     } else {
       const fullCoordinate = strip.y + strip.height;
-      if (fullCoordinate < material.plateWidth - 1) {
-        add("Y", fullCoordinate, material.plateLength, "completo", stripIndex);
+      if (fullCoordinate < usableWidth - 1) {
+        add("Y", trim + fullCoordinate, usableLength, "completo", stripIndex);
       }
       for (const piece of strip.pieces || []) {
         const coordinate = piece.x + piece.drawWidth;
-        if (coordinate < material.plateLength - 1) {
-          add("X", coordinate, strip.height, "secundario", stripIndex);
+        if (coordinate < usableLength - 1) {
+          add("X", trim + coordinate, strip.height, "secundario", stripIndex);
         }
       }
     }
@@ -1481,29 +1720,11 @@ export function plateProductionMetrics(
   edgeBands = [],
   kerf = 0,
 ) {
-  let cutMillimeters = 0;
-  for (const strip of plate.strips || []) {
-    const fullCutPosition = strip.y + strip.height;
-    if (plate.cutAxis === "transversal") {
-      if (fullCutPosition < material.plateLength - 1) {
-        cutMillimeters += material.plateWidth;
-      }
-      for (const piece of strip.pieces || []) {
-        if (piece.y + piece.drawHeight < material.plateWidth - 1) {
-          cutMillimeters += strip.height;
-        }
-      }
-    } else {
-      if (fullCutPosition < material.plateWidth - 1) {
-        cutMillimeters += material.plateLength;
-      }
-      for (const piece of strip.pieces || []) {
-        if (piece.x + piece.drawWidth < material.plateLength - 1) {
-          cutMillimeters += strip.height;
-        }
-      }
-    }
-  }
+  const sequence = plateCutSequence(plate, material, kerf);
+  const cutMillimeters = sequence.reduce(
+    (sum, cut) => sum + (Number(cut.length) || 0),
+    0,
+  );
 
   const metersByEdge = {};
   let edgeMeters = 0;
@@ -1521,15 +1742,19 @@ export function plateProductionMetrics(
       metersByEdge[edgeId] = (metersByEdge[edgeId] || 0) + meters;
     }
   }
+  const finishMetersByType = neolithFinishMeters(
+    (plate.pieces || []).map((piece) => ({ ...piece, quantity: 1 })),
+  );
 
   return {
     cutMeters: cutMillimeters / 1000,
     edgeMeters,
     metersByEdge,
-    cutCount: plateCutSequence(plate, material, kerf).length,
+    finishMetersByType,
+    finishMeters: finishMetersByType.bevel + finishMetersByType.miter45,
+    cutCount: sequence.length,
     kerfMillimeters:
-      plateCutSequence(plate, material, kerf).length *
-      Math.max(0, Number(kerf) || 0),
+      sequence.length * Math.max(0, Number(kerf) || 0),
   };
 }
 
@@ -1542,6 +1767,7 @@ export function drawCutPlan(
   context = {},
 ) {
   const ctx = canvas.getContext("2d");
+  const neolith = isNeolithMaterial(material);
   const usedEdgeIds = [
     ...new Set(
       plate.pieces
@@ -1592,7 +1818,14 @@ export function drawCutPlan(
   const plateH = material.plateWidth * scale;
   const ox = margin.left;
   const oy = margin.top;
-  const edgeVisuals = edgeVisualMap(usedEdgeIds);
+  const trim = Math.max(0, Number(plate.trim) || 0);
+  const usableLength = Number(plate.usablePlateLength) || material.plateLength - trim * 2;
+  const usableWidth = Number(plate.usablePlateWidth) || material.plateWidth - trim * 2;
+  const usableX = ox + trim * scale;
+  const usableY = oy + trim * scale;
+  const usableW = usableLength * scale;
+  const usableH = usableWidth * scale;
+  const edgeVisuals = edgeVisualMap(usedEdgeIds, context.edgeCodeMap || {});
   const productionMetrics = plateProductionMetrics(
     plate,
     material,
@@ -1645,7 +1878,7 @@ export function drawCutPlan(
       ctx,
       `MATERIAL: ${material.brand} ${material.name} (${material.sku}) · ${
         material.plateLength
-      } × ${material.plateWidth} × ${material.thickness} mm`,
+      } × ${material.plateWidth} × ${material.thickness} mm · ÚTIL ${usableLength} × ${usableWidth} mm`,
       headerWidth,
     ),
     headerX,
@@ -1691,7 +1924,7 @@ export function drawCutPlan(
   ctx.font = "700 12px Arial";
   ctx.textAlign = "left";
   ctx.fillText("TOTAL ML DE CORTE", metricLabelX, 52);
-  ctx.fillText("TOTAL ML DE ENCHAPE", metricLabelX, 76);
+  ctx.fillText(neolith ? "TOTAL ML DE ACABADOS" : "TOTAL ML DE ENCHAPE", metricLabelX, 76);
   ctx.fillText("PASADAS / PÉRDIDA TOTAL", metricLabelX, 100);
   ctx.fillText("DISCO NOMINAL / POR PASADA", metricLabelX, 124);
   ctx.textAlign = "right";
@@ -1704,7 +1937,7 @@ export function drawCutPlan(
     52,
   );
   ctx.fillText(
-    productionMetrics.edgeMeters.toLocaleString("es-CL", {
+    (neolith ? productionMetrics.finishMeters : productionMetrics.edgeMeters).toLocaleString("es-CL", {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     }),
@@ -1733,15 +1966,39 @@ export function drawCutPlan(
   ctx.lineTo(width - 28, 166);
   ctx.stroke();
 
-  ctx.fillStyle = "#fff";
+  ctx.fillStyle = trim > 0 ? "#e4e0d8" : "#fff";
   ctx.strokeStyle = "#101820";
   ctx.lineWidth = 3;
   ctx.fillRect(ox, oy, plateW, plateH);
   ctx.strokeRect(ox, oy, plateW, plateH);
+  if (trim > 0) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(ox, oy, plateW, plateH);
+    ctx.clip();
+    ctx.strokeStyle = "#a29a8c";
+    ctx.lineWidth = 1;
+    for (let line = -plateH; line < plateW + plateH; line += 14) {
+      ctx.beginPath();
+      ctx.moveTo(ox + line, oy + plateH);
+      ctx.lineTo(ox + line + plateH, oy);
+      ctx.stroke();
+    }
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(usableX, usableY, usableW, usableH);
+    ctx.strokeStyle = "#7d7468";
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]);
+    ctx.strokeRect(usableX, usableY, usableW, usableH);
+    ctx.restore();
+    ctx.fillStyle = "#504a43";
+    ctx.font = "700 9px Arial";
+    ctx.fillText(`REBAJE PERIMETRAL ${trim} mm`, ox + 8, oy + 13);
+  }
 
   (plate.leftovers || []).forEach((leftover) => {
-    const x = ox + leftover.x * scale;
-    const y = oy + leftover.y * scale;
+    const x = usableX + leftover.x * scale;
+    const y = usableY + leftover.y * scale;
     const w = leftover.width * scale;
     const h = leftover.height * scale;
     ctx.save();
@@ -1771,8 +2028,8 @@ export function drawCutPlan(
   });
 
   plate.pieces.forEach((piece, index) => {
-    const x = ox + piece.x * scale;
-    const y = oy + piece.y * scale;
+    const x = usableX + piece.x * scale;
+    const y = usableY + piece.y * scale;
     const w = piece.drawWidth * scale;
     const h = piece.drawHeight * scale;
     ctx.fillStyle = index % 2 ? "#e7eaec" : "#d8dde0";
@@ -1816,6 +2073,28 @@ export function drawCutPlan(
       const visual = edgeVisuals.get(edge.id);
       drawEdgeLine(ctx, edge, visual, x1, y1, x2, y2);
       drawEdgeCode(ctx, visual, side, x, y, w, h);
+    }
+    if (neolith) {
+      const originalFinishes = piece.finishes || {};
+      const finishes = piece.rotated
+        ? {
+            top: originalFinishes.left,
+            right: originalFinishes.top,
+            bottom: originalFinishes.right,
+            left: originalFinishes.bottom,
+          }
+        : originalFinishes;
+      const finishVisuals = {
+        bevel: { code: "BP", color: "#174f7a", dash: [10, 4] },
+        miter45: { code: "45°", color: "#8a321f", dash: [3, 3] },
+      };
+      for (const [side, x1, y1, x2, y2] of edgeLines) {
+        const finish = normalizeNeolithFinish(finishes[side]);
+        const visual = finishVisuals[finish];
+        if (!visual) continue;
+        drawEdgeLine(ctx, null, visual, x1, y1, x2, y2);
+        drawEdgeCode(ctx, visual, side, x, y, w, h);
+      }
     }
     ctx.setLineDash([]);
 
@@ -1919,41 +2198,41 @@ export function drawCutPlan(
   ctx.fillStyle = "#101820";
   ctx.lineWidth = 2.2;
   ctx.setLineDash([14, 6]);
-  let cutNumber = 0;
+  let cutNumber = trim > 0 ? 4 : 0;
   for (const strip of plate.strips) {
     if (plate.cutAxis === "transversal") {
-      const cutX = ox + (strip.y + strip.height) * scale;
-      if (cutX < ox + plateW - 1) {
+      const cutX = usableX + (strip.y + strip.height) * scale;
+      if (cutX < usableX + usableW - 1) {
         cutNumber += 1;
         if (effectiveKerf > 0) {
           ctx.fillStyle = "rgba(16,24,32,.12)";
-          ctx.fillRect(cutX, oy, effectiveKerf * scale, plateH);
+          ctx.fillRect(cutX, usableY, effectiveKerf * scale, usableH);
         }
         ctx.beginPath();
-        ctx.moveTo(cutX, oy);
-        ctx.lineTo(cutX, oy + plateH);
+        ctx.moveTo(cutX, usableY);
+        ctx.lineTo(cutX, usableY + usableH);
         ctx.stroke();
         ctx.save();
-        ctx.translate(cutX + 11, oy + plateH - 12);
+        ctx.translate(cutX + 11, usableY + usableH - 12);
         ctx.rotate(-Math.PI / 2);
         drawCutTag(ctx, "CORTE TRANSVERSAL COMPLETO", 0, 0, 170);
         ctx.restore();
         drawCutTag(
           ctx,
-          `C${cutNumber} · ${Math.round(strip.y + strip.height)} mm · K${effectiveKerf}`,
+          `C${cutNumber} · ${Math.round(trim + strip.y + strip.height)} mm · K${effectiveKerf}`,
           cutX + 5,
-          oy + 16,
+          usableY + 16,
           145,
         );
       }
       for (const piece of strip.pieces) {
-        const cutY = oy + (piece.y + piece.drawHeight) * scale;
-        if (cutY < oy + plateH - 1) {
+        const cutY = usableY + (piece.y + piece.drawHeight) * scale;
+        if (cutY < usableY + usableH - 1) {
           cutNumber += 1;
           if (effectiveKerf > 0) {
             ctx.fillStyle = "rgba(16,24,32,.10)";
             ctx.fillRect(
-              ox + strip.y * scale,
+              usableX + strip.y * scale,
               cutY,
               strip.height * scale,
               effectiveKerf * scale,
@@ -1963,8 +2242,8 @@ export function drawCutPlan(
           ctx.lineWidth = 1;
           ctx.setLineDash([3, 4]);
           ctx.beginPath();
-          ctx.moveTo(ox + strip.y * scale, cutY);
-          ctx.lineTo(ox + (strip.y + strip.height) * scale, cutY);
+          ctx.moveTo(usableX + strip.y * scale, cutY);
+          ctx.lineTo(usableX + (strip.y + strip.height) * scale, cutY);
           ctx.stroke();
           const tagSpace = Math.max(26, strip.height * scale - 6);
           const compactCutTag =
@@ -1973,47 +2252,47 @@ export function drawCutPlan(
             ctx,
             compactCutTag
               ? `C${cutNumber}`
-              : `C${cutNumber} · ${Math.round(piece.y + piece.drawHeight)} · K${effectiveKerf}`,
-            ox + strip.y * scale + 3,
+              : `C${cutNumber} · ${Math.round(trim + piece.y + piece.drawHeight)} · K${effectiveKerf}`,
+            usableX + strip.y * scale + 3,
             cutY - 3,
             compactCutTag ? Math.min(36, tagSpace) : tagSpace,
           );
         }
       }
     } else {
-      const cutY = oy + (strip.y + strip.height) * scale;
-      if (cutY < oy + plateH - 1) {
+      const cutY = usableY + (strip.y + strip.height) * scale;
+      if (cutY < usableY + usableH - 1) {
         cutNumber += 1;
         if (effectiveKerf > 0) {
           ctx.fillStyle = "rgba(16,24,32,.12)";
-          ctx.fillRect(ox, cutY, plateW, effectiveKerf * scale);
+          ctx.fillRect(usableX, cutY, usableW, effectiveKerf * scale);
         }
         ctx.strokeStyle = "#101820";
         ctx.lineWidth = 2.2;
         ctx.setLineDash([14, 6]);
         ctx.beginPath();
-        ctx.moveTo(ox, cutY);
-        ctx.lineTo(ox + plateW, cutY);
+        ctx.moveTo(usableX, cutY);
+        ctx.lineTo(usableX + usableW, cutY);
         ctx.stroke();
         drawCutTag(
           ctx,
           `C${cutNumber} · LONGITUDINAL · ${Math.round(
-            strip.y + strip.height,
+            trim + strip.y + strip.height,
           )} mm · K${effectiveKerf}`,
-          ox + plateW - 185,
+          usableX + usableW - 185,
           cutY - 3,
           180,
         );
       }
       for (const piece of strip.pieces) {
-        const cutX = ox + (piece.x + piece.drawWidth) * scale;
-        if (cutX < ox + plateW - 1) {
+        const cutX = usableX + (piece.x + piece.drawWidth) * scale;
+        if (cutX < usableX + usableW - 1) {
           cutNumber += 1;
           if (effectiveKerf > 0) {
             ctx.fillStyle = "rgba(16,24,32,.10)";
             ctx.fillRect(
               cutX,
-              oy + strip.y * scale,
+              usableY + strip.y * scale,
               effectiveKerf * scale,
               strip.height * scale,
             );
@@ -2022,21 +2301,21 @@ export function drawCutPlan(
           ctx.lineWidth = 1;
           ctx.setLineDash([3, 4]);
           ctx.beginPath();
-          ctx.moveTo(cutX, oy + strip.y * scale);
-          ctx.lineTo(cutX, oy + (strip.y + strip.height) * scale);
+          ctx.moveTo(cutX, usableY + strip.y * scale);
+          ctx.lineTo(cutX, usableY + (strip.y + strip.height) * scale);
           ctx.stroke();
           const tagSpace = Math.max(
             26,
-            Math.min(115, ox + plateW - cutX - 6),
+            Math.min(115, usableX + usableW - cutX - 6),
           );
           const compactCutTag = strip.height * scale < 52 || tagSpace < 78;
           drawCutTag(
             ctx,
             compactCutTag
               ? `C${cutNumber}`
-              : `C${cutNumber} · ${Math.round(piece.x + piece.drawWidth)} · K${effectiveKerf}`,
+              : `C${cutNumber} · ${Math.round(trim + piece.x + piece.drawWidth)} · K${effectiveKerf}`,
             cutX + 3,
-            oy + strip.y * scale + Math.min(15, strip.height * scale * 0.42),
+            usableY + strip.y * scale + Math.min(15, strip.height * scale * 0.42),
             compactCutTag ? Math.min(36, tagSpace) : tagSpace,
           );
         }
@@ -2048,10 +2327,12 @@ export function drawCutPlan(
   const xMarks = spacedMarks(
     [
       0,
+      trim,
+      material.plateLength - trim,
       material.plateLength,
       ...plate.pieces.flatMap((piece) => [
-        piece.x,
-        piece.x + piece.drawWidth,
+        trim + piece.x,
+        trim + piece.x + piece.drawWidth,
       ]),
     ],
     scale,
@@ -2059,10 +2340,12 @@ export function drawCutPlan(
   const yMarks = spacedMarks(
     [
       0,
+      trim,
+      material.plateWidth - trim,
       material.plateWidth,
       ...plate.pieces.flatMap((piece) => [
-        piece.y,
-        piece.y + piece.drawHeight,
+        trim + piece.y,
+        trim + piece.y + piece.drawHeight,
       ]),
     ],
     scale,
@@ -2099,10 +2382,10 @@ export function drawCutPlan(
   ctx.textAlign = "left";
   ctx.fillStyle = "#101820";
   ctx.font = "700 14px Arial";
-  ctx.fillText("LEYENDA TAPACANTOS", legendX, oy + 24);
+  ctx.fillText(neolith ? "LEYENDA ACABADOS NEOLITH" : "LEYENDA TAPACANTOS", legendX, oy + 24);
   ctx.fillStyle = "#59636d";
   ctx.font = "10px Arial";
-  ctx.fillText("Código + patrón de línea + espesor", legendX, oy + 42);
+  ctx.fillText(neolith ? "BP: Biselado-Pulido · 45°: corte a inglete · BR: bruto" : "Código + patrón de línea + espesor", legendX, oy + 42);
   usedEdgeIds.forEach((id, index) => {
     const edge = edgeBands.find((item) => item.id === id);
     if (!edge) return;
@@ -2151,7 +2434,15 @@ export function drawCutPlan(
   if (!usedEdgeIds.length) {
     ctx.fillStyle = "#6b747d";
     ctx.font = "11px Arial";
-    ctx.fillText("Sin tapacantos asignados", legendX, oy + 52);
+    if (neolith) {
+      ctx.fillText(
+        `BP ${productionMetrics.finishMetersByType.bevel.toFixed(2)} ml · 45° ${productionMetrics.finishMetersByType.miter45.toFixed(2)} ml`,
+        legendX,
+        oy + 62,
+      );
+    } else {
+      ctx.fillText("Sin tapacantos asignados", legendX, oy + 52);
+    }
   }
 
   if (cutSequence.length) {
@@ -2231,7 +2522,9 @@ export function drawCutPlan(
   ctx.fillText(
     fittedText(
       ctx,
-      "L1 sup. · L2 inf. · A1 izq. · A2 der. · C/E/S: controles",
+      neolith
+        ? "L1 sup. · L2 inf. · A1 izq. · A2 der. · BR/BP/45: acabado · C/E/S: controles"
+        : "L1 sup. · L2 inf. · A1 izq. · A2 der. · C/E/S: controles",
       listWidth,
     ),
     legendX,
@@ -2294,7 +2587,11 @@ export function drawCutPlan(
     const edgeSides = ["top", "bottom", "left", "right"];
     edgeSides.forEach((side, sideIndex) => {
       const center = edgeCenters[sideIndex];
-      const edgeCode = edgeVisuals.get(row.edges?.[side])?.code || "";
+      const edgeCode = neolith
+        ? ({ rough: "BR", bevel: "BP", miter45: "45" }[
+            normalizeNeolithFinish(row.finishes?.[side])
+          ] || "BR")
+        : edgeVisuals.get(row.edges?.[side])?.code || "";
       ctx.strokeStyle = "#77818a";
       ctx.lineWidth = 1;
       ctx.strokeRect(center - 9, y - 8, 18, 16);
@@ -2347,7 +2644,9 @@ export function drawCutPlan(
   ctx.font = "11px Arial";
   ctx.textAlign = "left";
   ctx.fillText(
-    "Medidas interiores: parciales · Exteriores: acumuladas · T#: tapacanto por lado · Piezas mínimas: sufijo del código y detalle completo en tabla · RET: retazo reutilizable · C/E/S: controles · Unidades en mm.",
+    neolith
+      ? "Medidas interiores: parciales · Exteriores: acumuladas · BR: bruto · BP: Biselado-Pulido · 45: corte 45° · RET: retazo reutilizable · C/E/S: controles · Unidades en mm."
+      : "Medidas interiores: parciales · Exteriores: acumuladas · T#: tapacanto por lado · Piezas mínimas: sufijo del código y detalle completo en tabla · RET: retazo reutilizable · C/E/S: controles · Unidades en mm.",
     38,
     height - 20,
   );

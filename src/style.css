@@ -342,6 +342,20 @@ input:focus, select:focus { border-color: var(--gold); box-shadow: 0 0 0 3px rgb
 .paste-side-picker > i { grid-area: piece; display: grid; place-items: center; min-height: 45px; border: 2px solid var(--navy); background: #eef1f3; color: var(--navy); font-size: 9px; font-style: normal; font-weight: 800; }
 .paste-panel textarea { width: 100%; resize: vertical; border: 1px solid #ced5db; border-radius: 9px; padding: 11px 12px; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .paste-sample { display: grid; gap: 3px; border-left: 3px solid currentColor; padding-left: 9px; }
+.paste-mapping { display: grid; gap: 10px; padding: 13px; border: 1px solid #cbd3d9; border-radius: 10px; background: #f8fafb; color: var(--ink); }
+.paste-mapping > div:first-child { display: grid; gap: 3px; }
+.paste-mapping > div:first-child span { color: var(--muted); font-size: 11px; }
+.paste-mapping-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.paste-mapping-grid label { display: grid; gap: 4px; color: var(--navy); font-size: 10px; font-weight: 800; }
+.paste-mapping-grid select, .paste-review-table select, .inline-grain { min-width: 105px; padding: 7px 8px; font-size: 10px; }
+.paste-review-table { max-height: 390px; overflow: auto; border: 1px solid rgba(0,0,0,.12); border-radius: 8px; background: white; }
+.paste-review-table th { position: sticky; top: 0; z-index: 1; background: #eef1f3; }
+.paste-review-table td { min-width: 95px; padding: 7px; }
+.paste-review-table td:first-child { min-width: 150px; }
+.readonly-field { display: block; padding: 11px 12px; border: 1px solid var(--line); border-radius: 8px; background: #f4f6f7; color: var(--navy); font-size: 12px; font-weight: 700; }
+.manual-finish-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #fafbfb; }
+.manual-finish-grid > b { grid-column: 1 / -1; color: var(--navy); }
+.neolith-config-card { margin-bottom: 18px; }
 .piece-counter { background: var(--navy); color: white; border-radius: 13px; padding: 14px 22px; display: flex; align-items: center; gap: 10px; }
 .piece-counter strong { font: 800 30px "Trebuchet MS"; color: var(--gold); }
 .piece-counter span { max-width: 60px; line-height: 1.1; font-size: 11px; }
@@ -980,7 +994,7 @@ article.catalog-product { cursor: default; }
   .selection-flow { align-self: stretch; overflow-x: auto; }
   .piece-counter { align-self: flex-start; }
   .edge-toolbar { grid-template-columns: 1fr; }
-  .edge-bulk-grid, .import-metrics, .paste-config-grid { grid-template-columns: 1fr; }
+  .edge-bulk-grid, .import-metrics, .paste-config-grid, .paste-mapping-grid, .manual-finish-grid { grid-template-columns: 1fr; }
   .paste-side-picker { overflow-x: auto; }
   .edge-diagram {
     grid-template-columns: 1fr;

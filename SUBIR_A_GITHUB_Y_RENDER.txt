@@ -1,4 +1,4 @@
-COTIZADOR CASA DISEÑO V3.4.3 — ACTUALIZACIÓN SEGURA
+COTIZADOR CASA DISEÑO V4.0.0 — ACTUALIZACIÓN SEGURA
 
 1. Descomprime este paquete.
 2. Reemplaza el contenido del repositorio GitHub con todos estos archivos.
@@ -22,8 +22,10 @@ IMPORTANTE
 - Debe desplegarse sobre el mismo Web Service y la misma DATABASE_URL.
 - No crear una base nueva ni cambiar DATABASE_URL durante esta actualización.
 - Antes de publicar, generar un respaldo de PostgreSQL.
-- La migración agrega la tabla de revisiones del catálogo; no elimina tablas ni
-  registros existentes.
+- La migración V4 solo agrega app_users.roles y copia el rol histórico. No
+  elimina tablas ni registros existentes y conserva app_users.role.
+- Los proyectos V3 se abren protegidos como legacy-v3. No se recalculan ni
+  reciben rebaje hasta presionar expresamente “Reoptimizar con rebaje V4”.
 - No intentes cambiar el servicio anterior de Static Site a Web Service:
   Render no permite modificar el tipo de un servicio existente.
 - No uses Publish Directory.
@@ -36,8 +38,9 @@ IMPORTANTE
 - Las notificaciones internas funcionan sin configuración adicional.
 - En el paso 2 se selecciona primero el tablero y luego se ingresan piezas de
   forma manual o pegando directamente celdas copiadas desde cualquier Excel.
-- Cada bloque pegado permite asignar una sola vez tablero, tapacanto, lados
-  L1/L2/A1/A2 y el modo de medidas terminadas o ya descontadas.
+- Cada bloque pegado permite mapear columnas aunque el cliente use cualquier
+  orden o encabezado, incluyendo veta y lados L1/L2/A1/A2. La vista previa
+  permite corregir cada pieza antes de incorporarla.
 - El sistema muestra una vista previa y explica las filas rechazadas antes de
   incorporarlas. Ya no es necesario subir un archivo Excel de piezas.
 - Un proyecto puede incluir varios tableros y cada pieza queda asignada a uno.
@@ -45,14 +48,18 @@ IMPORTANTE
 - El Administrador puede crear hasta 200 usuarios desde la plantilla Excel.
 - Cada usuario nuevo debe cambiar su clave temporal en el primer ingreso.
 - La pantalla Usuarios incluye la matriz de accesos de cada perfil.
-- Los tapacantos se identifican con T1/T2/T3 y patrones monocromáticos.
+- Los tapacantos se identifican con T1/T2/T3 y patrones monocromáticos. El mapa
+  es único por proyecto, por lo que T1 mantiene el mismo producto en todas las
+  hojas.
 - Los cuatro lados se pueden asignar masivamente a todas las piezas, a las de
   un tablero o solo a las piezas marcadas.
 - Las cotas interiores quedan separadas de las líneas de tapacanto.
-- El largo, ancho y cantidad se pueden editar directamente en el listado.
+- Largo, Ancho, Cantidad y Veta se pueden editar directamente en el listado.
+- Largo y Ancho nunca se reordenan por magnitud: Longitudinal sigue Largo y
+  Transversal sigue Ancho, aunque Largo sea numéricamente menor.
 - El paso 5 muestra la optimización y el listado de cada placa.
-- Cada hoja del PDF mantiene unidos el plano, el listado de esa placa y las
-  casillas de control para Corte, Enchape y Supervisión/Despacho.
+- El PDF comienza con resumen general y listado completo. Después mantiene una
+  hoja por placa con plano, listado y controles de producción.
 - El PDF usa casi toda la hoja A4 apaisada, con plano y listado ampliados y las
   cinco firmas distribuidas horizontalmente en la franja inferior.
 - Las piezas pequeñas usan una rotulación adaptativa para evitar números
@@ -98,7 +105,11 @@ IMPORTANTE
 - Ninguna pieza nueva puede quedar bajo 50 x 50 mm de corte.
 - La factura es obligatoria antes de Facturado y pagado; la guía de despacho es
   obligatoria antes de Entregado. Ambos documentos aparecen en el CRM.
-- Neolith queda visible como categoría Próximamente y aún no optimiza placas.
+- Neolith queda activo en 12 mm (3200 x 1600) y 6 mm (3200 x 1500), con color
+  y precio por proyecto, rebaje de 30 mm/lado, kerf de 3 mm, terminación bruta,
+  Biselado-Pulido y 45°. Neolith no admite tapacantos.
+- Los tableros nuevos consideran rebaje previo de 10 mm por cada lado.
+- Los usuarios internos pueden reunir varios perfiles; Cliente es exclusivo.
 - Administrador y Producción disponen de un CRM con agenda, fechas de ejecución
   y entrega, carga diaria/semanal/mensual, tableros completados y ML enchapados.
 - Para enviar correos, agrega en Render:
