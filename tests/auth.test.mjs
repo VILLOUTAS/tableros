@@ -924,3 +924,86 @@ test("un administrador elimina una cotización sin borrarla físicamente", async
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test("separa cotizaciones de tableros y placas y guarda el tipo elegido", async () => {
+  const { app } = await createApplication({ useMemory: true });
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise((resolve) => server.once("listening", resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const setup = await request(base, "/api/auth/setup", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        fullName: "Administrador",
+        email: "admin.flujos@example.cl",
+        password: "ClaveAdminFlujos123",
+      }),
+    });
+    const headers = {
+      "content-type": "application/json",
+      cookie: setup.response.headers.get("set-cookie").split(";")[0],
+      "x-csrf-token": setup.body.csrfToken,
+    };
+
+    const mixed = await request(base, "/api/projects", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        workType: "boards",
+        project: { clientName: "Flujo mezclado" },
+        materialId: "62-egger-1502-1",
+        materialIds: ["62-egger-1502-1", "neolith-12-1600x3200"],
+        pieces: [{
+          id: "pieza-tablero",
+          materialId: "62-egger-1502-1",
+          length: 500,
+          width: 400,
+          quantity: 1,
+          grain: "longitudinal",
+          edges: {},
+        }],
+      }),
+    });
+    assert.equal(mixed.response.status, 400);
+    assert.match(mixed.body.error, /No se pueden mezclar/);
+
+    const slab = await request(base, "/api/projects", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        workType: "slabs",
+        project: { clientName: "Proyecto Neolith" },
+        materialId: "neolith-12-1600x3200",
+        materialIds: ["neolith-12-1600x3200"],
+        materialCustomizations: {
+          "neolith-12-1600x3200": { color: "Calacatta Luxe" },
+        },
+        settings: {
+          calculationVersion: "4.1",
+          neolithTrim: 30,
+          kerf: 3,
+        },
+        pieces: [{
+          id: "pieza-neolith",
+          materialId: "neolith-12-1600x3200",
+          length: 3200,
+          width: 1600,
+          quantity: 1,
+          grain: "longitudinal",
+          edges: {},
+          finishes: {
+            top: "rough",
+            right: "miter45",
+            bottom: "rough",
+            left: "bevel",
+          },
+        }],
+      }),
+    });
+    assert.equal(slab.response.status, 201);
+    assert.equal(slab.body.project.workType, "slabs");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

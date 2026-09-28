@@ -191,6 +191,63 @@ test("incorpora desde Excel piezas, medidas, cantidades, tableros y tapacantos",
   });
 });
 
+test("aplica veta y un tapacanto predeterminado distinto en cada lado al pegar Excel", () => {
+  const boards = [{
+    id: "tablero-pegado",
+    sku: "TAB-PEG",
+    name: "Blanco",
+    plateLength: 2600,
+    plateWidth: 1830,
+  }];
+  const catalogEdges = [
+    { id: "edge-l1", sku: "TC-L1", name: "Blanco 0,4" },
+    { id: "edge-a2", sku: "TC-A2", name: "Blanco 2,0" },
+  ];
+  const imported = parsePieceImportTable(
+    [
+      ["nombre", "largo", "ancho", "cantidad", "veta"],
+      ["Puerta", 600, 450, 2, "Transversal"],
+    ],
+    {
+      catalogMaterials: boards,
+      catalogEdges,
+      fallbackMaterialId: boards[0].id,
+      fallbackEdgeIds: {
+        top: "edge-l1",
+        bottom: "",
+        left: "",
+        right: "edge-a2",
+      },
+      idFactory: () => "pieza-pegada",
+    },
+  );
+
+  assert.deepEqual(imported.errors, []);
+  assert.equal(imported.rows[0].grain, "transversal");
+  assert.deepEqual(imported.rows[0].edges, {
+    top: "edge-l1",
+    right: "edge-a2",
+    bottom: null,
+    left: null,
+  });
+
+  const explicitSides = parsePieceImportTable(
+    [
+      ["nombre", "largo", "ancho", "cantidad", "L1", "A2"],
+      ["Frente", 600, 450, 1, "No", "Sí"],
+    ],
+    {
+      catalogMaterials: boards,
+      catalogEdges,
+      fallbackMaterialId: boards[0].id,
+      fallbackEdgeIds: { top: "edge-l1", right: "edge-a2" },
+    },
+  );
+  assert.deepEqual(explicitSides.errors, []);
+  assert.equal(explicitSides.rows[0].edges.top, null);
+  assert.equal(explicitSides.rows[0].edges.right, "edge-a2");
+});
+
 test("acepta piezas Excel sin nombre y explica filas inválidas", () => {
   const boards = [
     {
@@ -738,15 +795,18 @@ test("mantiene códigos globales de tapacanto entre hojas", () => {
   assert.deepEqual(second, { "pvc-1": "T1", "pvc-2": "T2", "pvc-3": "T3" });
 });
 
-test("calcula Neolith con rebaje, lineal bruto por placa y acabados por ml", () => {
+test("calcula placas de piedra sobre el formato útil y cobra solo servicios", () => {
   const neolith = {
     id: "neolith-12",
     sku: "NEO-12",
     name: "Color proyecto",
     categoryId: "neolith",
     materialType: "neolith",
-    plateLength: 3200,
-    plateWidth: 1600,
+    plateLength: 3260,
+    plateWidth: 1660,
+    usablePlateLength: 3200,
+    usablePlateWidth: 1600,
+    factoryPerimeterAllowance: 30,
     thickness: 12,
     netPrice: 100000,
   };
@@ -762,13 +822,50 @@ test("calcula Neolith con rebaje, lineal bruto por placa y acabados por ml", () 
       }),
     ],
     edges,
-    { calculationVersion: "4.0", neolithTrim: 30, kerf: 3 },
+    {
+      calculationVersion: "4.1",
+      neolithTrim: 30,
+      kerf: 3,
+      stoneCutPerPlateRate: 75000,
+      stoneBevelRate: 12500,
+      stoneMiter45Rate: 7500,
+    },
   );
-  assert.equal(result.plates[0].usablePlateLength, 3140);
-  assert.equal(result.plates[0].usablePlateWidth, 1540);
+  assert.equal(result.plates[0].rawPlateLength, 3260);
+  assert.equal(result.plates[0].rawPlateWidth, 1660);
+  assert.equal(result.plates[0].usablePlateLength, 3200);
+  assert.equal(result.plates[0].usablePlateWidth, 1600);
+  assert.equal(result.summary.boardSubtotal, 0);
   assert.equal(result.summary.cuttingSubtotal, 75000);
   assert.equal(result.summary.finishMetersByType.bevel, 1);
   assert.equal(result.summary.finishMetersByType.miter45, 0.5);
   assert.equal(result.summary.finishSubtotal, 16250);
   assert.equal(result.summary.edgeMeters, 0);
+});
+
+test("conserva la geometría Neolith V4.0 hasta una migración explícita", () => {
+  const neolith = {
+    id: "neolith-historico",
+    categoryId: "neolith",
+    materialType: "neolith",
+    plateLength: 3260,
+    plateWidth: 1660,
+    usablePlateLength: 3200,
+    usablePlateWidth: 1600,
+    netPrice: 100000,
+  };
+  assert.deepEqual(
+    usablePlateDimensions(neolith, {
+      calculationVersion: "4.0",
+      neolithTrim: 30,
+    }),
+    { trim: 30, plateLength: 3140, plateWidth: 1540 },
+  );
+  assert.deepEqual(
+    usablePlateDimensions(neolith, {
+      calculationVersion: "4.1",
+      neolithTrim: 30,
+    }),
+    { trim: 30, plateLength: 3200, plateWidth: 1600 },
+  );
 });

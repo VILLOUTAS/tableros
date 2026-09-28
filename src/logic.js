@@ -1,6 +1,6 @@
 const sides = ["top", "right", "bottom", "left"];
 export const MINIMUM_CUT_SIDE = 50;
-export const CALCULATION_VERSION = "4.0";
+export const CALCULATION_VERSION = "4.1";
 export const BOARD_PERIMETER_TRIM = 10;
 export const NEOLITH_PERIMETER_TRIM = 30;
 export const NEOLITH_LINEAR_RATE = 75_000;
@@ -9,8 +9,34 @@ export const NEOLITH_FINISH_RATES = Object.freeze({
   miter45: 7_500,
 });
 
+export function isStoneMaterial(material = {}) {
+  const type = String(material.materialType || "").toLowerCase();
+  const category = String(material.categoryId || "").toLowerCase();
+  return ["neolith", "stone", "piedra", "slab"].includes(type) ||
+    ["neolith", "stone", "piedra", "placas-piedra"].includes(category);
+}
+
+// Se conserva este nombre para no romper proyectos y módulos de la V4.0.
 export function isNeolithMaterial(material = {}) {
-  return material.materialType === "neolith" || material.categoryId === "neolith";
+  return isStoneMaterial(material);
+}
+
+function calculationPlateDimensions(material = {}, settings = {}) {
+  let plateLength = Math.max(0, Number(material.plateLength) || 0);
+  let plateWidth = Math.max(0, Number(material.plateWidth) || 0);
+  // En V4.0 los formatos Neolith estaban registrados como 3200×1600 y
+  // 3200×1500 antes de descontar el rebaje. Mantener esa geometría protege
+  // cotizaciones históricas al actualizar el catálogo a medidas de fábrica.
+  if (
+    isStoneMaterial(material) &&
+    settings?.calculationVersion === "4.0" &&
+    material.usablePlateLength &&
+    material.usablePlateWidth
+  ) {
+    plateLength = Number(material.usablePlateLength) || plateLength;
+    plateWidth = Number(material.usablePlateWidth) || plateWidth;
+  }
+  return { plateLength, plateWidth };
 }
 
 export function materialPerimeterTrim(material = {}, settings = {}) {
@@ -28,10 +54,11 @@ export function materialPerimeterTrim(material = {}, settings = {}) {
 
 export function usablePlateDimensions(material = {}, settings = {}) {
   const trim = materialPerimeterTrim(material, settings);
+  const raw = calculationPlateDimensions(material, settings);
   return {
     trim,
-    plateLength: Math.max(0, Number(material.plateLength || 0) - trim * 2),
-    plateWidth: Math.max(0, Number(material.plateWidth || 0) - trim * 2),
+    plateLength: Math.max(0, raw.plateLength - trim * 2),
+    plateWidth: Math.max(0, raw.plateWidth - trim * 2),
   };
 }
 
@@ -214,6 +241,20 @@ function affirmativeImportValue(value) {
   );
 }
 
+function negativeImportValue(value) {
+  return [
+    "-",
+    "no",
+    "n",
+    "0",
+    "false",
+    "sin",
+    "sin tapacanto",
+    "ninguno",
+    "no aplica",
+  ].includes(normalizeImportHeader(value));
+}
+
 function pieceImportHeaderRowIndex(table = []) {
   return table.slice(0, 25).findIndex((candidate) => {
     const normalized = new Set(candidate.map(normalizeImportHeader));
@@ -232,6 +273,7 @@ export function parsePieceImportTable(
     fallbackGrain = "sin-veta",
     fallbackEdgeId = "",
     fallbackEdges = {},
+    fallbackEdgeIds = {},
     settings = {},
     idFactory = defaultImportId,
   } = {},
@@ -487,6 +529,7 @@ export function parsePieceImportTable(
     const incompleteEdge = Object.entries(rawEdgeTypes).find(
       ([side, type]) =>
         String(type ?? "").trim() &&
+        !negativeImportValue(type) &&
         !String(rawEdgeSelections[side] ?? "").trim(),
     );
     const sideLabels = {
@@ -502,13 +545,21 @@ export function parsePieceImportTable(
       );
       return;
     }
+    const explicitlyEmptyEdges = new Set();
     const invalidEdge = Object.entries(rawEdgeSelections).find(
       ([side, reference]) => {
         const value = String(reference ?? "").trim();
         if (!value) return false;
+        if (negativeImportValue(value)) {
+          explicitlyEmptyEdges.add(side);
+          return false;
+        }
+        const sideFallbackEdgeId =
+          fallbackEdgeIds?.[side] ||
+          (fallbackEdges?.[side] ? fallbackEdgeId : "");
         const edge =
-          (affirmativeImportValue(value) && fallbackEdgeId
-            ? catalogEdges.find((item) => item.id === fallbackEdgeId)
+          (affirmativeImportValue(value) && sideFallbackEdgeId
+            ? catalogEdges.find((item) => item.id === sideFallbackEdgeId)
             : null) ||
           resolveCatalogReference(catalogEdges, value, edgeImportLabel);
         if (!edge) return true;
@@ -525,8 +576,15 @@ export function parsePieceImportTable(
     }
 
     for (const side of sides) {
-      if (!importedEdges[side] && fallbackEdges?.[side] && fallbackEdgeId) {
-        importedEdges[side] = fallbackEdgeId;
+      const sideFallbackEdgeId =
+        fallbackEdgeIds?.[side] ||
+        (fallbackEdges?.[side] ? fallbackEdgeId : "");
+      if (
+        !importedEdges[side] &&
+        sideFallbackEdgeId &&
+        !explicitlyEmptyEdges.has(side)
+      ) {
+        importedEdges[side] = sideFallbackEdgeId;
       }
     }
 
@@ -599,7 +657,11 @@ export function cutRateForMaterial(material = {}, settings = {}) {
   if (isNeolithMaterial(material)) {
     return Math.max(
       0,
-      Number(settings.neolithLinearRate ?? NEOLITH_LINEAR_RATE) || 0,
+      Number(
+        settings.stoneCutPerPlateRate ??
+          settings.neolithLinearRate ??
+          NEOLITH_LINEAR_RATE,
+      ) || 0,
     );
   }
   const melamine = String(material.categoryId || "").startsWith("melamina");
@@ -995,6 +1057,7 @@ export function optimize(material, pieces, edgeBands, settings = {}) {
     ),
   };
   const usable = usablePlateDimensions(material, normalizedSettings);
+  const rawPlate = calculationPlateDimensions(material, normalizedSettings);
   const layoutMaterial = {
     ...material,
     plateLength: usable.plateLength,
@@ -1051,11 +1114,11 @@ export function optimize(material, pieces, edgeBands, settings = {}) {
     },
   );
   const { plates, warnings } = layouts[0];
-  const plateArea = material.plateLength * material.plateWidth;
+  const plateArea = rawPlate.plateLength * rawPlate.plateWidth;
   for (const plate of plates) {
     plate.trim = usable.trim;
-    plate.rawPlateLength = Number(material.plateLength) || 0;
-    plate.rawPlateWidth = Number(material.plateWidth) || 0;
+    plate.rawPlateLength = rawPlate.plateLength;
+    plate.rawPlateWidth = rawPlate.plateWidth;
     plate.usablePlateLength = usable.plateLength;
     plate.usablePlateWidth = usable.plateWidth;
     plate.utilization = plateArea ? (plate.usedArea / plateArea) * 100 : 0;
@@ -1079,7 +1142,13 @@ export function optimize(material, pieces, edgeBands, settings = {}) {
     }
   }
 
-  const boardSubtotal = plates.length * material.netPrice;
+  const billsStoneMaterial =
+    isStoneMaterial(material) && normalizedSettings.calculationVersion === "4.0";
+  const materialUnitPrice =
+    isStoneMaterial(material) && !billsStoneMaterial
+      ? 0
+      : Math.max(0, Number(material.netPrice) || 0);
+  const boardSubtotal = plates.length * materialUnitPrice;
   const edgeSubtotal = Object.entries(metersByEdge).reduce((total, [id, meters]) => {
     const price = edgeBands.find((item) => item.id === id)?.price ?? 0;
     return total + meters * price;
@@ -1103,11 +1172,19 @@ export function optimize(material, pieces, edgeBands, settings = {}) {
   const finishRates = {
     bevel: Math.max(
       0,
-      Number(settings.neolithBevelRate ?? NEOLITH_FINISH_RATES.bevel) || 0,
+      Number(
+        settings.stoneBevelRate ??
+          settings.neolithBevelRate ??
+          NEOLITH_FINISH_RATES.bevel,
+      ) || 0,
     ),
     miter45: Math.max(
       0,
-      Number(settings.neolithMiter45Rate ?? NEOLITH_FINISH_RATES.miter45) || 0,
+      Number(
+        settings.stoneMiter45Rate ??
+          settings.neolithMiter45Rate ??
+          NEOLITH_FINISH_RATES.miter45,
+      ) || 0,
     ),
   };
   const finishSubtotal =
@@ -1158,9 +1235,12 @@ export function optimize(material, pieces, edgeBands, settings = {}) {
       metersByEdge,
       finishMetersByType,
       finishRates,
+      materialUnitPrice,
       perimeterTrim: usable.trim,
       usablePlateLength: usable.plateLength,
       usablePlateWidth: usable.plateWidth,
+      rawPlateLength: rawPlate.plateLength,
+      rawPlateWidth: rawPlate.plateWidth,
     },
   };
 }
@@ -1245,9 +1325,15 @@ export function optimizeProject(
     ]),
   );
   const totalBoardArea = materialResults.reduce(
-    (sum, { material, result }) =>
+    (sum, { result }) =>
       sum +
-      result.plates.length * material.plateLength * material.plateWidth,
+      result.plates.reduce(
+        (plateSum, plate) =>
+          plateSum +
+          Number(plate.rawPlateLength || 0) *
+            Number(plate.rawPlateWidth || 0),
+        0,
+      ),
     0,
   );
   const totalUsedArea = materialResults.reduce(
@@ -1293,6 +1379,24 @@ export function optimizeProject(
     },
     { bevel: 0, miter45: 0 },
   );
+  summary.finishRates = {
+    bevel: Math.max(
+      0,
+      Number(
+        settings.stoneBevelRate ??
+          settings.neolithBevelRate ??
+          NEOLITH_FINISH_RATES.bevel,
+      ) || 0,
+    ),
+    miter45: Math.max(
+      0,
+      Number(
+        settings.stoneMiter45Rate ??
+          settings.neolithMiter45Rate ??
+          NEOLITH_FINISH_RATES.miter45,
+      ) || 0,
+    ),
+  };
 
   return {
     plates,
@@ -1303,8 +1407,9 @@ export function optimizeProject(
       sku: material.sku,
       name: material.name,
       brand: material.brand,
+      isStone: isStoneMaterial(material),
       boardCount: result.summary.boardCount,
-      unitPrice: Number(material.netPrice) || 0,
+      unitPrice: result.summary.materialUnitPrice,
       boardSubtotal: result.summary.boardSubtotal,
       cuttingSubtotal: result.summary.cuttingSubtotal,
       cutRatePerBoard:
@@ -1314,6 +1419,8 @@ export function optimizeProject(
       perimeterTrim: result.summary.perimeterTrim,
       usablePlateLength: result.summary.usablePlateLength,
       usablePlateWidth: result.summary.usablePlateWidth,
+      rawPlateLength: result.summary.rawPlateLength,
+      rawPlateWidth: result.summary.rawPlateWidth,
       finishSubtotal: result.summary.finishSubtotal,
       utilization: 100 - result.summary.waste,
     })),
@@ -1350,11 +1457,15 @@ export function optimizeProject(
     finishSummaries: [
       {
         finishId: "bevel",
-        name: "Biselado - Pulido",
+        name: "Biselado o Pulido",
         meters: Number(summary.finishMetersByType.bevel) || 0,
         unitPrice: Math.max(
           0,
-          Number(settings.neolithBevelRate ?? NEOLITH_FINISH_RATES.bevel) || 0,
+          Number(
+            settings.stoneBevelRate ??
+              settings.neolithBevelRate ??
+              NEOLITH_FINISH_RATES.bevel,
+          ) || 0,
         ),
       },
       {
@@ -1363,7 +1474,11 @@ export function optimizeProject(
         meters: Number(summary.finishMetersByType.miter45) || 0,
         unitPrice: Math.max(
           0,
-          Number(settings.neolithMiter45Rate ?? NEOLITH_FINISH_RATES.miter45) || 0,
+          Number(
+            settings.stoneMiter45Rate ??
+              settings.neolithMiter45Rate ??
+              NEOLITH_FINISH_RATES.miter45,
+          ) || 0,
         ),
       },
     ]
@@ -1768,6 +1883,10 @@ export function drawCutPlan(
 ) {
   const ctx = canvas.getContext("2d");
   const neolith = isNeolithMaterial(material);
+  const rawPlateLength =
+    Number(plate?.rawPlateLength || material?.plateLength) || 0;
+  const rawPlateWidth =
+    Number(plate?.rawPlateWidth || material?.plateWidth) || 0;
   const usedEdgeIds = [
     ...new Set(
       plate.pieces
@@ -1811,16 +1930,16 @@ export function drawCutPlan(
   canvas.width = width;
   canvas.height = height;
   const scale = Math.min(
-    (width - margin.left - margin.right) / material.plateLength,
-    (height - margin.top - margin.bottom) / material.plateWidth,
+    (width - margin.left - margin.right) / rawPlateLength,
+    (height - margin.top - margin.bottom) / rawPlateWidth,
   );
-  const plateW = material.plateLength * scale;
-  const plateH = material.plateWidth * scale;
+  const plateW = rawPlateLength * scale;
+  const plateH = rawPlateWidth * scale;
   const ox = margin.left;
   const oy = margin.top;
   const trim = Math.max(0, Number(plate.trim) || 0);
-  const usableLength = Number(plate.usablePlateLength) || material.plateLength - trim * 2;
-  const usableWidth = Number(plate.usablePlateWidth) || material.plateWidth - trim * 2;
+  const usableLength = Number(plate.usablePlateLength) || rawPlateLength - trim * 2;
+  const usableWidth = Number(plate.usablePlateWidth) || rawPlateWidth - trim * 2;
   const usableX = ox + trim * scale;
   const usableY = oy + trim * scale;
   const usableW = usableLength * scale;
@@ -1876,9 +1995,9 @@ export function drawCutPlan(
   ctx.fillText(
     fittedText(
       ctx,
-      `MATERIAL: ${material.brand} ${material.name} (${material.sku}) · ${
-        material.plateLength
-      } × ${material.plateWidth} × ${material.thickness} mm · ÚTIL ${usableLength} × ${usableWidth} mm`,
+      `MATERIAL: ${material.brand} ${material.name} (${material.sku}) · FÁBRICA ${
+        rawPlateLength
+      } × ${rawPlateWidth} × ${material.thickness} mm · ÚTIL ${usableLength} × ${usableWidth} mm`,
       headerWidth,
     ),
     headerX,

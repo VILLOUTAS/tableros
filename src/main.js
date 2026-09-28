@@ -35,10 +35,10 @@ import {
 
 const app = document.querySelector("#app");
 const steps = [
-  ["Proyecto", "Cliente y estado"],
+  ["Tipo y proyecto", "Maderas o piedras"],
   ["Material y piezas", "Selección e ingreso"],
   ["Revisión", "Listado de piezas"],
-  ["Tapacantos", "Configuración por lado"],
+  ["Terminaciones", "Configuración por lado"],
   ["Optimización", "Plano y subtotales"],
 ];
 
@@ -68,6 +68,7 @@ function emptyState() {
     visitorQuoteId: "",
     assignedTo: "",
     collaboratorIds: [],
+    workType: "",
     categoryId: "",
     catalogKind: "boards",
     catalogEdgeGroup: "",
@@ -90,6 +91,10 @@ function emptyState() {
       neolithTrim: 30,
       melamineCutRate: 7500,
       specialCutRate: 10500,
+      stoneCutPerPlateRate: 75000,
+      stoneBevelRate: 12500,
+      stoneMiter45Rate: 7500,
+      // Alias conservados para abrir sin pérdida proyectos V4.0.
       neolithLinearRate: 75000,
       neolithBevelRate: 12500,
       neolithMiter45Rate: 7500,
@@ -112,6 +117,8 @@ function emptyState() {
       defaultGrain: "longitudinal",
       measurementMode: "finished",
       sides: { top: true, bottom: false, left: false, right: false },
+      edges: { top: "", bottom: "", left: "", right: "" },
+      finishes: { top: "rough", bottom: "rough", left: "rough", right: "rough" },
     },
     message: null,
   };
@@ -155,11 +162,14 @@ const projectMaterial = (material) => {
   const customization = state.materialCustomizations?.[material.id] || {};
   if (!isNeolithMaterial(material)) return material;
   const color = String(customization.color || "").trim();
+  const preservesV40Pricing = state.settings?.calculationVersion === "4.0";
   return {
     ...material,
     name: color || material.name,
     colorName: color,
-    netPrice: Math.max(0, Number(customization.netPrice ?? material.netPrice) || 0),
+    netPrice: preservesV40Pricing
+      ? Math.max(0, Number(customization.netPrice ?? material.netPrice) || 0)
+      : 0,
   };
 };
 
@@ -182,6 +192,28 @@ const materialImageUrl = (material) =>
 
 const activeMaterials = () =>
   materials.filter((item) => item.active !== false);
+
+const inferredWorkType = (materialIds = state.materialIds, pieces = state.pieces) => {
+  const ids = [
+    ...(Array.isArray(materialIds) ? materialIds : []),
+    ...(Array.isArray(pieces) ? pieces.map((piece) => piece.materialId) : []),
+  ].filter(Boolean);
+  return ids.some((id) => isNeolithMaterial(materials.find((item) => item.id === id)))
+    ? "slabs"
+    : ids.length
+      ? "boards"
+      : "";
+};
+
+const isSlabQuote = () =>
+  (state.workType || inferredWorkType()) === "slabs";
+
+const quoteMaterials = () =>
+  activeMaterials().filter((material) =>
+    isSlabQuote()
+      ? isNeolithMaterial(material)
+      : !isNeolithMaterial(material),
+  );
 
 const activeEdgeBands = () =>
   edgeBands.filter((item) => item.active !== false);
@@ -358,6 +390,10 @@ function notify(text, type = "success") {
 
 function validateCurrentStep() {
   if (state.step === 0) {
+    if (!state.workType) {
+      notify("Selecciona si la cotización corresponde a Tableros (maderas) o Placas (piedras).", "error");
+      return false;
+    }
     if (
       auth.visitor &&
       (!state.contact.name.trim() ||
@@ -382,7 +418,26 @@ function validateCurrentStep() {
     }
   }
   if (state.step === 1 && selectedMaterials().length === 0) {
-    notify("Selecciona al menos un tablero para el proyecto.", "error");
+    notify(
+      isSlabQuote()
+        ? "Selecciona al menos un formato de placa para el proyecto."
+        : "Selecciona al menos un tablero para el proyecto.",
+      "error",
+    );
+    return false;
+  }
+  if (
+    state.step === 1 &&
+    selectedMaterials().some((material) =>
+      isSlabQuote()
+        ? !isNeolithMaterial(material)
+        : isNeolithMaterial(material),
+    )
+  ) {
+    notify(
+      "Los materiales seleccionados no corresponden al tipo de optimización. Sepáralos en cotizaciones distintas.",
+      "error",
+    );
     return false;
   }
   if (
@@ -420,6 +475,16 @@ async function saveProject(showMessage = true) {
     return false;
   }
   if (
+    selectedMaterials().some((material) =>
+      isSlabQuote()
+        ? !isNeolithMaterial(material)
+        : isNeolithMaterial(material),
+    )
+  ) {
+    notify("No se pueden guardar tableros y piedras en una misma cotización.", "error");
+    return false;
+  }
+  if (
     selectedMaterials().some(
       (material) =>
         isNeolithMaterial(material) &&
@@ -443,6 +508,7 @@ async function saveProject(showMessage = true) {
   const record = {
     id: state.projectId,
     project: state.project,
+    workType: state.workType || inferredWorkType(),
     categoryId: state.categoryId,
     materialId: state.materialId,
     materialIds: state.materialIds,
@@ -519,9 +585,9 @@ function grainIcon(grain) {
 
 function finishOptions(selected = "rough") {
   return [
-    ["rough", "Lineal · terminación bruta"],
-    ["bevel", "Biselado - Pulido"],
-    ["miter45", "45°"],
+    ["rough", "Sin adicional · corte bruto"],
+    ["bevel", `Biselado o Pulido · ${clp(state.settings.stoneBevelRate ?? state.settings.neolithBevelRate)}/ml`],
+    ["miter45", `Corte 45° · ${clp(state.settings.stoneMiter45Rate ?? state.settings.neolithMiter45Rate)}/ml`],
   ]
     .map(([value, label]) => `<option value="${value}" ${value === selected ? "selected" : ""}>${label}</option>`)
     .join("");
@@ -788,7 +854,7 @@ function pieceImportPreview() {
       isReady
         ? `<div class="import-confirm">
             <button class="primary" type="button" data-action="confirm-piece-import">Incorporar todas las piezas (${totalUnits})</button>
-            <span>También se seleccionarán automáticamente los tableros y tapacantos indicados en el Excel.</span>
+            <span>También se seleccionarán automáticamente los ${isSlabQuote() ? "formatos, vetas y acabados" : "tableros, vetas y tapacantos"} indicados en el Excel.</span>
           </div>`
         : isImported
           ? `<span><b>Listo.</b> Las piezas ya aparecen en el listado y están disponibles para optimizar.</span>`
@@ -809,17 +875,20 @@ function pieceImportPreview() {
   </div>`;
 }
 
-const pasteMapFields = [
-  ["name", "Nombre / pieza"],
-  ["quantity", "Cantidad *"],
-  ["length", "Largo *"],
-  ["width", "Ancho *"],
-  ["grain", "Sentido de veta"],
-  ["top", "L1 · superior"],
-  ["bottom", "L2 · inferior"],
-  ["left", "A1 · izquierdo"],
-  ["right", "A2 · derecho"],
-];
+function pasteMapFields() {
+  const sideKind = isSlabQuote() ? "acabado" : "tapacanto";
+  return [
+    ["name", "Nombre / pieza"],
+    ["quantity", "Cantidad *"],
+    ["length", "Largo *"],
+    ["width", "Ancho *"],
+    ["grain", "Sentido de veta"],
+    ["top", `L1 · ${sideKind}`],
+    ["bottom", `L2 · ${sideKind}`],
+    ["left", `A1 · ${sideKind}`],
+    ["right", `A2 · ${sideKind}`],
+  ];
+}
 
 function pasteMappingPanel() {
   if (!state.pasteColumns?.length) return "";
@@ -830,7 +899,7 @@ function pasteMappingPanel() {
   return `<section class="paste-mapping">
     <div><b>Asignar columnas del Excel</b><span>Confirma cómo debe leerse cada columna, aunque el cliente use nombres u orden distintos.</span></div>
     <div class="paste-mapping-grid">
-      ${pasteMapFields.map(([field, label]) => `<label>${label}<select data-paste-map="${field}">${options(state.pasteMapping?.[field])}</select></label>`).join("")}
+      ${pasteMapFields().map(([field, label]) => `<label>${label}<select data-paste-map="${field}">${options(state.pasteMapping?.[field])}</select></label>`).join("")}
     </div>
   </section>`;
 }
@@ -867,20 +936,34 @@ function pastePiecesPanel() {
   const configuredMaterial = materials.find(
     (item) => item.id === configuredMaterialId,
   );
-  const configuredNeolith = isNeolithMaterial(configuredMaterial);
+  const configuredNeolith =
+    isNeolithMaterial(configuredMaterial) || isSlabQuote();
   const configuredEdgeId =
     state.pasteConfig.edgeId || configuredMaterial?.suggestedEdgeId || "";
   const configuredMeasurementMode =
     state.pasteConfig.measurementMode === "cut" ? "cut" : "finished";
   const configSides = state.pasteConfig.sides || {};
-  return `<details class="paste-panel" ${state.pastePreview ? "open" : ""}>
+  const configuredEdges = Object.fromEntries(
+    ["top", "bottom", "left", "right"].map((side) => [
+      side,
+      state.pasteConfig.edges?.[side] ||
+        (configSides[side] ? configuredEdgeId : ""),
+    ]),
+  );
+  const configuredFinishes = Object.fromEntries(
+    ["top", "bottom", "left", "right"].map((side) => [
+      side,
+      state.pasteConfig.finishes?.[side] || "rough",
+    ]),
+  );
+  return `<details class="paste-panel" open>
     <summary>Pegar directamente desde cualquier Excel</summary>
     <div class="paste-panel-body">
-      <p>Copia desde el Excel del cliente las columnas <b>Largo, Ancho y Cantidad</b>; Nombre o Elemento es opcional. Con encabezados el orden puede ser distinto; sin encabezados usa Nombre, Largo, Ancho y Cantidad.</p>
+      <p>Copia las filas tal como las envió el cliente. <b>Largo, Ancho y Cantidad</b> son obligatorios; Nombre, Veta y las cuatro terminaciones pueden venir en cualquier columna o definirse aquí.</p>
       <div class="paste-config-grid">
-        <label>Tablero/color para este lote <em>*</em>
+        <label>${configuredNeolith ? "Formato/color" : "Tablero"} para este lote <em>*</em>
           <select id="paste-material">
-            <option value="">Seleccionar tablero</option>
+            <option value="">${configuredNeolith ? "Seleccionar formato" : "Seleccionar tablero"}</option>
             ${selectedMaterials().map((item) => `<option value="${item.id}" ${item.id === configuredMaterialId ? "selected" : ""}>${safe(item.sku)} · ${safe(item.name)} · ${item.thickness} mm</option>`).join("")}
           </select>
         </label>
@@ -890,33 +973,22 @@ function pastePiecesPanel() {
           </select>
           <small>Solo se usa cuando el Excel no incluye una columna de veta.</small>
         </label>
-        ${configuredNeolith ? `<label>Terminaciones Neolith
-          <span class="readonly-field">Se leen por columna L1, L2, A1 y A2</span>
-          <small>Valores admitidos: Bruta, Biselado-Pulido o 45°.</small>
-        </label>` : `<label>Tapacanto del lote
-          <select id="paste-edge">
-            <option value="">Sin tapacanto</option>
-            ${activeEdgeBands().map((item) => `<option value="${item.id}" ${item.id === configuredEdgeId ? "selected" : ""}>${safe(item.sku)} · ${safe(item.name)} · ${String(item.thickness).replace(".", ",")} mm</option>`).join("")}
-          </select>
-        </label>`}
         <label class="form-span">Interpretación de las medidas
           <select id="paste-measurement-mode">
-            <option value="finished" ${configuredMeasurementMode === "finished" ? "selected" : ""}>Medidas terminadas - descontar tapacanto automáticamente</option>
+            <option value="finished" ${configuredMeasurementMode === "finished" ? "selected" : ""}>${configuredNeolith ? "Medidas terminadas de la pieza" : "Medidas terminadas - descontar tapacanto automáticamente"}</option>
             <option value="cut" ${configuredMeasurementMode === "cut" ? "selected" : ""}>Medidas de corte - ya descontadas por el cliente</option>
           </select>
-          <small>La opción terminada es la predeterminada. Usa “de corte” solo cuando el cliente ya descontó los tapacantos.</small>
+          <small>La opción terminada es la predeterminada.${configuredNeolith ? "" : " Usa “de corte” solo cuando el cliente ya descontó los tapacantos."}</small>
         </label>
       </div>
-      ${configuredNeolith ? "" : `<div class="paste-side-picker">
-        <span>Aplicar ese tapacanto en:</span>
-        <label class="side-top"><input type="checkbox" data-paste-side="top" ${configSides.top ? "checked" : ""} /><b>L1</b><small>Superior</small></label>
-        <label class="side-left"><input type="checkbox" data-paste-side="left" ${configSides.left ? "checked" : ""} /><b>A1</b><small>Izquierdo</small></label>
-        <i>PIEZA</i>
-        <label class="side-right"><input type="checkbox" data-paste-side="right" ${configSides.right ? "checked" : ""} /><b>A2</b><small>Derecho</small></label>
-        <label class="side-bottom"><input type="checkbox" data-paste-side="bottom" ${configSides.bottom ? "checked" : ""} /><b>L2</b><small>Inferior</small></label>
-      </div>`}
+      <section class="paste-side-services">
+        <div><b>${configuredNeolith ? "Acabado predeterminado por lado" : "Tapacanto predeterminado por lado"}</b><span>Se aplica cuando el Excel no trae ese dato. Después podrás corregir cada pieza antes de incorporarla.</span></div>
+        <div class="paste-side-service-grid">
+          ${sides.map(([side, label]) => `<label>${label}<select id="paste-${configuredNeolith ? "finish" : "edge"}-${side}">${configuredNeolith ? finishOptions(configuredFinishes[side]) : edgeOptions(configuredEdges[side])}</select></label>`).join("")}
+        </div>
+      </section>
       <label>Filas copiadas desde Excel
-        <textarea id="piece-paste-text" rows="8" placeholder="Nombre de pieza    Largo    Ancho    Cantidad&#10;Costado izquierdo  720      560      2">${safe(state.pasteRawText || "")}</textarea>
+        <textarea id="piece-paste-text" rows="8" placeholder="Nombre    Largo    Ancho    Cantidad    Veta    L1    L2    A1    A2&#10;Costado   720      560      2           Longitudinal">${safe(state.pasteRawText || "")}</textarea>
       </label>
       ${pasteMappingPanel()}
       <button class="secondary" type="button" data-action="analyze-piece-paste">${state.pasteColumns?.length ? "Aplicar asignación y revisar" : "Detectar columnas y revisar"}</button>
@@ -927,7 +999,7 @@ function pastePiecesPanel() {
 
 function pieceImportPanel({ project = false } = {}) {
   return `<section class="card import-card ${project ? "project-import-card" : ""}">
-    <div class="section-title"><span>▦</span><div><h3>Pegar listado desde Excel</h3><p>Copia las celdas del archivo del cliente y asigna tablero, tapacanto y lados una sola vez al lote.</p></div></div>
+    <div class="section-title"><span>▦</span><div><h3>Pegar listado desde Excel</h3><p>${isSlabQuote() ? "Copia las celdas del cliente y define veta y acabado de cada lado." : "Copia las celdas del cliente y define veta y un tapacanto distinto para cada lado si corresponde."}</p></div></div>
     ${pastePiecesPanel()}
   </section>`;
 }
@@ -941,17 +1013,17 @@ function manualPiecePanel() {
     <div class="section-title"><span>＋</span><div><h3>Agregar pieza manualmente</h3><p>El nombre es opcional; el código se asigna recién al optimizar.</p></div></div>
     <form id="piece-form" class="piece-form">
       <label>Nombre del elemento <small>Opcional</small><input name="name" placeholder="Costado izquierdo" /></label>
-      <label>Tablero de esta pieza <em>*</em>
+      <label>${neolith ? "Formato de placa" : "Tablero"} de esta pieza <em>*</em>
         <select name="materialId" required>
           ${chosenMaterials.map((item) => `<option value="${item.id}" ${item.id === material?.id ? "selected" : ""}>${safe(item.sku)} · ${safe(item.name)} · ${item.thickness} mm</option>`).join("")}
         </select>
       </label>
       <label class="form-span">Interpretación de las medidas
         <select name="measurementMode">
-          <option value="finished">Medidas terminadas · descontar tapacanto automáticamente</option>
+          <option value="finished">${neolith ? "Medidas terminadas de la pieza" : "Medidas terminadas · descontar tapacanto automáticamente"}</option>
           <option value="cut">Medidas de corte · ya descontadas por el cliente</option>
         </select>
-        <small>La primera opción es la normal. Usa “de corte” únicamente cuando el cliente ya hizo el descuento.</small>
+        <small>La primera opción es la normal.${neolith ? "" : " Usa “de corte” únicamente cuando el cliente ya descontó el tapacanto."}</small>
       </label>
       <label>Largo ingresado (mm) <em>*</em><input name="length" type="number" min="${MINIMUM_CUT_SIDE}" max="${limits.maxLength}" required placeholder="720" /></label>
       <label>Ancho ingresado (mm) <em>*</em><input name="width" type="number" min="${MINIMUM_CUT_SIDE}" max="${limits.maxWidth}" required placeholder="560" /></label>
@@ -990,7 +1062,7 @@ function manualPiecePanel() {
 function pieceEntryPanel() {
   const mode = state.pieceEntryMode === "manual" ? "manual" : "paste";
   return `<section class="piece-entry-section reveal">
-    <div class="section-title"><span>3</span><div><h3>Ingresa las piezas de este proyecto</h3><p>Puedes alternar entre ingreso manual y pegado masivo sin perder las piezas incorporadas.</p></div></div>
+    <div class="section-title"><span>3</span><div><h3>Ingresa las piezas de este proyecto</h3><p>Puedes alternar entre ingreso manual y pegado masivo. La veta y los cuatro lados quedan editables antes de optimizar.</p></div></div>
     <div class="piece-entry-switch" role="tablist">
       <button type="button" class="${mode === "paste" ? "active" : ""}" data-action="piece-entry-mode" data-mode="paste">▦ Pegar desde Excel</button>
       <button type="button" class="${mode === "manual" ? "active" : ""}" data-action="piece-entry-mode" data-mode="manual">＋ Ingreso manual</button>
@@ -1034,13 +1106,24 @@ function projectStep() {
     <section class="hero-card">
       <div>
         <p class="eyebrow">NUEVA SOLICITUD</p>
-        <h2>Identifica el trabajo antes de cotizar</h2>
-        <p>${auth.visitor ? "Completa tus datos mínimos para que podamos responder la cotización." : "Identifica al cliente, dirección del proyecto y responsable comercial."}</p>
+        <h2>Primero selecciona qué deseas optimizar</h2>
+        <p>El sistema separará herramientas, terminaciones y costos según se trate de maderas o piedras.</p>
       </div>
       <div class="hero-mark">01</div>
     </section>
+    <section class="card work-type-card">
+      <div class="section-title"><span>1</span><div><h3>Tipo de optimización <em>*</em></h3><p>Una cotización utiliza un solo flujo para evitar mezclar tapacantos con acabados de piedra.</p></div></div>
+      <div class="work-type-grid">
+        <button type="button" class="work-type-option ${state.workType === "boards" ? "selected" : ""}" data-work-type="boards">
+          <strong>▤</strong><span><b>Tableros · Maderas</b><small>Melaminas, MDF y otros tableros. Incluye tapacantos por lado y rebaje de 10 mm.</small></span><i>${state.workType === "boards" ? "✓" : "→"}</i>
+        </button>
+        <button type="button" class="work-type-option ${state.workType === "slabs" ? "selected" : ""}" data-work-type="slabs">
+          <strong>◆</strong><span><b>Placas · Piedras</b><small>Neolith y futuras piedras. Sin tapacantos; corte por placa y acabados opcionales por lado.</small></span><i>${state.workType === "slabs" ? "✓" : "→"}</i>
+        </button>
+      </div>
+    </section>
     <section class="card form-card">
-      <div class="section-title"><span>1</span><div><h3>Datos del proyecto</h3><p>Flujo: Cotización, Facturación, Facturado y pagado, Producción, Despacho y Entregado.</p></div></div>
+      <div class="section-title"><span>2</span><div><h3>Datos del proyecto</h3><p>${auth.visitor ? "Completa tus datos mínimos para que podamos responder la cotización." : "Identifica al cliente, dirección del proyecto y responsable comercial."}</p></div></div>
       <div class="form-grid">
         <label>Nombre del proyecto
           <input data-project="projectName" value="${safe(state.project.projectName)}" placeholder="Ej. Cocina departamento Ñuñoa" />
@@ -1109,23 +1192,32 @@ function projectStep() {
         </label>` : ""}
       </div>
     </section>
-    ${stepFooter(false, "Continuar a materiales")}
+    ${stepFooter(false, state.workType === "slabs" ? "Continuar a placas" : "Continuar a tableros")}
   `;
 }
 
 function materialStep() {
-  const products = activeMaterials().filter(
+  const availableMaterials = quoteMaterials();
+  const availableCategoryIds = new Set(
+    availableMaterials.map((item) => item.categoryId),
+  );
+  const availableCategories = categories.filter((category) =>
+    availableCategoryIds.has(category.id),
+  );
+  const products = availableMaterials.filter(
     (item) => item.categoryId === state.categoryId,
   );
   const chosenMaterials = selectedMaterials();
+  const slabQuote = isSlabQuote();
+  const productNoun = slabQuote ? "placa(s)" : "tablero(s)";
   return `
     <section class="intro-row">
-      <div><p class="eyebrow">SELECCIÓN PROGRESIVA</p><h2>Selecciona uno o más tableros</h2><p>Puedes cambiar de categoría y seguir incorporando productos al mismo proyecto.</p></div>
-      <div class="selection-flow"><b class="${state.categoryId ? "done" : ""}">1 Categoría</b><span>→</span><b class="${chosenMaterials.length ? "done" : ""}">${chosenMaterials.length} tablero(s)</b></div>
+      <div><p class="eyebrow">${slabQuote ? "PLACAS · PIEDRAS" : "TABLEROS · MADERAS"}</p><h2>${slabQuote ? "Selecciona el formato de placa" : "Selecciona uno o más tableros"}</h2><p>${slabQuote ? "En Neolith solo se cotiza el servicio: corte por placa y acabados opcionales por lado." : "Puedes cambiar de categoría y seguir incorporando productos al mismo proyecto."}</p></div>
+      <div class="selection-flow"><b class="${state.categoryId ? "done" : ""}">1 Categoría</b><span>→</span><b class="${chosenMaterials.length ? "done" : ""}">${chosenMaterials.length} ${productNoun}</b></div>
     </section>
     ${
       chosenMaterials.length
-        ? `<section class="selected-materials" aria-label="Tableros seleccionados">
+        ? `<section class="selected-materials" aria-label="Materiales seleccionados">
             ${chosenMaterials
               .map(
                 (material) => `<article>
@@ -1139,24 +1231,21 @@ function materialStep() {
         : ""
     }
     ${chosenMaterials.some(isNeolithMaterial) ? `<section class="card neolith-config-card">
-      <div class="section-title"><span>◆</span><div><h3>Datos de Neolith para este proyecto</h3><p>El color y precio se guardan solo en esta cotización. El formato, rebaje y espesor quedan asociados al producto.</p></div></div>
+      <div class="section-title"><span>◆</span><div><h3>Datos de Neolith para este proyecto</h3><p>Escribe el color y confirma el formato. La cotización considera servicios, no el valor del material.</p></div></div>
       <div class="paste-config-grid">
         ${chosenMaterials.filter(isNeolithMaterial).map((material) => {
           const custom = state.materialCustomizations?.[material.id] || {};
           return `<label>${safe(material.sku)} · Color <em>*</em>
             <input data-neolith-color="${material.id}" value="${safe(custom.color || "")}" placeholder="Ej. Calacatta Luxe" required />
-            <small>${material.plateLength} × ${material.plateWidth} × ${material.thickness} mm nominal · área útil ${material.plateLength - 60} × ${material.plateWidth - 60} mm</small>
-          </label><label>Precio neto por plancha
-            <input type="number" min="0" step="1" data-neolith-price="${material.id}" value="${Number(custom.netPrice || 0)}" />
-            <small>El servicio lineal bruto de ${clp(state.settings.neolithLinearRate)} por placa se calcula aparte.</small>
-          </label>`;
+            <small>Fábrica ${material.plateLength} × ${material.plateWidth} × ${material.thickness} mm · útil ${material.usablePlateLength || material.plateLength - 60} × ${material.usablePlateWidth || material.plateWidth - 60} mm.</small>
+          </label><div class="stone-rate-note"><b>${clp(state.settings.stoneCutPerPlateRate)} neto</b><span>Corte por cada placa utilizada</span><small>El material no se valoriza en esta cotización. Biselado/Pulido y 45° se agregan por lado solo cuando corresponda.</small></div>`;
         }).join("")}
       </div>
     </section>` : ""}
     <section class="card">
-      <div class="section-title"><span>1</span><div><h3>Categoría del tablero</h3><p>Los listados se muestran de forma progresiva.</p></div></div>
+      <div class="section-title"><span>1</span><div><h3>${slabQuote ? "Tipo de placa" : "Categoría del tablero"}</h3><p>Los productos incompatibles con el flujo elegido quedan ocultos.</p></div></div>
       <div class="category-grid">
-        ${categories
+        ${availableCategories
           .map(
             (category) => `
               <button class="category ${category.id === state.categoryId ? "selected" : ""}" data-category="${category.id}">
@@ -1185,7 +1274,7 @@ function materialStep() {
                     <span class="sample" style="background:${material.texture}">
                       <img class="material-image" src="${materialImageUrl(material)}" data-fallback="${safe(material.image)}" alt="" loading="lazy" />
                     </span>
-                    <span class="product-copy"><small>${safe(material.brand)} · ${safe(material.sku)}</small><b>${safe(material.name)}</b><em>${material.plateLength} × ${material.plateWidth} × ${material.thickness} mm</em><strong>${isNeolithMaterial(material) ? "Precio por proyecto" : `${clp(material.netPrice)} neto`}</strong>
+                    <span class="product-copy"><small>${safe(material.brand)} · ${safe(material.sku)}</small><b>${safe(material.name)}</b><em>${isNeolithMaterial(material) ? `Útil ${material.usablePlateLength} × ${material.usablePlateWidth} × ${material.thickness} mm · fábrica ${material.plateLength} × ${material.plateWidth} mm` : `${material.plateLength} × ${material.plateWidth} × ${material.thickness} mm`}</em><strong>${isNeolithMaterial(material) ? `${clp(state.settings.stoneCutPerPlateRate)} neto por placa cortada` : `${clp(material.netPrice)} neto`}</strong>
                     ${
                       hasRole("admin")
                         ? `<span class="admin-prices">Mínimo ${clp(material.minPrice)} · Compra ${clp(material.purchasePrice)}</span>`
@@ -1378,11 +1467,11 @@ function catalogAdminView() {
 function piecesStep() {
   return `
     <section class="intro-row">
-      <div><p class="eyebrow">REVISIÓN DE PIEZAS</p><h2>Confirma cantidades y dimensiones</h2><p>Vuelve a Material y piezas si necesitas incorporar otro lote, color o tablero.</p></div>
+      <div><p class="eyebrow">REVISIÓN DE PIEZAS</p><h2>Confirma cantidades, dimensiones y veta</h2><p>Vuelve a Material y piezas si necesitas incorporar otro lote, color o ${isSlabQuote() ? "formato" : "tablero"}.</p></div>
       <div class="piece-counter"><strong>${state.pieces.reduce((sum, piece) => sum + piece.quantity, 0)}</strong><span>piezas totales</span></div>
     </section>
     ${piecesTable()}
-    ${stepFooter(true, "Configurar tapacantos")}
+    ${stepFooter(true, isSlabQuote() ? "Configurar acabados" : "Configurar tapacantos")}
   `;
 }
 
@@ -1393,7 +1482,7 @@ function piecesTable() {
   return `<section class="card table-card">
     <div class="section-title"><span>▦</span><div><h3>Listado de piezas</h3><p>${state.pieces.length} líneas ingresadas.</p></div></div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Código · elemento</th><th>Tablero</th><th>Ingresada / corte</th><th>Cant.</th><th>Veta</th><th></th></tr></thead>
+      <thead><tr><th>Código · elemento</th><th>${isSlabQuote() ? "Placa" : "Tablero"}</th><th>Ingresada / corte</th><th>Cant.</th><th>Veta</th><th></th></tr></thead>
       <tbody>${selectedMaterials()
         .flatMap((groupMaterial) => {
           const groupPieces = state.pieces.filter(
@@ -1454,12 +1543,13 @@ function piecesTable() {
 function edgeStep() {
   const material = selectedMaterial();
   const suggested = edgeBands.find((item) => item.id === material?.suggestedEdgeId);
+  const slabQuote = isSlabQuote();
   return `
     <section class="intro-row">
-      <div><p class="eyebrow">TERMINACIÓN</p><h2>Tapacantos y acabados por lado</h2><p>En tableros se configura tapacanto; en Neolith se elige terminación bruta, Biselado-Pulido o 45°. Largo y Ancho conservan el sentido ingresado.</p></div>
+      <div><p class="eyebrow">TERMINACIÓN</p><h2>${slabQuote ? "Servicios opcionales por cada lado" : "Tapacantos por cada lado"}</h2><p>${slabQuote ? `El corte bruto se cobra por placa utilizada (${clp(state.settings.stoneCutPerPlateRate)} neto). En L1, L2, A1 y A2 puedes agregar Biselado o Pulido, o Corte 45°.` : "Selecciona si cada lado lleva tapacanto y qué producto corresponde. Largo y Ancho conservan el sentido ingresado."}</p></div>
     </section>
     ${state.pieces.some((piece) => isNeolithMaterial(selectedMaterial(piece.materialId))) ? `<section class="card edge-bulk-card">
-      <div class="section-title"><span>◆</span><div><h3>Asignación rápida Neolith</h3><p>Aplica un acabado distinto a cada lado de todas las piezas Neolith.</p></div></div>
+      <div class="section-title"><span>◆</span><div><h3>Asignación rápida de acabados</h3><p>Aplica un servicio distinto en cada lado a todas las piezas de piedra. “Sin adicional” mantiene el corte bruto.</p></div></div>
       <div class="edge-bulk-grid">
         <label>L1 · Superior<select id="finish-fast-top">${finishOptions()}</select></label>
         <label>L2 · Inferior<select id="finish-fast-bottom">${finishOptions()}</select></label>
@@ -1499,10 +1589,10 @@ function edgeStep() {
           const neolith = isNeolithMaterial(pieceMaterial);
           return `<article class="card edge-piece">
             <div class="edge-piece-head">
-              <div class="edge-piece-identity"><label class="piece-check"><input type="checkbox" data-edge-piece-select="${piece.id}" /> Marcar para asignación rápida</label><small>${safe(piece.code)} · ${safe(pieceMaterial?.sku || "Sin tablero")}</small><h3>${safe(piece.name || "Pieza sin nombre")}</h3><p>${safe(pieceMaterial?.name || "")} · Terminada: ${piece.length} × ${piece.width} mm · Cantidad: ${piece.quantity}</p></div>
+              <div class="edge-piece-identity"><label class="piece-check"><input type="checkbox" data-edge-piece-select="${piece.id}" /> Marcar para asignación rápida</label><small>${safe(piece.code)} · ${safe(pieceMaterial?.sku || "Sin material")}</small><h3>${safe(piece.name || "Pieza sin nombre")}</h3><p>${safe(pieceMaterial?.name || "")} · Terminada: ${piece.length} × ${piece.width} mm · Cantidad: ${piece.quantity}</p></div>
               <div class="cut-size"><span>MEDIDA DE CORTE ${piece.measurementMode === "cut" ? "· YA DESCONTADA" : "· AUTOMÁTICA"}</span><b>${cut.cutLength} × ${cut.cutWidth} mm</b></div>
             </div>
-            <div class="edge-diagram" aria-label="Tapacantos por posición">
+            <div class="edge-diagram" aria-label="${neolith ? "Acabados" : "Tapacantos"} por posición">
               <div class="edge-piece-shape">
                 <span>${piece.length} × ${piece.width} mm</span>
                 <small>L1 superior · L2 inferior · A1 izquierdo · A2 derecho</small>
@@ -1645,10 +1735,24 @@ function applyNeolithFinishes() {
     piece.finishes = { ...values };
   });
   latestResult = null;
-  notify(`Acabados aplicados a ${targets.length} pieza(s) Neolith.`);
+  notify(`Acabados aplicados a ${targets.length} pieza(s) de piedra.`);
 }
 
 function summaryRows(summary) {
+  if (isSlabQuote()) {
+    const cutRate = summary.boardCount
+      ? summary.cuttingSubtotal / summary.boardCount
+      : state.settings.stoneCutPerPlateRate;
+    return `
+      <div class="summary-row"><span>Corte por placa <small>${summary.boardCount} placa(s) × ${clp(cutRate)} neto</small></span><b>${clp(summary.cuttingSubtotal)}</b></div>
+      <div class="summary-row"><span>Biselado o Pulido <small>${Number(summary.finishMetersByType?.bevel || 0).toFixed(2)} ml</small></span><b>${clp(Number(summary.finishMetersByType?.bevel || 0) * Number(summary.finishRates?.bevel || state.settings.stoneBevelRate))}</b></div>
+      <div class="summary-row"><span>Corte 45° <small>${Number(summary.finishMetersByType?.miter45 || 0).toFixed(2)} ml</small></span><b>${clp(Number(summary.finishMetersByType?.miter45 || 0) * Number(summary.finishRates?.miter45 || state.settings.stoneMiter45Rate))}</b></div>
+      ${summary.servicesDiscount ? `<div class="summary-row discount"><span>Descuento servicios <small>${summary.servicesDiscount} %</small></span><b>− ${clp(summary.servicesDiscountAmount)}</b></div>` : ""}
+      <div class="summary-row net"><span>Neto</span><b>${clp(summary.net)}</b></div>
+      <div class="summary-row"><span>IVA 19 %</span><b>${clp(summary.vat)}</b></div>
+      <div class="summary-row total"><span>Total</span><b>${clp(summary.total)}</b></div>
+    `;
+  }
   return `
     <div class="summary-row"><span>Total tableros <small>${summary.boardCount} placa(s)</small></span><b>${clp(summary.boardSubtotal)}</b></div>
     ${
@@ -1664,7 +1768,7 @@ function summaryRows(summary) {
     }
     <div class="summary-row"><span>Total servicio de corte <small>${summary.boardCount} tablero(s) · ${summary.cutCount} cortes estimados</small></span><b>${clp(summary.cuttingSubtotal)}</b></div>
     <div class="summary-row"><span>Total servicio de tapacanto <small>Tarifa según espesor</small></span><b>${clp(summary.bandingSubtotal)}</b></div>
-    ${summary.finishSubtotal ? `<div class="summary-row"><span>Acabados Neolith <small>${Number(summary.finishMetersByType?.bevel || 0).toFixed(2)} ml bisel · ${Number(summary.finishMetersByType?.miter45 || 0).toFixed(2)} ml a 45°</small></span><b>${clp(summary.finishSubtotal)}</b></div>` : ""}
+    ${summary.finishSubtotal ? `<div class="summary-row"><span>Acabados de placa <small>${Number(summary.finishMetersByType?.bevel || 0).toFixed(2)} ml bisel/pulido · ${Number(summary.finishMetersByType?.miter45 || 0).toFixed(2)} ml a 45°</small></span><b>${clp(summary.finishSubtotal)}</b></div>` : ""}
     ${
       summary.servicesDiscount
         ? `<div class="summary-row discount"><span>Descuento servicios <small>${summary.servicesDiscount} %</small></span><b>− ${clp(summary.servicesDiscountAmount)}</b></div>`
@@ -1680,6 +1784,7 @@ function invoiceBreakdown(result) {
   const materialRows = result.materialSummaries || [];
   const edgeRows = result.edgeSummaries || [];
   const finishRows = result.finishSummaries || [];
+  const slabQuote = materialRows.some((item) => item.isStone) || isSlabQuote();
   const meters = (value) =>
     Number(value || 0).toLocaleString("es-CL", {
       minimumFractionDigits: 2,
@@ -1688,26 +1793,26 @@ function invoiceBreakdown(result) {
   return `<div class="invoice-breakdown">
     <section class="invoice-group">
       <div class="invoice-group-title">
-        <b>Tableros por tipo</b>
-        <span>${materialRows.length} producto(s)</span>
+        <b>${slabQuote ? "Placas y corte" : "Tableros por tipo"}</b>
+        <span>${materialRows.length} formato(s)</span>
       </div>
       ${materialRows
         .map(
           (item) => `<article class="invoice-item">
             <header><b>${safe(item.sku)}</b><span>${safe(item.name)}</span></header>
-            <div class="invoice-line">
+            ${item.isStone ? `<div class="invoice-line"><span>Formato<small>Fábrica ${item.rawPlateLength} × ${item.rawPlateWidth} mm · útil ${item.usablePlateLength} × ${item.usablePlateWidth} mm</small></span><strong>Servicio</strong></div>` : `<div class="invoice-line">
               <span>Tablero<small>${item.boardCount} placa(s) × ${clp(item.unitPrice)}</small></span>
               <strong>${clp(item.boardSubtotal)}</strong>
-            </div>
+            </div>`}
             <div class="invoice-line service">
-              <span>Servicio de corte<small>${item.boardCount} placa(s) × ${clp(item.cutRatePerBoard)}</small></span>
+              <span>${item.isStone ? "Corte por placa" : "Servicio de corte"}<small>${item.boardCount} placa(s) × ${clp(item.cutRatePerBoard)}</small></span>
               <strong>${clp(item.cuttingSubtotal)}</strong>
             </div>
           </article>`,
         )
         .join("")}
     </section>
-    <section class="invoice-group">
+    ${slabQuote ? "" : `<section class="invoice-group">
       <div class="invoice-group-title">
         <b>Tapacantos por tipo</b>
         <span>${edgeRows.length} producto(s)</span>
@@ -1731,9 +1836,9 @@ function invoiceBreakdown(result) {
               .join("")
           : `<div class="invoice-empty">Sin tapacantos asignados.</div>`
       }
-    </section>
+    </section>`}
     ${finishRows.length ? `<section class="invoice-group">
-      <div class="invoice-group-title"><b>Acabados Neolith</b><span>${finishRows.length} servicio(s)</span></div>
+      <div class="invoice-group-title"><b>Acabados opcionales por lado</b><span>${finishRows.length} servicio(s)</span></div>
       ${finishRows.map((item) => `<article class="invoice-item"><header><b>${safe(item.name)}</b></header><div class="invoice-line service"><span>Acabado<small>${meters(item.meters)} ml × ${clp(item.unitPrice)}/ml</small></span><strong>${clp(item.serviceSubtotal)}</strong></div></article>`).join("")}
     </section>` : ""}
   </div>`;
@@ -1765,7 +1870,7 @@ function optimizedPiecesTable() {
       </div>
     </div>
     <div class="table-wrap"><table class="result-piece-table">
-      <thead><tr><th>Código · elemento</th><th>Tablero</th><th>Terminada</th><th>Corte</th><th>Solic.</th><th>Optim.</th><th>Placa(s)</th></tr></thead>
+      <thead><tr><th>Código · elemento</th><th>${isSlabQuote() ? "Placa" : "Tablero"}</th><th>Terminada</th><th>Corte</th><th>Solic.</th><th>Optim.</th><th>Placa(s)</th></tr></thead>
       <tbody>${selectedMaterials()
         .flatMap((groupMaterial) => {
           const groupRows = rows.filter(
@@ -1855,9 +1960,10 @@ function optimizeStep() {
     state.settings,
   );
   const summary = latestResult.summary;
+  const slabQuote = isSlabQuote();
   return `
     <section class="intro-row">
-      <div><p class="eyebrow">RESULTADO</p><h2>Planos agrupados por tablero</h2><p>Cada material se optimiza por separado y genera sus propias hojas de corte.</p></div>
+      <div><p class="eyebrow">RESULTADO</p><h2>Planos agrupados por ${slabQuote ? "formato de placa" : "tablero"}</h2><p>Cada material se optimiza por separado y genera sus propias hojas de corte.</p></div>
       <div class="actions">
         ${
           auth.visitor
@@ -1903,7 +2009,7 @@ function optimizeStep() {
         ? `<div class="alert"><b>Revisar piezas:</b> ${latestResult.warnings.map(safe).join(" · ")}</div>`
         : ""
     }
-    ${state.settings.calculationVersion === "legacy-v3" ? `<div class="alert"><b>Proyecto histórico protegido:</b> conserva la geometría y reglas con que fue guardado. <button class="secondary small" type="button" data-action="migrate-calculation-v4">Reoptimizar explícitamente con rebaje V4</button></div>` : ""}
+    ${state.settings.calculationVersion !== CALCULATION_VERSION ? `<div class="alert"><b>Proyecto histórico protegido:</b> conserva la geometría y reglas con que fue guardado (${safe(state.settings.calculationVersion || "versión anterior")}). <button class="secondary small" type="button" data-action="migrate-calculation-v4">Migrar explícitamente a V4.1</button></div>` : ""}
     ${optimizedPiecesTable()}
     <nav class="plate-quick-nav" aria-label="Navegación rápida entre hojas de corte">
       <b>Ir a hoja</b>
@@ -1921,7 +2027,7 @@ function optimizeStep() {
         ${latestResult.plates
           .map(
             (plate) => `<article class="card plan-card" id="plan-card-${plate.index}">
-              <header><div><small>${safe(plate.material.sku)} · ${safe(plate.material.name)}</small><h3>Placa ${plate.materialPlateIndex} de este tablero</h3></div><b>${plate.utilization.toFixed(1)} % utilizado</b></header>
+              <header><div><small>${safe(plate.material.sku)} · ${safe(plate.material.name)}</small><h3>Placa ${plate.materialPlateIndex} de este ${slabQuote ? "formato" : "tablero"}</h3></div><b>${plate.utilization.toFixed(1)} % utilizado</b></header>
               <div class="canvas-wrap"><canvas id="plan-${plate.index}"></canvas></div>
               ${platePiecesTable(plate)}
             </article>`,
@@ -1937,12 +2043,17 @@ function optimizeStep() {
           <p class="eyebrow">PARÁMETROS</p>
           <label>Espesor nominal del disco (mm)<input type="number" min="0" step="0.1" data-setting="bladeThickness" value="${state.settings.bladeThickness || 2}" /></label>
           <label>Consumo efectivo por corte (mm)<input type="number" min="0" step="0.1" data-setting="kerf" value="${state.settings.kerf}" /></label>
-          <small>Valor predeterminado: disco 2 mm y consumo real 3 mm por cada corte. Rebaje: tableros 10 mm/lado; Neolith 30 mm/lado.</small>
+          <small>Valor predeterminado: disco 2 mm y consumo real 3 mm por cada corte. ${slabQuote ? "La placa de fábrica incorpora 30 mm adicionales por lado para el despunte." : "Los tableros consideran un rebaje de 10 mm por lado."}</small>
           <label>Modo de optimización<select data-setting-text="optimizationMode">
             <option value="longitudinal" ${state.settings.optimizationMode === "longitudinal" ? "selected" : ""}>Priorizar primer corte longitudinal</option>
             <option value="free" ${state.settings.optimizationMode === "free" ? "selected" : ""}>Sin priorizar</option>
           </select></label>
-          <div class="rate-table">
+          ${slabQuote ? `<div class="rate-table">
+            <b>Servicios de placas · valores netos</b>
+            <span>Corte por placa utilizada <strong>${clp(state.settings.stoneCutPerPlateRate)}</strong></span>
+            <span>Biselado o Pulido <strong>${clp(state.settings.stoneBevelRate)}/ml</strong></span>
+            <span>Corte 45° <strong>${clp(state.settings.stoneMiter45Rate)}/ml</strong></span>
+          </div>` : `<div class="rate-table">
             <b>Corte automático por tablero</b>
             <span>Melamina 15/18 mm <strong>${clp(
               state.settings.melamineCutRate,
@@ -1950,12 +2061,6 @@ function optimizeStep() {
             <span>EGR y otros <strong>${clp(
               state.settings.specialCutRate,
             )}</strong></span>
-            <span>Neolith lineal bruto <strong>${clp(state.settings.neolithLinearRate)}</strong></span>
-          </div>
-          <div class="rate-table">
-            <b>Acabados Neolith / ml</b>
-            <span>Biselado - Pulido <strong>${clp(state.settings.neolithBevelRate)}</strong></span>
-            <span>45° <strong>${clp(state.settings.neolithMiter45Rate)}</strong></span>
           </div>
           <div class="rate-table">
             <b>Servicio tapacanto / ml</b>
@@ -1963,10 +2068,10 @@ function optimizeStep() {
             <span>1,0 mm <strong>${clp(600)}</strong></span>
             <span>1,5 mm <strong>${clp(700)}</strong></span>
             <span>2,0 mm <strong>${clp(850)}</strong></span>
-          </div>
+          </div>`}
           <p class="eyebrow settings-subtitle">DESCUENTOS</p>
-          <label>Tableros (%)<input type="number" min="0" max="100" step="0.1" data-setting="boardDiscount" value="${state.settings.boardDiscount}" /></label>
-          <label>Tapacantos (%)<input type="number" min="0" max="100" step="0.1" data-setting="edgeDiscount" value="${state.settings.edgeDiscount}" /></label>
+          ${slabQuote ? "" : `<label>Tableros (%)<input type="number" min="0" max="100" step="0.1" data-setting="boardDiscount" value="${state.settings.boardDiscount}" /></label>
+          <label>Tapacantos (%)<input type="number" min="0" max="100" step="0.1" data-setting="edgeDiscount" value="${state.settings.edgeDiscount}" /></label>`}
           <label>Servicios (%)<input type="number" min="0" max="100" step="0.1" data-setting="servicesDiscount" value="${state.settings.servicesDiscount}" /></label>
           <small>Precios y servicios expresados en valores netos.</small>
         </section>
@@ -2948,7 +3053,7 @@ async function importExcel(file) {
     }
     const table = selectedSheet.data;
     const imported = parsePieceImportTable(table, {
-      catalogMaterials: materials,
+      catalogMaterials: quoteMaterials(),
       catalogEdges: edgeBands,
       fallbackMaterialId: state.materialId,
       fallbackGrain: state.defaultGrain,
@@ -3010,6 +3115,19 @@ async function importExcel(file) {
 function addImportedPieceBatch(pending, previewKey) {
   if (!pending?.rows?.length) {
     notify("Primero valida las piezas que deseas incorporar.", "error");
+    return;
+  }
+  const containsWrongType = pending.materialIds.some((id) => {
+    const material = materials.find((item) => item.id === id);
+    return isSlabQuote()
+      ? !isNeolithMaterial(material)
+      : isNeolithMaterial(material);
+  });
+  if (containsWrongType) {
+    notify(
+      "El lote contiene materiales del otro flujo. Separa tableros y placas de piedra en cotizaciones distintas.",
+      "error",
+    );
     return;
   }
   const proposedPieces = [...state.pieces, ...pending.rows];
@@ -3113,25 +3231,40 @@ function analyzePastedPieces() {
   const text = document.querySelector("#piece-paste-text")?.value || state.pasteRawText || "";
   const previousText = state.pasteRawText;
   const materialId = document.querySelector("#paste-material")?.value || state.pasteConfig.materialId || "";
-  const edgeId = document.querySelector("#paste-edge")?.value || state.pasteConfig.edgeId || "";
   const defaultGrain = document.querySelector("#paste-default-grain")?.value || state.pasteConfig.defaultGrain || "longitudinal";
   const measurementMode =
     document.querySelector("#paste-measurement-mode")?.value === "cut"
       ? "cut"
       : "finished";
-  const sidesForEdge = Object.fromEntries(
+  const defaultEdges = Object.fromEntries(
     ["top", "bottom", "left", "right"].map((side) => [
       side,
-      Boolean(document.querySelector(`[data-paste-side="${side}"]`)?.checked),
+      document.querySelector(`#paste-edge-${side}`)?.value ||
+        state.pasteConfig.edges?.[side] ||
+        "",
     ]),
   );
-  state.pasteConfig = { materialId, edgeId, defaultGrain, measurementMode, sides: sidesForEdge };
+  const defaultFinishes = Object.fromEntries(
+    ["top", "bottom", "left", "right"].map((side) => [
+      side,
+      document.querySelector(`#paste-finish-${side}`)?.value ||
+        state.pasteConfig.finishes?.[side] ||
+        "rough",
+    ]),
+  );
+  state.pasteConfig = {
+    materialId,
+    defaultGrain,
+    measurementMode,
+    edges: defaultEdges,
+    finishes: defaultFinishes,
+  };
   state.pasteRawText = text;
   if (!text.trim() || !materialId) {
     state.pastePending = null;
     state.pastePreview = {
       status: "error",
-      errors: [!text.trim() ? "Pega primero las filas copiadas desde Excel." : "Selecciona el tablero o color correspondiente a este lote."],
+      errors: [!text.trim() ? "Pega primero las filas copiadas desde Excel." : `Selecciona ${isSlabQuote() ? "el formato/color" : "el tablero"} correspondiente a este lote.`],
     };
     render();
     return;
@@ -3189,8 +3322,7 @@ function analyzePastedPieces() {
     catalogEdges: edgeBands,
     fallbackMaterialId: materialId,
     fallbackGrain: defaultGrain,
-    fallbackEdgeId: edgeId,
-    fallbackEdges: sidesForEdge,
+    fallbackEdgeIds: defaultEdges,
     settings: state.settings,
     idFactory: () => crypto.randomUUID(),
   });
@@ -3202,12 +3334,18 @@ function analyzePastedPieces() {
       piece.edges = { top: null, right: null, bottom: null, left: null };
       const source = state.pasteTable[index] || [];
       piece.finishes = Object.fromEntries(
-        ["top", "bottom", "left", "right"].map((side) => [
-          side,
-          state.pasteMapping[side] === undefined
-            ? "rough"
-            : neolithFinishFromImport(source[state.pasteMapping[side]]),
-        ]),
+        ["top", "bottom", "left", "right"].map((side) => {
+          const mappedValue =
+            state.pasteMapping[side] === undefined
+              ? ""
+              : source[state.pasteMapping[side]];
+          return [
+            side,
+            String(mappedValue ?? "").trim()
+              ? neolithFinishFromImport(mappedValue)
+              : defaultFinishes[side] || "rough",
+          ];
+        }),
       );
     }
     const error = pieceProductionError(piece, material, edgeBands, state.settings);
@@ -3499,7 +3637,7 @@ function exportPdf() {
   const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   pdf.setProperties({
     title: `Plano de corte · ${state.project.projectName || state.project.clientName}`,
-    subject: "Plano, listado de piezas y controles de producción por tablero",
+    subject: `Plano, listado de piezas y controles de producción por ${isSlabQuote() ? "placa" : "tablero"}`,
     author: "Casa Diseño Multiespacio",
   });
 
@@ -3512,7 +3650,7 @@ function exportPdf() {
   pdf.setFontSize(9);
   pdf.text("CASA DISEÑO MULTIESPACIO", 12, 10);
   pdf.setFontSize(18);
-  pdf.text("RESUMEN DE OPTIMIZACIÓN", 12, 22);
+  pdf.text(`RESUMEN DE OPTIMIZACIÓN · ${isSlabQuote() ? "PLACAS" : "TABLEROS"}`, 12, 22);
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(8);
   pdf.text(`Cotización ${projectCode()} · ${new Date().toLocaleString("es-CL")}`, 12, 29);
@@ -3540,7 +3678,7 @@ function exportPdf() {
     pdf.text(String(value), x + 4, 77);
   });
   pdf.setFontSize(10);
-  pdf.text("MATERIALES Y SERVICIOS", 12, 94);
+  pdf.text(isSlabQuote() ? "FORMATOS Y SERVICIOS" : "MATERIALES Y SERVICIOS", 12, 94);
   let summaryY = 102;
   pdf.setFontSize(8);
   latestResult.materialSummaries.forEach((item) => {
@@ -3548,7 +3686,7 @@ function exportPdf() {
     pdf.text(`${item.sku} · ${item.name}`, 12, summaryY);
     pdf.setFont("helvetica", "normal");
     pdf.text(
-      `${item.boardCount} placa(s) · nominal ${selectedMaterial(item.materialId)?.plateLength} × ${selectedMaterial(item.materialId)?.plateWidth} mm · útil ${item.usablePlateLength} × ${item.usablePlateWidth} mm · rebaje ${item.perimeterTrim} mm/lado`,
+      `${item.boardCount} placa(s) · fábrica ${item.rawPlateLength} × ${item.rawPlateWidth} mm · útil ${item.usablePlateLength} × ${item.usablePlateWidth} mm · despunte ${item.perimeterTrim} mm/lado`,
       80,
       summaryY,
     );
@@ -3573,7 +3711,7 @@ function exportPdf() {
   }
   if (latestResult.finishSummaries?.length) {
     summaryY += 4;
-    pdf.text("ACABADOS NEOLITH", 12, summaryY);
+    pdf.text("ACABADOS OPCIONALES POR LADO", 12, summaryY);
     summaryY += 7;
     pdf.setFont("helvetica", "normal");
     latestResult.finishSummaries.forEach((item) => {
@@ -3589,12 +3727,18 @@ function exportPdf() {
   pdf.text("Regla de veta:", 16, 190);
   pdf.setFont("helvetica", "normal");
   pdf.text("Longitudinal sigue el Largo ingresado; Transversal sigue el Ancho ingresado. Los valores nunca se ordenan por tamaño.", 42, 190);
-  pdf.text("La numeración T1, T2… es única y se mantiene en todas las hojas de este proyecto.", 16, 196);
+  pdf.text(
+    isSlabQuote()
+      ? "Biselado/Pulido y 45° se indican individualmente en L1, L2, A1 y A2."
+      : "La numeración T1, T2… es única y se mantiene en todas las hojas de este proyecto.",
+    16,
+    196,
+  );
 
   const sideValue = (piece, side) => {
     const material = selectedMaterial(piece.materialId);
     if (isNeolithMaterial(material)) {
-      return { rough: "Bruta", bevel: "Bisel", miter45: "45°" }[piece.finishes?.[side] || "rough"];
+      return { rough: "Sin adicional", bevel: "Bisel/Pulido", miter45: "45°" }[piece.finishes?.[side] || "rough"];
     }
     return state.edgeCodeMap?.[piece.edges?.[side]] || "—";
   };
@@ -4095,6 +4239,38 @@ app.addEventListener("click", async (event) => {
   const button = event.target.closest("button");
   if (!button) return;
   const action = button.dataset.action;
+  if (button.dataset.workType) {
+    const nextType = button.dataset.workType === "slabs" ? "slabs" : "boards";
+    if (state.workType === nextType) return;
+    if (
+      (state.materialIds.length || state.pieces.length) &&
+      !window.confirm(
+        "Cambiar el tipo de optimización quitará los materiales y piezas ingresados en esta cotización. ¿Continuar?",
+      )
+    ) {
+      return;
+    }
+    state.workType = nextType;
+    state.categoryId = nextType === "slabs" ? "neolith" : "";
+    state.materialId = "";
+    state.materialIds = [];
+    state.materialCustomizations = {};
+    state.pieces = [];
+    state.edgeCodeMap = {};
+    state.importPreview = null;
+    state.importPending = null;
+    state.pastePreview = null;
+    state.pastePending = null;
+    state.pasteColumns = [];
+    state.pasteMapping = {};
+    state.pasteConfig = {
+      ...emptyState().pasteConfig,
+      defaultGrain: state.defaultGrain,
+    };
+    latestResult = null;
+    render();
+    return;
+  }
   if (action === "piece-entry-mode") {
     state.pieceEntryMode = button.dataset.mode === "manual" ? "manual" : "paste";
     render();
@@ -4109,7 +4285,7 @@ app.addEventListener("click", async (event) => {
   }
   if (action === "migrate-calculation-v4") {
     const confirmed = window.confirm(
-      "Se recalcularán los planos de este proyecto con rebaje perimetral y reglas V4. El registro existente no se elimina. ¿Continuar?",
+      "Se recalcularán los planos con las reglas V4.1. En placas de piedra se usarán las nuevas medidas útiles y solo se cobrarán servicios. El registro existente no se elimina. ¿Continuar?",
     );
     if (!confirmed) return;
     state.settings = {
@@ -4119,12 +4295,20 @@ app.addEventListener("click", async (event) => {
       neolithTrim: 30,
       kerf: 3,
     };
+    state.workType = state.workType || inferredWorkType();
     latestResult = null;
-    notify("Reglas V4 aplicadas. Revisa los planos antes de guardar.");
+    notify("Reglas V4.1 aplicadas. Revisa los planos y valores antes de guardar.");
     return;
   }
   if (button.dataset.catalogMaterial) {
     const materialId = button.dataset.catalogMaterial;
+    const catalogMaterial = materials.find((item) => item.id === materialId);
+    const requestedType = isNeolithMaterial(catalogMaterial) ? "slabs" : "boards";
+    if (state.workType && state.workType !== requestedType) {
+      notify("Este producto pertenece al otro tipo de optimización. Crea una cotización separada.", "error");
+      return;
+    }
+    state.workType = requestedType;
     if (state.materialIds.includes(materialId)) {
       if (state.pieces.some((piece) => piece.materialId === materialId)) {
         notify("Ese tablero ya tiene piezas asignadas y no puede quitarse.", "error");
@@ -4141,12 +4325,26 @@ app.addEventListener("click", async (event) => {
     return;
   }
   if (button.dataset.category) {
+    const categoryHasAllowedProducts = quoteMaterials().some(
+      (material) => material.categoryId === button.dataset.category,
+    );
+    if (!categoryHasAllowedProducts) {
+      notify("Esa categoría no corresponde al tipo de optimización seleccionado.", "error");
+      return;
+    }
     state.categoryId = button.dataset.category;
     render();
     return;
   }
   if (button.dataset.material) {
     const materialId = button.dataset.material;
+    const chosenMaterial = materials.find((item) => item.id === materialId);
+    const requestedType = isNeolithMaterial(chosenMaterial) ? "slabs" : "boards";
+    if (!state.workType) state.workType = requestedType;
+    if (state.workType !== requestedType) {
+      notify("No se pueden mezclar tableros y placas de piedra en una misma cotización.", "error");
+      return;
+    }
     if (state.materialIds.includes(materialId)) {
       if (state.pieces.some((piece) => piece.materialId === materialId)) {
         notify(
@@ -4436,25 +4634,52 @@ app.addEventListener("click", async (event) => {
       ];
       const primaryMaterialId =
         materialIds.includes(item.materialId) ? item.materialId : materialIds[0];
+      const loadedWorkType =
+        item.workType ||
+        (materialIds.some((id) =>
+          isNeolithMaterial(materials.find((material) => material.id === id)),
+        )
+          ? "slabs"
+          : "boards");
+      const loadedSettings = item.settings?.calculationVersion
+        ? {
+            ...defaults.settings,
+            ...(item.settings || {}),
+            stoneCutPerPlateRate: Number(
+              item.settings?.stoneCutPerPlateRate ??
+                item.settings?.neolithLinearRate ??
+                defaults.settings.stoneCutPerPlateRate,
+            ),
+            stoneBevelRate: Number(
+              item.settings?.stoneBevelRate ??
+                item.settings?.neolithBevelRate ??
+                defaults.settings.stoneBevelRate,
+            ),
+            stoneMiter45Rate: Number(
+              item.settings?.stoneMiter45Rate ??
+                item.settings?.neolithMiter45Rate ??
+                defaults.settings.stoneMiter45Rate,
+            ),
+          }
+        : {
+            ...defaults.settings,
+            ...(item.settings || {}),
+            calculationVersion: "legacy-v3",
+            perimeterTrim: 0,
+            neolithTrim: 0,
+          };
       state = {
         ...defaults,
         ...item,
         project: { ...item.project },
         assignedTo: item.assignedTo || "",
         collaboratorIds: [...(item.collaboratorIds || [])],
+        workType: loadedWorkType,
         materialId: primaryMaterialId || "",
         materialIds,
         materialCustomizations: { ...(item.materialCustomizations || {}) },
         edgeCodeMap: { ...(item.edgeCodeMap || {}) },
-        settings: item.settings?.calculationVersion
-          ? { ...defaults.settings, ...(item.settings || {}) }
-          : {
-              ...defaults.settings,
-              ...(item.settings || {}),
-              calculationVersion: "legacy-v3",
-              perimeterTrim: 0,
-              neolithTrim: 0,
-            },
+        settings: loadedSettings,
         pieces: (item.pieces || []).map((piece) => ({
           ...piece,
           materialId: piece.materialId || primaryMaterialId || "",

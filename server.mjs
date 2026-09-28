@@ -12,6 +12,7 @@ import unzipper from "unzipper";
 
 import { categories as baseCategories, edgeBands, materials } from "./src/data.js";
 import {
+  isStoneMaterial,
   optimizeProject,
   pieceProductionError,
   validateRut,
@@ -1279,6 +1280,10 @@ function projectRecord(body, ownerId, current = null) {
       ).trim(),
     },
     payload: {
+      workType:
+        body.workType === "slabs" || body.workType === "boards"
+          ? body.workType
+          : current?.workType || "",
       categoryId: String(body.categoryId || ""),
       materialId,
       materialIds,
@@ -1326,6 +1331,26 @@ function projectDimensionError(
 ) {
   const pieces = record.payload.pieces;
   if (!pieces.length) return "";
+  const selectedMaterials = record.payload.materialIds
+    .map((id) => catalogMaterials.find((item) => item.id === id))
+    .filter(Boolean);
+  const selectedWorkTypes = new Set(
+    selectedMaterials.map((material) =>
+      isStoneMaterial(material) ? "slabs" : "boards",
+    ),
+  );
+  if (selectedWorkTypes.size > 1) {
+    return "No se pueden mezclar tableros de madera y placas de piedra en una misma cotización.";
+  }
+  const inferredWorkType = [...selectedWorkTypes][0] || "";
+  if (
+    record.payload.workType &&
+    inferredWorkType &&
+    record.payload.workType !== inferredWorkType
+  ) {
+    return "El tipo de optimización no coincide con los materiales seleccionados.";
+  }
+  if (!record.payload.workType) record.payload.workType = inferredWorkType;
   for (let invalidIndex = 0; invalidIndex < pieces.length; invalidIndex += 1) {
     const piece = pieces[invalidIndex];
     const material = catalogMaterials.find(
@@ -1346,7 +1371,7 @@ function projectDimensionError(
   }
   for (const materialId of record.payload.materialIds) {
     const material = catalogMaterials.find((item) => item.id === materialId);
-    if (material?.materialType === "neolith" || material?.categoryId === "neolith") {
+    if (isStoneMaterial(material)) {
       const color = String(
         record.payload.materialCustomizations?.[materialId]?.color || "",
       ).trim();
@@ -1377,6 +1402,10 @@ function projectDimensionError(
 }
 
 function projectProductionSignature(project = {}) {
+  const workType =
+    project.workType === "slabs" || project.workType === "boards"
+      ? project.workType
+      : "";
   const materialIds = [
     ...new Set(
       [
@@ -1416,7 +1445,7 @@ function projectProductionSignature(project = {}) {
     neolithTrim: Number(project.settings?.neolithTrim) || 0,
     kerf: Number(project.settings?.kerf) || 0,
   };
-  return JSON.stringify({ materialIds, pieces, settings });
+  return JSON.stringify({ workType, materialIds, pieces, settings });
 }
 
 export async function createApplication({ store, useMemory = false } = {}) {
@@ -2270,7 +2299,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
       }
       if (!record.payload.materialIds.length || !record.payload.pieces.length) {
         return response.status(400).json({
-          error: "La cotización debe incluir al menos un tablero y una pieza.",
+          error: "La cotización debe incluir al menos un material y una pieza.",
         });
       }
       const selectedCatalogMaterials = record.payload.materialIds
@@ -2281,7 +2310,14 @@ export async function createApplication({ store, useMemory = false } = {}) {
             ? {
                 ...material,
                 name: String(custom.color || material.name),
-                netPrice: Math.max(0, Number(custom.netPrice ?? material.netPrice) || 0),
+                netPrice:
+                  isStoneMaterial(material) &&
+                  record.payload.settings?.calculationVersion !== "4.0"
+                    ? 0
+                    : Math.max(
+                        0,
+                        Number(custom.netPrice ?? material.netPrice) || 0,
+                      ),
               }
             : null;
         })

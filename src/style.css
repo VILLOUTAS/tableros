@@ -154,7 +154,27 @@ main { min-width: 0; }
 .hero-card h2 { color: white; max-width: 650px; }
 .hero-card p { color: #b9c8d6; margin: 0; }
 .hero-mark { font: 800 100px "Trebuchet MS"; color: rgba(255,255,255,.06); line-height: 1; }
-.form-card { max-width: 980px; }
+.form-card { max-width: 980px; margin-top: 20px; }
+.work-type-card { max-width: 980px; }
+.work-type-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.work-type-option {
+  border: 2px solid var(--line);
+  border-radius: 13px;
+  background: #fafbfb;
+  color: var(--ink);
+  padding: 20px;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 22px;
+  gap: 13px;
+  align-items: center;
+  text-align: left;
+}
+.work-type-option > strong { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 50%; background: var(--gold-soft); color: #956b35; font-size: 20px; }
+.work-type-option > span { display: grid; gap: 5px; }
+.work-type-option b { color: var(--navy); font-size: 16px; }
+.work-type-option small { color: var(--muted); line-height: 1.45; }
+.work-type-option > i { color: var(--gold); font-size: 20px; font-style: normal; font-weight: 900; }
+.work-type-option:hover, .work-type-option.selected { border-color: var(--gold); background: #fffaf2; box-shadow: 0 5px 18px rgba(198,155,94,.12); }
 .section-title { display: flex; gap: 14px; align-items: flex-start; margin-bottom: 24px; }
 .section-title > span { width: 34px; height: 34px; flex: 0 0 34px; display: grid; place-items: center; border-radius: 50%; background: var(--gold-soft); color: #956b35; font-weight: 800; }
 .section-title p { font-size: 13px; margin: 0; }
@@ -329,6 +349,13 @@ input:focus, select:focus { border-color: var(--gold); box-shadow: 0 0 0 3px rgb
 .paste-panel-body { display: grid; gap: 13px; padding-top: 14px; }
 .paste-panel-body > p { margin: 0; color: var(--muted); font-size: 12px; }
 .paste-config-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.paste-side-services { display: grid; gap: 11px; padding: 14px; border: 1px solid #cbd3d9; border-radius: 10px; background: #f8fafb; }
+.paste-side-services > div:first-child { display: grid; gap: 3px; }
+.paste-side-services > div:first-child b { color: var(--navy); font-size: 12px; }
+.paste-side-services > div:first-child span { color: var(--muted); font-size: 11px; }
+.paste-side-service-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; }
+.paste-side-service-grid label { font-size: 10px; color: var(--navy); }
+.paste-side-service-grid select { min-width: 0; padding: 8px; font-size: 10px; }
 .paste-side-picker { display: grid; grid-template-columns: 72px 88px 72px 88px 88px; grid-template-areas: "title top top top top" "title left piece right right" "title bottom bottom bottom bottom"; align-items: center; justify-content: start; gap: 6px; border: 1px solid var(--line); background: #fafbfb; border-radius: 10px; padding: 10px; }
 .paste-side-picker > span { grid-area: title; align-self: start; color: var(--navy); font-size: 11px; font-weight: 800; }
 .paste-side-picker label { display: flex; align-items: center; justify-content: center; gap: 5px; border: 1px solid #cbd3d9; background: white; border-radius: 7px; padding: 6px; cursor: pointer; }
@@ -356,6 +383,10 @@ input:focus, select:focus { border-color: var(--gold); box-shadow: 0 0 0 3px rgb
 .manual-finish-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #fafbfb; }
 .manual-finish-grid > b { grid-column: 1 / -1; color: var(--navy); }
 .neolith-config-card { margin-bottom: 18px; }
+.stone-rate-note { display: grid; align-content: center; gap: 4px; padding: 13px 15px; border: 1px solid #d8c49f; border-radius: 10px; background: #fffaf2; }
+.stone-rate-note b { color: var(--navy); font-size: 18px; }
+.stone-rate-note span { color: #805d28; font-size: 12px; font-weight: 800; }
+.stone-rate-note small { color: var(--muted); line-height: 1.4; }
 .piece-counter { background: var(--navy); color: white; border-radius: 13px; padding: 14px 22px; display: flex; align-items: center; gap: 10px; }
 .piece-counter strong { font: 800 30px "Trebuchet MS"; color: var(--gold); }
 .piece-counter span { max-width: 60px; line-height: 1.1; font-size: 11px; }
@@ -987,14 +1018,14 @@ article.catalog-product { cursor: default; }
   .workspace { padding: 22px 15px 50px; }
   .hero-card { padding: 27px 22px; }
   .hero-mark { display: none; }
-  .form-grid, .piece-form, .product-grid, .grain-options, .edge-sides, .metrics, .quote-side, .project-grid { grid-template-columns: 1fr; }
+  .form-grid, .piece-form, .product-grid, .grain-options, .edge-sides, .metrics, .quote-side, .project-grid, .work-type-grid { grid-template-columns: 1fr; }
   .selected-materials { grid-template-columns: 1fr; }
   .category-grid { grid-template-columns: repeat(2, 1fr); }
   .intro-row, .edge-piece-head { align-items: flex-start; flex-direction: column; }
   .selection-flow { align-self: stretch; overflow-x: auto; }
   .piece-counter { align-self: flex-start; }
   .edge-toolbar { grid-template-columns: 1fr; }
-  .edge-bulk-grid, .import-metrics, .paste-config-grid, .paste-mapping-grid, .manual-finish-grid { grid-template-columns: 1fr; }
+  .edge-bulk-grid, .import-metrics, .paste-config-grid, .paste-mapping-grid, .paste-side-service-grid, .manual-finish-grid { grid-template-columns: 1fr; }
   .paste-side-picker { overflow-x: auto; }
   .edge-diagram {
     grid-template-columns: 1fr;

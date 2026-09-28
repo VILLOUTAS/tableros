@@ -1,8 +1,27 @@
 # Cotizador online — Casa Diseño Multiespacio
 
-Versión 4.0.0 del cotizador y optimizador de cortes. Incluye acceso seguro con
+Versión 4.1.0 del cotizador y optimizador de cortes. Incluye acceso seguro con
 usuarios diferenciados, base PostgreSQL, catálogo completo importado desde
 Excel y persistencia de proyectos.
+
+## Novedades V4.1.0
+
+- Toda cotización comienza eligiendo uno de dos flujos incompatibles entre sí:
+  `Tableros · Maderas` o `Placas · Piedras`. Esto evita mezclar tapacantos con
+  terminaciones de piedra y deja preparada la plataforma para nuevas placas.
+- Neolith 12 mm se registra como placa de fábrica de 3260 × 1660 mm y utiliza
+  3200 × 1600 mm después del despunte de 30 mm por lado. Neolith 6 mm se
+  registra como 3260 × 1560 mm y utiliza 3200 × 1500 mm.
+- Las cotizaciones nuevas de piedra no valorizan el material: cobran corte por
+  cada placa utilizada a $75.000 netos y, opcionalmente por lado, Biselado o
+  Pulido a $12.500 netos/ml y Corte 45° a $7.500 netos/ml.
+- El pegado directo desde cualquier Excel permite asignar columnas de veta y
+  L1/L2/A1/A2. Si el archivo no las trae, se puede escoger una veta y un
+  tapacanto distinto para cada lado; la vista previa permite corregir cada
+  pieza antes de incorporarla. En piedras esos cuatro selectores cambian a
+  acabados opcionales.
+- Los proyectos V4.0 mantienen su geometría y valorización histórica hasta que
+  un usuario decide migrarlos expresamente a V4.1.
 
 ## Novedades V4.0.0
 
@@ -19,10 +38,9 @@ Excel y persistencia de proyectos.
   L1/L2/A1/A2. Antes de incorporar se puede corregir cada fila.
 - El PDF comienza con un resumen general y un listado completo, seguido por
   una hoja de fabricación por placa.
-- Neolith habilitado en 12 mm (3200 × 1600 mm nominal) y 6 mm (3200 × 1500 mm
-  nominal), con color y precio definidos por proyecto. Incluye lineal bruto a
-  $75.000 netos por placa, Biselado-Pulido a $12.500 netos/ml y 45° a $7.500
-  netos/ml; no admite tapacantos.
+- Neolith habilitado en 12 mm y 6 mm, sin tapacantos y con acabados por lado.
+  La V4.1 corrige sus medidas de fábrica/útiles y separa completamente este
+  flujo del cotizador de tableros.
 - Los usuarios internos pueden combinar Administrador, Comercial y Producción.
   El perfil Cliente permanece exclusivo.
 
@@ -44,7 +62,8 @@ Excel y persistencia de proyectos.
   al ejecutivo principal.
 - Ingreso de piezas en el paso 2: después de escoger el tablero se puede digitar
   manualmente o pegar directamente un bloque copiado desde cualquier Excel.
-  Cada lote permite definir una vez el tablero, tapacanto y lados L1/L2/A1/A2.
+  Cada lote permite definir una vez el tablero, la veta y un tapacanto
+  independiente para L1, L2, A1 y A2.
 - Dos modos de medida: “terminada” como opción predeterminada, que descuenta el
   tapacanto automáticamente, y “de corte ya descontada” como opción avanzada.
 - Eliminación protegida exclusiva de Administradores. La cotización desaparece
@@ -102,7 +121,8 @@ Excel y persistencia de proyectos.
 - Validación en navegador y servidor para impedir cortes menores que 50 × 50 mm
   o mayores que el tablero seleccionado, considerando el sentido de la veta.
 - Pegado directo de filas copiadas desde otro Excel, asignando una sola vez el
-  tablero, tapacanto y lados L1/L2/A1/A2 para cada lote por color.
+  tablero, la veta y un tapacanto distinto en L1/L2/A1/A2 para cada lote; las
+  columnas del cliente pueden reemplazar esos valores por pieza.
 - Vista previa del bloque pegado con filas válidas, unidades y explicación de
   errores antes de incorporar cada lote.
 - Asignación rápida de los cuatro lados por todas las piezas, por tablero o por
@@ -224,6 +244,11 @@ aditiva: agrega `app_users.roles`, copia allí el rol histórico y mantiene
 anteriores sin `calculationVersion` se abren como `legacy-v3`, sin aplicarles
 rebaje ni recalcular su geometría. Solo pasan a las reglas V4 cuando un usuario
 presiona expresamente “Reoptimizar con rebaje V4” y luego guarda el proyecto.
+
+La V4.1.0 no agrega ni elimina tablas. Guarda la elección Tableros/Placas dentro
+del JSON existente del proyecto y mantiene protegidos tanto `legacy-v3` como
+V4.0. Los proyectos V4.0 solo adoptan las nuevas dimensiones útiles y la nueva
+estructura de cobro de piedras después de pulsar “Migrar a V4.1” y guardar.
 
 Antes de desplegar se recomienda generar un respaldo de PostgreSQL. No crees
 otra base de datos ni reemplaces `DATABASE_URL`, porque eso haría que la

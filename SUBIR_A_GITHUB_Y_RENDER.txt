@@ -1,4 +1,4 @@
-COTIZADOR CASA DISEÑO V4.0.0 — ACTUALIZACIÓN SEGURA
+COTIZADOR CASA DISEÑO V4.1.0 — ACTUALIZACIÓN SEGURA
 
 1. Descomprime este paquete.
 2. Reemplaza el contenido del repositorio GitHub con todos estos archivos.
@@ -24,8 +24,9 @@ IMPORTANTE
 - Antes de publicar, generar un respaldo de PostgreSQL.
 - La migración V4 solo agrega app_users.roles y copia el rol histórico. No
   elimina tablas ni registros existentes y conserva app_users.role.
-- Los proyectos V3 se abren protegidos como legacy-v3. No se recalculan ni
-  reciben rebaje hasta presionar expresamente “Reoptimizar con rebaje V4”.
+- Los proyectos V3 se abren protegidos como legacy-v3 y los V4.0 conservan su
+  geometría y valores anteriores. Solo cambian al presionar expresamente
+  “Migrar a V4.1”.
 - No intentes cambiar el servicio anterior de Static Site a Web Service:
   Render no permite modificar el tipo de un servicio existente.
 - No uses Publish Directory.
@@ -36,11 +37,14 @@ IMPORTANTE
 - DATABASE_URL se configura automáticamente con el Blueprint.
 - No existe una clave predeterminada.
 - Las notificaciones internas funcionan sin configuración adicional.
-- En el paso 2 se selecciona primero el tablero y luego se ingresan piezas de
-  forma manual o pegando directamente celdas copiadas desde cualquier Excel.
+- En el paso 1 se elige Tableros (maderas) o Placas (piedras). Los dos flujos
+  no se mezclan dentro de una misma cotización.
+- En el paso 2 se selecciona el tablero o formato y luego se ingresan piezas
+  de forma manual o pegando directamente celdas copiadas desde cualquier Excel.
 - Cada bloque pegado permite mapear columnas aunque el cliente use cualquier
-  orden o encabezado, incluyendo veta y lados L1/L2/A1/A2. La vista previa
-  permite corregir cada pieza antes de incorporarla.
+  orden o encabezado, incluyendo veta y lados L1/L2/A1/A2. Cuando esos datos
+  no vienen en el Excel, la pantalla permite escoger la veta y un tapacanto o
+  acabado distinto para cada lado. La vista previa permite corregir cada pieza.
 - El sistema muestra una vista previa y explica las filas rechazadas antes de
   incorporarlas. Ya no es necesario subir un archivo Excel de piezas.
 - Un proyecto puede incluir varios tableros y cada pieza queda asignada a uno.
@@ -105,9 +109,10 @@ IMPORTANTE
 - Ninguna pieza nueva puede quedar bajo 50 x 50 mm de corte.
 - La factura es obligatoria antes de Facturado y pagado; la guía de despacho es
   obligatoria antes de Entregado. Ambos documentos aparecen en el CRM.
-- Neolith queda activo en 12 mm (3200 x 1600) y 6 mm (3200 x 1500), con color
-  y precio por proyecto, rebaje de 30 mm/lado, kerf de 3 mm, terminación bruta,
-  Biselado-Pulido y 45°. Neolith no admite tapacantos.
+- Neolith 12 mm usa placa de fábrica 3260 x 1660 y superficie útil 3200 x 1600;
+  Neolith 6 mm usa 3260 x 1560 y superficie útil 3200 x 1500. No admite
+  tapacantos ni valoriza material: cobra $75.000 netos por placa cortada y,
+  opcionalmente por lado, Biselado o Pulido y Corte 45°.
 - Los tableros nuevos consideran rebaje previo de 10 mm por cada lado.
 - Los usuarios internos pueden reunir varios perfiles; Cliente es exclusivo.
 - Administrador y Producción disponen de un CRM con agenda, fechas de ejecución
