@@ -53,12 +53,12 @@ test("protege acceso, crea perfiles y permite guardar proyectos por perfil", asy
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         fullName: "Administrador",
-        email: "admin@prueba.local",
+        email: "edmundo@villoutas.cl",
         password: "ClaveSegura123",
       }),
     });
     assert.equal(setup.response.status, 201);
-    assert.equal(setup.body.user.role, "admin");
+    assert.equal(setup.body.user.role, "superadmin");
     const adminCookie = setup.response.headers.get("set-cookie").split(";")[0];
     const adminHeaders = {
       "content-type": "application/json",
@@ -117,7 +117,7 @@ test("protege acceso, crea perfiles y permite guardar proyectos por perfil", asy
           {
             sourceRow: 4,
             fullName: "Administrador repetido",
-            email: "admin@prueba.local",
+            email: "edmundo@villoutas.cl",
             password: "TemporalAdmin123",
             role: "admin",
             active: true,
@@ -656,7 +656,7 @@ test("permite autoregistro de clientes y exige sus datos obligatorios", async ()
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         fullName: "Administración",
-        email: "admin@example.cl",
+        email: "edmundo@villoutas.cl",
         password: "ClaveAdmin123",
       }),
     });
@@ -780,7 +780,7 @@ test("un visitante cotiza sin cuenta y Administración recibe el proyecto", asyn
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         fullName: "Administración",
-        email: "admin@visitante.cl",
+        email: "edmundo@villoutas.cl",
         password: "ClaveAdminVisitante123",
       }),
     });
@@ -870,7 +870,7 @@ test("un visitante cotiza sin cuenta y Administración recibe el proyecto", asyn
   }
 });
 
-test("un administrador elimina una cotización sin borrarla físicamente", async () => {
+test("el superadministrador archiva una cotización sin borrarla físicamente", async () => {
   const { app, store } = await createApplication({ useMemory: true });
   const server = app.listen(0, "127.0.0.1");
   await new Promise((resolve) => server.once("listening", resolve));
@@ -881,7 +881,7 @@ test("un administrador elimina una cotización sin borrarla físicamente", async
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         fullName: "Administrador",
-        email: "admin.elimina@example.cl",
+        email: "edmundo@villoutas.cl",
         password: "ClaveAdminEliminar123",
       }),
     });
@@ -936,7 +936,7 @@ test("separa cotizaciones de tableros y placas y guarda el tipo elegido", async 
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         fullName: "Administrador",
-        email: "admin.flujos@example.cl",
+        email: "edmundo@villoutas.cl",
         password: "ClaveAdminFlujos123",
       }),
     });

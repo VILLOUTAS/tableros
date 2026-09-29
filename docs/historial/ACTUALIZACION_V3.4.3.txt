@@ -1,0 +1,26 @@
+COTIZADOR CASA DISEÑO V3.4.3
+
+ACTUALIZACIÓN SEGURA
+
+- Mantén el mismo Web Service y la misma DATABASE_URL.
+- No elimina ni modifica usuarios, proyectos, cotizaciones, estados, imágenes,
+  productos ni revisiones del catálogo.
+- No requiere ejecutar SQL ni crear otra base de datos.
+- Los proyectos guardados calculan el nuevo detalle al volver a abrirlos.
+
+RESUMEN ECONÓMICO PARA FACTURACIÓN
+
+- Tableros por tipo: código, nombre, cantidad de placas, precio unitario y
+  subtotal de material.
+- Servicio de corte por tablero: cantidad, tarifa por placa y subtotal.
+- Tapacantos por tipo: código, nombre, categoría, metros lineales, precio por
+  metro y subtotal de material.
+- Servicio de tapacanto por producto: metros, tarifa por metro y subtotal.
+- Se mantienen los totales consolidados, descuentos diferenciados, neto,
+  IVA 19 % y total final.
+
+VERIFICACIÓN REALIZADA
+
+- 32 pruebas automáticas aprobadas.
+- Compilación Vite de producción aprobada.
+- Los subtotales detallados concilian con los totales generales existentes.

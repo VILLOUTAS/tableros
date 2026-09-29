@@ -10,6 +10,12 @@ export { catalogMeta, edgeBands };
 export const categories = [
   ...generatedCategories,
   {
+    id: "mdf-delgados",
+    name: "MDF · Delgados una cara",
+    icon: "▤",
+    count: 18,
+  },
+  {
     id: "neolith",
     name: "Neolith",
     icon: "◆",
@@ -19,6 +25,18 @@ export const categories = [
 
 export const materials = [
   ...generatedMaterials,
+  ...[
+    ...[2.8,3].flatMap(thickness=>['Blanco','Negro','Gris Humo','Cerezo','Cedro','Coigüe Chocolate','Haya','Peral'].map(color=>({thickness,color,plateLength:2440,plateWidth:1520}))),
+    ...['Blanco Unicolor','Nogal Amazónico'].map(color=>({thickness:3,color,plateLength:2500,plateWidth:1830})),
+  ].map((item,index)=>({
+    ...item,id:`mdf-una-cara-v5-${index+1}`,sku:`MDF-1C-${item.plateWidth}-${item.thickness}-${index+1}`,
+    name:`MDF una cara · ${item.color} · ${item.thickness} mm`,colorName:item.color,
+    categoryId:'mdf-delgados',taxonomyId:'mdf-4',sourceCategory:'MDF Delgados una cara',materialType:'board',
+    brand:'Por definir',supplier:'',stock:null,netPrice:0,purchasePrice:0,minPrice:0,active:false,
+    grainRequired:!['Blanco','Blanco Unicolor','Negro','Gris Humo'].includes(item.color),
+    image:'',texture:'#ece8df',suggestedEdgeId:'',perimeterTrim:10,
+    description:'Formato solicitado para catálogo V5. Completar proveedor y precio antes de activar.',
+  })),
   {
     id: "neolith-12-1600x3200",
     categoryId: "neolith",

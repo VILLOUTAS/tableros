@@ -1,0 +1,26 @@
+COTIZADOR CASA DISEÑO V3.4.1
+
+ACTUALIZACIÓN SEGURA
+
+- Usa el mismo Web Service y la misma DATABASE_URL de la versión actual.
+- No elimina ni modifica usuarios, proyectos, cotizaciones, estados, imágenes
+  ni productos existentes.
+- No requiere ejecutar SQL ni crear una base de datos nueva.
+- Antes de desplegar, se recomienda respaldar PostgreSQL.
+
+CORRECCIONES PRINCIPALES
+
+- PDF A4 apaisado de proporción fija, sin altura dinámica que reduzca el texto.
+- Márgenes exteriores mínimos para aprovechar prácticamente toda la hoja.
+- Plano y listado ampliados, conservados juntos en la misma página por placa.
+- Cinco espacios de firma horizontales: Corte, Enchape, Supervisión, Despacho y
+  recepción conforme.
+- Menú lateral con desplazamiento vertical visible en pantallas bajas.
+- Panel de resumen y parámetros con desplazamiento independiente.
+- Navegación rápida para saltar a cualquier hoja de corte.
+
+VERIFICACIÓN REALIZADA
+
+- 31 pruebas automáticas aprobadas.
+- Compilación Vite de producción aprobada.
+- PDF A4 generado, renderizado e inspeccionado visualmente.

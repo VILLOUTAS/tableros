@@ -1,3 +1,4 @@
+import { priceV5 } from './v5-pricing.js';
 const sides = ["top", "right", "bottom", "left"];
 export const MINIMUM_CUT_SIDE = 50;
 export const CALCULATION_VERSION = "4.1";
@@ -1398,7 +1399,7 @@ export function optimizeProject(
     ),
   };
 
-  return {
+  const projectResult = {
     plates,
     warnings,
     summary,
@@ -1488,6 +1489,7 @@ export function optimizeProject(
         serviceSubtotal: item.meters * item.unitPrice,
       })),
   };
+  return settings.calculationVersion === '5.0' ? priceV5(projectResult,activeMaterials,edgeBands,settings) : projectResult;
 }
 
 export function summarizePlateLeftovers(plate) {
@@ -1926,7 +1928,7 @@ export function drawCutPlan(
     104,
     70 + Math.max(1, usedEdgeIds.length) * edgeLegendRowHeight,
   );
-  const margin = { left: 72, top: 185, right: 499, bottom: 183 };
+  const margin = { left: 72, top: 220, right: 499, bottom: 183 };
   canvas.width = width;
   canvas.height = height;
   const scale = Math.min(
@@ -2680,7 +2682,12 @@ export function drawCutPlan(
     ctx.font = `700 ${rowCodeFont}px Arial`;
     ctx.textAlign = "left";
     const rowCode = row.code || "S/C";
-    const codeColumnWidth = measureX - legendX - 76;
+    // Reservar el ancho real de la medida evita que nombres de retazos largos
+    // se superpongan a formatos como 2580×639 en la hoja impresa.
+    ctx.font = `700 ${rowMeasureFont}px Arial`;
+    const measureTextWidth=ctx.measureText(`${Math.round(row.cutLength)}×${Math.round(row.cutWidth)}`).width;
+    const codeColumnWidth = measureX - legendX - measureTextWidth - 17;
+    ctx.font = `700 ${rowCodeFont}px Arial`;
     const fittedCode = fittedText(ctx, rowCode, codeColumnWidth);
     ctx.fillText(fittedCode, legendX + 5, y + 4);
     const codeWidth = Math.min(

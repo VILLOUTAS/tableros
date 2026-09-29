@@ -1,127 +1,13 @@
-COTIZADOR CASA DISEÑO V4.1.0 — ACTUALIZACIÓN SEGURA
+V5.0.0 - ACTUALIZACIÓN DEL SERVICIO EXISTENTE
 
-1. Descomprime este paquete.
-2. Reemplaza el contenido del repositorio GitHub con todos estos archivos.
-3. Confirma los cambios en la rama main.
-4. Si el Web Service V2 ya existe, Render desplegará automáticamente el nuevo
-   commit. También puedes usar Manual Deploy > Deploy latest commit.
-5. Espera a que el despliegue indique Live y abre su URL.
+Lee ACTUALIZACION_V5.0.0.md antes de cargar los archivos.
+Descomprime el ZIP y carga su contenido en la raíz del repositorio actual.
+Conserva el mismo servicio de Render y la misma DATABASE_URL.
+No crees otra base ni elimines tablas o registros.
 
-SI TODAVÍA NO EXISTE EL WEB SERVICE V2
+Build: npm ci --include=dev && npm test && npm run build
+Start: npm start
+Node: 24
 
-1. En Render entra a New > Blueprint.
-2. Selecciona el repositorio.
-3. Render leerá render.yaml y creará:
-   - Web Service: cotizador-casa-diseno-v2
-   - PostgreSQL: cotizador-casa-diseno-v2-db
-4. En la primera pantalla crea la cuenta Administrador.
-
-IMPORTANTE
-
-- Esta actualización conserva usuarios, proyectos, imágenes y cotizaciones.
-- Debe desplegarse sobre el mismo Web Service y la misma DATABASE_URL.
-- No crear una base nueva ni cambiar DATABASE_URL durante esta actualización.
-- Antes de publicar, generar un respaldo de PostgreSQL.
-- La migración V4 solo agrega app_users.roles y copia el rol histórico. No
-  elimina tablas ni registros existentes y conserva app_users.role.
-- Los proyectos V3 se abren protegidos como legacy-v3 y los V4.0 conservan su
-  geometría y valores anteriores. Solo cambian al presionar expresamente
-  “Migrar a V4.1”.
-- No intentes cambiar el servicio anterior de Static Site a Web Service:
-  Render no permite modificar el tipo de un servicio existente.
-- No uses Publish Directory.
-- El comando de compilación es:
-  npm ci --include=dev && npm run test && npm run build
-- El comando de inicio es:
-  npm start
-- DATABASE_URL se configura automáticamente con el Blueprint.
-- No existe una clave predeterminada.
-- Las notificaciones internas funcionan sin configuración adicional.
-- En el paso 1 se elige Tableros (maderas) o Placas (piedras). Los dos flujos
-  no se mezclan dentro de una misma cotización.
-- En el paso 2 se selecciona el tablero o formato y luego se ingresan piezas
-  de forma manual o pegando directamente celdas copiadas desde cualquier Excel.
-- Cada bloque pegado permite mapear columnas aunque el cliente use cualquier
-  orden o encabezado, incluyendo veta y lados L1/L2/A1/A2. Cuando esos datos
-  no vienen en el Excel, la pantalla permite escoger la veta y un tapacanto o
-  acabado distinto para cada lado. La vista previa permite corregir cada pieza.
-- El sistema muestra una vista previa y explica las filas rechazadas antes de
-  incorporarlas. Ya no es necesario subir un archivo Excel de piezas.
-- Un proyecto puede incluir varios tableros y cada pieza queda asignada a uno.
-- Todos los perfiles pueden guardar los proyectos que les corresponden.
-- El Administrador puede crear hasta 200 usuarios desde la plantilla Excel.
-- Cada usuario nuevo debe cambiar su clave temporal en el primer ingreso.
-- La pantalla Usuarios incluye la matriz de accesos de cada perfil.
-- Los tapacantos se identifican con T1/T2/T3 y patrones monocromáticos. El mapa
-  es único por proyecto, por lo que T1 mantiene el mismo producto en todas las
-  hojas.
-- Los cuatro lados se pueden asignar masivamente a todas las piezas, a las de
-  un tablero o solo a las piezas marcadas.
-- Las cotas interiores quedan separadas de las líneas de tapacanto.
-- Largo, Ancho, Cantidad y Veta se pueden editar directamente en el listado.
-- Largo y Ancho nunca se reordenan por magnitud: Longitudinal sigue Largo y
-  Transversal sigue Ancho, aunque Largo sea numéricamente menor.
-- El paso 5 muestra la optimización y el listado de cada placa.
-- El PDF comienza con resumen general y listado completo. Después mantiene una
-  hoja por placa con plano, listado y controles de producción.
-- El PDF usa casi toda la hoja A4 apaisada, con plano y listado ampliados y las
-  cinco firmas distribuidas horizontalmente en la franja inferior.
-- Las piezas pequeñas usan una rotulación adaptativa para evitar números
-  recortados; el detalle completo se conserva siempre en el listado lateral.
-- El listado amplía códigos, medidas y cantidades e incorpora una matriz
-  L1/L2/A1/A2 con T1/T2/T3 para identificar cada tapacanto por lado.
-- El resumen económico separa cada tablero y tapacanto, indicando cantidad o
-  metros, precio unitario, material y servicio para facilitar la facturación.
-- El menú y el panel de parámetros tienen desplazamiento independiente; una
-  barra rápida permite saltar a cualquier hoja sin recorrer todas las placas.
-- Los códigos de pieza se asignan al generar la hoja de corte.
-- Los retazos se codifican y figuran en plano, listado y PDF.
-- Administrador y Producción pueden descargar etiquetas térmicas de 50 mm.
-- Los Clientes pueden autoregistrarse, elegir Comercial y solo ven sus pedidos.
-- Los Visitantes también eligen Comercial. Administración o el Comercial
-  responsable pueden agregar otros Comerciales colaboradores.
-- Solo el Administrador puede eliminar cotizaciones; se ocultan de los paneles
-  y quedan protegidas en la base para auditoría.
-- Al enviar un pedido a Producción, el Comercial queda bloqueado para editar y
-  Producción recibe una alerta en el dashboard.
-- Las imágenes se cargan como un único ZIP desde Usuarios y se guardan en
-  PostgreSQL; no es necesario subir 200 archivos a GitHub.
-- Esta versión ya incluye catalog/IMAGENES_PRODUCTOS_V3.zip con 273 imágenes;
-  Render las importa automáticamente al iniciar y conserva imágenes
-  personalizadas existentes.
-- El flujo es Cotización > Facturación > Facturado y pagado > Producción >
-  Despacho > Entregado.
-- Incluye catálogo general público por categoría para tableros y tapacantos.
-- Incluye Gestión de catálogo exclusiva para Administradores. Cada edición
-  crea una revisión y mantiene la ficha usada por cotizaciones anteriores.
-- Incorpora MASISA Blanco Lisa de 15 y 18 mm, ambos de 2500 x 1830 mm.
-- Los Visitantes cotizan sin cuenta ni PDF; Administración recibe el proyecto,
-  la alerta y el correo.
-- Los Clientes se autoregistran e ingresan automáticamente con sus datos
-  comerciales y dirección de proyecto.
-- Producción visualiza todo el CRM e interviene desde Facturado y pagado.
-- La hoja de corte indica ML de corte, ML de enchape, ML por tapacanto y deja
-  espacios para Cortador, Enchapador, Supervisor y Despachador.
-- Los nombres de tapacantos se muestran completos en varias líneas y las cuatro
-  medidas interiores usan una tipografía mayor para impresión.
-- El disco se configura con 2 mm nominales y 3 mm de consumo efectivo por
-  corte. El plano numera cada pasada y muestra su posición acumulada.
-- Ninguna pieza nueva puede quedar bajo 50 x 50 mm de corte.
-- La factura es obligatoria antes de Facturado y pagado; la guía de despacho es
-  obligatoria antes de Entregado. Ambos documentos aparecen en el CRM.
-- Neolith 12 mm usa placa de fábrica 3260 x 1660 y superficie útil 3200 x 1600;
-  Neolith 6 mm usa 3260 x 1560 y superficie útil 3200 x 1500. No admite
-  tapacantos ni valoriza material: cobra $75.000 netos por placa cortada y,
-  opcionalmente por lado, Biselado o Pulido y Corte 45°.
-- Los tableros nuevos consideran rebaje previo de 10 mm por cada lado.
-- Los usuarios internos pueden reunir varios perfiles; Cliente es exclusivo.
-- Administrador y Producción disponen de un CRM con agenda, fechas de ejecución
-  y entrega, carga diaria/semanal/mensual, tableros completados y ML enchapados.
-- Para enviar correos, agrega en Render:
-  RESEND_API_KEY=<clave API>
-  NOTIFICATION_FROM_EMAIL=Casa Diseño <cotizaciones@tu-dominio.cl>
-  NOTIFICATION_TO_EMAIL=contacto@cdchile.cl
-- El correo de cada nueva cotización se dirige a contacto@cdchile.cl y a los
-  Administradores activos.
-
-Si prefieres configuración manual, revisa README.md.
+El paquete incluye código, catálogo, pruebas y documentación.
+No incluye tus pedidos productivos ni modifica el servicio hasta su despliegue.

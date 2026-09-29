@@ -1,0 +1,31 @@
+COTIZADOR CASA DISEÑO V3.4.0
+
+ACTUALIZACIÓN SEGURA
+
+- Usa el mismo Web Service y la misma DATABASE_URL de la versión actual.
+- No elimina ni reemplaza usuarios, proyectos, estados, cotizaciones, imágenes
+  o revisiones del catálogo.
+- No requiere ejecutar SQL manual. Factura, guía y modo de medida se guardan
+  dentro del JSON existente de cada proyecto o pieza.
+- Antes de desplegar, crea un respaldo de PostgreSQL.
+
+CAMBIOS PRINCIPALES
+
+- Ingreso manual o pegado directo desde cualquier Excel en el paso 2.
+- Configuración por lote de tablero, tapacanto, lados y modo de medidas.
+- Medidas terminadas por defecto y opción avanzada “de corte ya descontadas”.
+- Corte mínimo de 50 x 50 mm.
+- Disco nominal de 2 mm y consumo efectivo predeterminado de 3 mm por pasada.
+- Plano con pérdida gráfica, cortes numerados y posiciones acumuladas.
+- Distribución desde una esquina para favorecer retazos grandes y reutilizables.
+- PDF monocromático con cotas ampliadas, código interior y listado legible.
+- Factura obligatoria al pasar a Facturado y pagado.
+- Guía de despacho obligatoria al pasar a Entregado.
+- Factura y guía visibles en CRM, reportes y hoja de producción.
+- Categoría Neolith visible como Próximamente, sin optimización activa.
+
+VERIFICACIÓN REALIZADA
+
+- 31 pruebas automáticas aprobadas.
+- Compilación Vite de producción aprobada.
+- PDF A4 generado, renderizado e inspeccionado visualmente.

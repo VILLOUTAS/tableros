@@ -1,4 +1,7 @@
 import "./style.css";
+import "./v5.css";
+import { V5, ROLE_LABELS, permitted, calculationSignature, taxonomyPaths } from './v5-domain.js';
+import { v5, attachV5, loadV5, importerView, dashboardView, groupedProjectsView, dispatchView, configurationView, catalogManagementView } from './v5-ui.js';
 import { jsPDF } from "jspdf";
 import readWorkbook, { readSheet } from "read-excel-file/browser";
 
@@ -9,7 +12,7 @@ import {
   materials,
   sides,
   statusLabels,
-} from "./data.js";
+} from "./client-data.js";
 import {
   assignPieceCodes,
   CALCULATION_VERSION,
@@ -84,8 +87,8 @@ function emptyState() {
     materialCustomizations: {},
     edgeCodeMap: {},
     settings: {
-      calculationVersion: CALCULATION_VERSION,
-      bladeThickness: 2,
+      calculationVersion: V5,
+      bladeThickness: 3,
       kerf: 3,
       perimeterTrim: 10,
       neolithTrim: 30,
@@ -127,6 +130,7 @@ function emptyState() {
 let state = emptyState();
 let latestResult = null;
 let projectsCache = [];
+let accessoriesCatalog = [];
 let usersCache = [];
 let notificationsCache = [];
 let commercialsCache = [];
@@ -153,7 +157,7 @@ const userRoles = (user = auth.user) => {
   const roles = Array.isArray(user?.roles) ? user.roles : [user?.role];
   return [...new Set(roles.filter(Boolean))];
 };
-const hasRole = (role, user = auth.user) => userRoles(user).includes(role);
+const hasRole = (role, user = auth.user) => userRoles(user).includes(role) || (role === "admin" && userRoles(user).includes("superadmin"));
 const hasAnyRole = (roles, user = auth.user) =>
   roles.some((role) => hasRole(role, user));
 
@@ -219,6 +223,7 @@ const activeEdgeBands = () =>
   edgeBands.filter((item) => item.active !== false);
 
 function applyCatalogPayload(payload = {}) {
+  accessoriesCatalog=payload.accessories||[];
   if (Array.isArray(payload.categories)) {
     categories.splice(0, categories.length, ...payload.categories);
   }
@@ -281,7 +286,7 @@ async function loadProjects() {
 }
 
 async function loadUsers() {
-  if (!hasRole("admin")) return;
+  if (!permitted(auth.user,"users")) return;
   const payload = await api("/api/users");
   usersCache = payload.users || [];
 }
@@ -333,6 +338,8 @@ function newQuoteState() {
 }
 
 function canEditCurrent() {
+  if(state.readOnlyRevision) return false;
+  if(hasRole("logistica") && ["despacho","entregado"].includes(state.project.status)) return true;
   if (auth.visitor) return !state.visitorSubmitted;
   if (!auth.user) return false;
   if (hasRole("admin")) return true;
@@ -356,11 +363,12 @@ function statusEntriesForRole(
 ) {
   const entries = Object.entries(statusLabels);
   const roles = role === auth.user?.role ? userRoles() : [role];
-  if (roles.includes("admin")) return entries;
+  if (roles.includes("admin") || roles.includes("superadmin")) return entries;
   if (!roles.length || roles.includes("cliente")) {
     return entries.filter(([value]) => value === "cotizacion");
   }
   const allowed = new Set([currentStatus]);
+  if (roles.includes("logistica") && currentStatus==="despacho") allowed.add("entregado");
   if (roles.includes("produccion")) {
     if (currentStatus === "facturado_pagado") {
       allowed.add("produccion");
@@ -465,6 +473,7 @@ function moveStep(delta) {
 }
 
 async function saveProject(showMessage = true) {
+  if(!canEditCurrent()){notify("Esta revisión es de consulta.","error");return false;}
   if (
     !state.project.clientName.trim() ||
     (state.project.rut.trim() && !validateRut(state.project.rut)) ||
@@ -499,14 +508,10 @@ async function saveProject(showMessage = true) {
     return false;
   }
   state.edgeCodeMap = createEdgeCodeMap(state.pieces, state.edgeCodeMap);
-  const result = optimizeProject(
-    selectedMaterials(),
-    state.pieces,
-    edgeBands,
-    state.settings,
-  );
+  const result = computeCurrentResult();
   const record = {
     id: state.projectId,
+    groupId: state.groupId, quoteName: state.quoteName, comments: state.comments, expectedUpdatedAt:state.updatedAt,expectedRowVersion:state.rowVersion,
     project: state.project,
     workType: state.workType || inferredWorkType(),
     categoryId: state.categoryId,
@@ -525,6 +530,7 @@ async function saveProject(showMessage = true) {
     submissionSource: auth.visitor ? "visitante" : state.submissionSource,
     summary: result.summary,
   };
+  if(state.loadedSignature===calculationSignature(state) && state.originalSettings) record.settings=state.originalSettings;
   try {
     if (auth.visitor) {
       const payload = await api("/api/public/quotes", {
@@ -546,6 +552,10 @@ async function saveProject(showMessage = true) {
       { method: exists ? "PATCH" : "POST", body: record },
     );
     state.projectId = payload.project.id;
+    for(const key of ['settings','summary','priceSnapshot','calculationSnapshot','revisionNo','groupId','history','updatedAt','rowVersion','milestones']) state[key]=payload.project[key];
+    state.originalSettings=structuredClone(payload.project.settings);
+    state.loadedSignature=calculationSignature(state);
+    latestResult=payload.project.calculationSnapshot;
     const index = projectsCache.findIndex((item) => item.id === state.projectId);
     if (index >= 0) projectsCache[index] = payload.project;
     else projectsCache.unshift(payload.project);
@@ -593,12 +603,7 @@ function finishOptions(selected = "rough") {
     .join("");
 }
 
-const roleLabels = {
-  admin: "Administrador",
-  comercial: "Comercial",
-  produccion: "Producción",
-  cliente: "Cliente",
-};
+const roleLabels = ROLE_LABELS;
 
 function accessView() {
   const setup = auth.needsSetup;
@@ -709,115 +714,10 @@ function passwordChangeView() {
 }
 
 function shell(content) {
-  return `
-    <div class="shell">
-      <aside class="sidebar">
-        <img src="./logo-casa-diseno.png" class="brand-logo" alt="Casa Diseño Multiespacio" />
-        ${
-          canCreateQuote()
-            ? `<button class="primary sidebar-new" data-action="new">＋ Nueva cotización</button>`
-            : ""
-        }
-        <nav aria-label="Etapas del cotizador">
-          ${steps
-            .map(
-              ([title, subtitle], index) => `
-                <button class="step-link ${state.view === "quote" && state.step === index ? "active" : ""}"
-                  data-action="step" data-step="${index}">
-                  <span>${index + 1}</span>
-                  <b>${title}<small>${subtitle}</small></b>
-                </button>`,
-            )
-            .join("")}
-        </nav>
-        <button class="step-link ${state.view === "catalog" ? "active" : ""}" data-action="catalog">
-          <span>▦</span><b>Catálogo<small>Materiales y precios</small></b>
-        </button>
-        ${
-          auth.user
-            ? `<button class="step-link ${state.view === "projects" ? "active" : ""}" data-action="projects">
-                <span>⌂</span><b>Proyectos<small>Control y estados</small></b>
-              </button>`
-            : ""
-        }
-        ${
-          hasAnyRole(["admin", "produccion"])
-            ? `<button class="step-link ${state.view === "production" ? "active" : ""}" data-action="production-dashboard">
-                <span>▥</span><b>Producción<small>Agenda e indicadores</small></b>
-              </button>`
-            : ""
-        }
-        ${
-          hasAnyRole(["admin", "comercial", "produccion"])
-            ? `<button class="step-link ${state.view === "notifications" ? "active" : ""}" data-action="notifications">
-                <span>♢</span><b>Notificaciones<small><i class="notification-badge" ${unreadNotifications() ? "" : "hidden"}>${unreadNotifications()}</i> Alertas</small></b>
-              </button>
-              ${
-                hasRole("admin")
-                  ? `<button class="step-link ${state.view === "users" ? "active" : ""}" data-action="users">
-                      <span>♙</span><b>Usuarios<small>Perfiles y accesos</small></b>
-                    </button>
-                    <button class="step-link ${state.view === "catalog-admin" ? "active" : ""}" data-action="catalog-admin">
-                      <span>⚙</span><b>Gestión de catálogo<small>Productos y precios</small></b>
-                    </button>`
-                  : ""
-              }`
-            : ""
-        }
-        <div class="sidebar-user">
-          <b>${safe(auth.user?.fullName || "Visitante")}</b>
-          <span>${auth.visitor ? "Catálogo y cotización sin descarga" : userRoles().map((role) => roleLabels[role] || role).join(" · ")}</span>
-          <button data-action="${auth.visitor ? "visitor-exit" : "logout"}">${auth.visitor ? "Volver al acceso" : "Cerrar sesión"}</button>
-        </div>
-      </aside>
-      <main>
-        <header class="topbar">
-          <div>
-            <p class="eyebrow">${
-              state.view === "projects"
-                ? "SEGUIMIENTO"
-                : state.view === "catalog"
-                  ? "CATÁLOGO GENERAL"
-                : state.view === "production"
-                  ? "CONTROL DE FÁBRICA"
-                : state.view === "notifications"
-                  ? "MONITOREO COMERCIAL"
-                : state.view === "users"
-                  ? "ADMINISTRACIÓN"
-                : state.view === "catalog-admin"
-                  ? "ADMINISTRACIÓN DE PRODUCTOS"
-                  : `PASO ${state.step + 1} DE 5`
-            }</p>
-            <h1>${
-              state.view === "projects"
-                ? "Proyectos"
-                : state.view === "catalog"
-                  ? "Materiales y colores"
-                : state.view === "production"
-                  ? "Agenda de producción"
-                : state.view === "notifications"
-                  ? "Notificaciones"
-                : state.view === "users"
-                  ? "Usuarios y perfiles"
-                : state.view === "catalog-admin"
-                  ? "Gestión de catálogo"
-                  : steps[state.step][0]
-            }</h1>
-          </div>
-          ${
-            state.view === "quote"
-              ? `<div class="status-pill"><i></i>${statusLabels[state.project.status]}</div>`
-              : ""
-          }
-        </header>
-        <div class="workspace">${content}</div>
-      </main>
-      ${
-        state.message
-          ? `<div class="toast ${state.message.type}">${safe(state.message.text)}</div>`
-          : ""
-      }
-    </div>`;
+  const quote=state.view==='quote';
+  const title=quote?(state.workType==='slabs'?'Placas':'Tableros'):({dashboard:'Panel general',projects:'Proyectos',dispatch:'Despachos','v5-settings':'Configuración','v5-catalog':'Catálogo',users:'Usuarios',catalog:'Catálogo',production:'Agenda de pedidos',notifications:'Notificaciones'}[state.view]||'Casa Diseño');
+  return `<div class="v5-shell"><header class="v5-topbar"><button class="v5-brand" data-v5="home"><img class="brand-logo" src="/logo-casa-diseno.png" alt="Casa Diseño"><span>GESTIÓN & PROYECTOS <b>V5.0</b></span></button><nav aria-label="Navegación general"><button data-v5="home" class="${state.view==='dashboard'?'active':''}">Panel</button>${auth.user?'<button data-v5="projects">Proyectos</button>':''}<button data-v5="module" data-module="boards">Tableros</button><button data-v5="module" data-module="slabs">Placas</button>${auth.user?'<button data-v5="module" data-module="dispatch">Despachos</button>':''}<button data-action="catalog">Catálogo</button>${permitted(auth.user,'catalog')?'<button data-v5="catalog-manage">Administración</button>':''}</nav><details class="v5-account"><summary>${safe(auth.user?.fullName||'Visitante')} ▾</summary><div><small>${userRoles().map(r=>roleLabels[r]).join(' · ')||'Venta sin descuento'}</small>${permitted(auth.user,'users')?'<button data-action="users">Usuarios y roles</button>':''}${permitted(auth.user,'settings')||permitted(auth.user,'catalog')?'<button data-v5="settings">Configuración</button>':''}${hasAnyRole(['admin','produccion'])?'<button data-action="production-dashboard">Agenda de pedidos</button>':''}${auth.user?'<button data-action="notifications">Notificaciones</button>':''}<button data-action="${auth.visitor?'visitor-exit':'logout'}">Cerrar sesión</button></div></details></header>
+  <div class="v5-layout ${quote?'has-context':''}">${quote?`<aside class="v5-context"><p class="eyebrow">${title.toUpperCase()}</p><h3>${safe(state.project.projectName||'Nuevo proyecto')}</h3><p>${safe(state.quoteName||'Cotización')}</p><nav aria-label="Etapas de cotización">${steps.map(([label,subtitle],i)=>`<button class="step-link ${state.step===i?'active':''}" data-action="step" data-step="${i}"><span>${i+1}</span><b>${label}<small>${subtitle}</small></b></button>`).join('')}</nav><div class="v5-context-note"><b>R${state.revisionNo||1} · cálculo ${safe(state.settings.calculationVersion)}</b><p>Las modificaciones de medidas, veta, materiales y servicios generan una nueva revisión al guardar.</p>${state.readOnlyRevision?'<strong>Historial · solo consulta</strong>':''}</div></aside>`:''}<main class="v5-main"><header class="v5-page-header"><p class="eyebrow">${quote?'COTIZACIÓN / '+title.toUpperCase():'ESPACIO DE TRABAJO'}</p><h1>${quote?steps[state.step][0]:title}</h1>${quote?`<span class="status-pill">${statusLabels[state.project.status]}</span>`:''}</header><div class="workspace">${content}</div></main></div>${state.message?`<div class="toast ${state.message.type}">${safe(state.message.text)}</div>`:''}</div>`;
 }
 
 function pieceImportPreview() {
@@ -930,72 +830,7 @@ function pastedPiecesPreview() {
   </div>`;
 }
 
-function pastePiecesPanel() {
-  const configuredMaterialId =
-    state.pasteConfig.materialId || state.materialId || state.materialIds?.[0] || "";
-  const configuredMaterial = materials.find(
-    (item) => item.id === configuredMaterialId,
-  );
-  const configuredNeolith =
-    isNeolithMaterial(configuredMaterial) || isSlabQuote();
-  const configuredEdgeId =
-    state.pasteConfig.edgeId || configuredMaterial?.suggestedEdgeId || "";
-  const configuredMeasurementMode =
-    state.pasteConfig.measurementMode === "cut" ? "cut" : "finished";
-  const configSides = state.pasteConfig.sides || {};
-  const configuredEdges = Object.fromEntries(
-    ["top", "bottom", "left", "right"].map((side) => [
-      side,
-      state.pasteConfig.edges?.[side] ||
-        (configSides[side] ? configuredEdgeId : ""),
-    ]),
-  );
-  const configuredFinishes = Object.fromEntries(
-    ["top", "bottom", "left", "right"].map((side) => [
-      side,
-      state.pasteConfig.finishes?.[side] || "rough",
-    ]),
-  );
-  return `<details class="paste-panel" open>
-    <summary>Pegar directamente desde cualquier Excel</summary>
-    <div class="paste-panel-body">
-      <p>Copia las filas tal como las envió el cliente. <b>Largo, Ancho y Cantidad</b> son obligatorios; Nombre, Veta y las cuatro terminaciones pueden venir en cualquier columna o definirse aquí.</p>
-      <div class="paste-config-grid">
-        <label>${configuredNeolith ? "Formato/color" : "Tablero"} para este lote <em>*</em>
-          <select id="paste-material">
-            <option value="">${configuredNeolith ? "Seleccionar formato" : "Seleccionar tablero"}</option>
-            ${selectedMaterials().map((item) => `<option value="${item.id}" ${item.id === configuredMaterialId ? "selected" : ""}>${safe(item.sku)} · ${safe(item.name)} · ${item.thickness} mm</option>`).join("")}
-          </select>
-        </label>
-        <label>Veta predeterminada
-          <select id="paste-default-grain">
-            ${["longitudinal", "transversal", "sin-veta"].map((grain) => `<option value="${grain}" ${grain === (state.pasteConfig.defaultGrain || "longitudinal") ? "selected" : ""}>${grainLabels[grain]}</option>`).join("")}
-          </select>
-          <small>Solo se usa cuando el Excel no incluye una columna de veta.</small>
-        </label>
-        <label class="form-span">Interpretación de las medidas
-          <select id="paste-measurement-mode">
-            <option value="finished" ${configuredMeasurementMode === "finished" ? "selected" : ""}>${configuredNeolith ? "Medidas terminadas de la pieza" : "Medidas terminadas - descontar tapacanto automáticamente"}</option>
-            <option value="cut" ${configuredMeasurementMode === "cut" ? "selected" : ""}>Medidas de corte - ya descontadas por el cliente</option>
-          </select>
-          <small>La opción terminada es la predeterminada.${configuredNeolith ? "" : " Usa “de corte” solo cuando el cliente ya descontó los tapacantos."}</small>
-        </label>
-      </div>
-      <section class="paste-side-services">
-        <div><b>${configuredNeolith ? "Acabado predeterminado por lado" : "Tapacanto predeterminado por lado"}</b><span>Se aplica cuando el Excel no trae ese dato. Después podrás corregir cada pieza antes de incorporarla.</span></div>
-        <div class="paste-side-service-grid">
-          ${sides.map(([side, label]) => `<label>${label}<select id="paste-${configuredNeolith ? "finish" : "edge"}-${side}">${configuredNeolith ? finishOptions(configuredFinishes[side]) : edgeOptions(configuredEdges[side])}</select></label>`).join("")}
-        </div>
-      </section>
-      <label>Filas copiadas desde Excel
-        <textarea id="piece-paste-text" rows="8" placeholder="Nombre    Largo    Ancho    Cantidad    Veta    L1    L2    A1    A2&#10;Costado   720      560      2           Longitudinal">${safe(state.pasteRawText || "")}</textarea>
-      </label>
-      ${pasteMappingPanel()}
-      <button class="secondary" type="button" data-action="analyze-piece-paste">${state.pasteColumns?.length ? "Aplicar asignación y revisar" : "Detectar columnas y revisar"}</button>
-      ${pastedPiecesPreview()}
-    </div>
-  </details>`;
-}
+function pastePiecesPanel() { return importerView(v5Context()); }
 
 function pieceImportPanel({ project = false } = {}) {
   return `<section class="card import-card ${project ? "project-import-card" : ""}">
@@ -1201,11 +1036,11 @@ function materialStep() {
   const availableCategoryIds = new Set(
     availableMaterials.map((item) => item.categoryId),
   );
-  const availableCategories = categories.filter((category) =>
-    availableCategoryIds.has(category.id),
-  );
+  const taxonomy=taxonomyPaths(v5.config.taxonomy);
+  const availableCategories = taxonomy.filter(n=>n.active!==false&&availableMaterials.some(m=>m.taxonomyId===n.id)).map(n=>({id:n.id,name:n.path,icon:isSlabQuote()?'◆':'▤'}));
+  for(const category of categories)if(availableCategoryIds.has(category.id)&&availableMaterials.some(m=>m.categoryId===category.id&&!m.taxonomyId))availableCategories.push(category);
   const products = availableMaterials.filter(
-    (item) => item.categoryId === state.categoryId,
+    (item) => item.categoryId === state.categoryId || item.taxonomyId === state.categoryId,
   );
   const chosenMaterials = selectedMaterials();
   const slabQuote = isSlabQuote();
@@ -1276,7 +1111,7 @@ function materialStep() {
                     </span>
                     <span class="product-copy"><small>${safe(material.brand)} · ${safe(material.sku)}</small><b>${safe(material.name)}</b><em>${isNeolithMaterial(material) ? `Útil ${material.usablePlateLength} × ${material.usablePlateWidth} × ${material.thickness} mm · fábrica ${material.plateLength} × ${material.plateWidth} mm` : `${material.plateLength} × ${material.plateWidth} × ${material.thickness} mm`}</em><strong>${isNeolithMaterial(material) ? `${clp(state.settings.stoneCutPerPlateRate)} neto por placa cortada` : `${clp(material.netPrice)} neto`}</strong>
                     ${
-                      hasRole("admin")
+                      permitted(auth.user,"costs")
                         ? `<span class="admin-prices">Mínimo ${clp(material.minPrice)} · Compra ${clp(material.purchasePrice)}</span>`
                         : ""
                     }</span>
@@ -1363,7 +1198,7 @@ function catalogView() {
                     ${
                       !showingBoards
                         ? `<span class="catalog-service-price">Servicio enchape: ${clp(item.serviceRate)}/ml</span>`
-                        : hasRole("admin")
+                        : permitted(auth.user,"costs")
                           ? `<span class="admin-prices">Mínimo ${clp(item.minPrice)} · Compra ${clp(item.purchasePrice)}</span>`
                           : ""
                     }</span>`;
@@ -1664,9 +1499,6 @@ function edgeConfigurationError(pieces = state.pieces) {
         .flatMap((piece) => Object.values(piece.edges || {}))
         .filter(Boolean),
     );
-    if (usedEdges.size > 3) {
-      return `${material.sku} tendría ${usedEdges.size} tapacantos distintos; el máximo operativo por placa es 3.`;
-    }
   }
   return "";
 }
@@ -1953,12 +1785,7 @@ function platePiecesTable(plate) {
 function optimizeStep() {
   assignPieceCodes(state.pieces);
   state.edgeCodeMap = createEdgeCodeMap(state.pieces, state.edgeCodeMap);
-  latestResult = optimizeProject(
-    selectedMaterials(),
-    state.pieces,
-    edgeBands,
-    state.settings,
-  );
+  latestResult = computeCurrentResult();
   const summary = latestResult.summary;
   const slabQuote = isSlabQuote();
   return `
@@ -2009,7 +1836,8 @@ function optimizeStep() {
         ? `<div class="alert"><b>Revisar piezas:</b> ${latestResult.warnings.map(safe).join(" · ")}</div>`
         : ""
     }
-    ${state.settings.calculationVersion !== CALCULATION_VERSION ? `<div class="alert"><b>Proyecto histórico protegido:</b> conserva la geometría y reglas con que fue guardado (${safe(state.settings.calculationVersion || "versión anterior")}). <button class="secondary small" type="button" data-action="migrate-calculation-v4">Migrar explícitamente a V4.1</button></div>` : ""}
+    ${state.settings.calculationVersion !== V5 ? `<div class="alert"><b>Cálculo histórico ${safe(state.settings.calculationVersion)}:</b> los valores guardados se conservan. Al modificar medidas, materiales o servicios se creará una revisión V5. ${latestResult.historicalReconstruction?'Los planos se reconstruyen con las reglas históricas porque esta versión no guardaba una imagen del resultado.':''}</div>` : ''}
+    ${state.readOnlyRevision?'<div class="alert">Revisión de consulta. Para editar, abre la cotización vigente desde Proyectos.</div>':''}
     ${optimizedPiecesTable()}
     <nav class="plate-quick-nav" aria-label="Navegación rápida entre hojas de corte">
       <b>Ir a hoja</b>
@@ -2070,10 +1898,10 @@ function optimizeStep() {
             <span>2,0 mm <strong>${clp(850)}</strong></span>
           </div>`}
           <p class="eyebrow settings-subtitle">DESCUENTOS</p>
-          ${slabQuote ? "" : `<label>Tableros (%)<input type="number" min="0" max="100" step="0.1" data-setting="boardDiscount" value="${state.settings.boardDiscount}" /></label>
-          <label>Tapacantos (%)<input type="number" min="0" max="100" step="0.1" data-setting="edgeDiscount" value="${state.settings.edgeDiscount}" /></label>`}
-          <label>Servicios (%)<input type="number" min="0" max="100" step="0.1" data-setting="servicesDiscount" value="${state.settings.servicesDiscount}" /></label>
-          <small>Precios y servicios expresados en valores netos.</small>
+          ${slabQuote ? "" : `<label>Tableros (%)<input type="number" min="0" max="50" step="0.1" data-setting="boardDiscount" value="${state.settings.boardDiscount}" /></label>
+          <label>Tapacantos (%)<input type="number" min="0" max="50" step="0.1" data-setting="edgeDiscount" value="${state.settings.edgeDiscount}" /></label>`}
+          <label>Servicios (%)<input type="number" min="0" max="50" step="0.1" data-setting="servicesDiscount" value="${state.settings.servicesDiscount}" /></label>
+          <small>Valores netos. Descuento máximo 50%, limitado por costo y precio mínimo de cada línea.</small>
         </section>
       </aside>
     </div>
@@ -2081,69 +1909,7 @@ function optimizeStep() {
   `;
 }
 
-function projectsView() {
-  const projects = [...projectsCache].sort(
-    (a, b) => new Date(b.updatedAt) - new Date(a.updatedAt),
-  );
-  if (!projects.length) {
-    return shell(`<section class="card empty-state large"><span>⌂</span><h2>No hay proyectos disponibles</h2><p>Los proyectos visibles dependen del perfil y del estado de cada orden.</p>${
-      canCreateQuote()
-        ? `<button class="primary" data-action="new">Crear cotización</button>`
-        : ""
-    }</section>`);
-  }
-  return shell(`
-    <section class="intro-row"><div><p class="eyebrow">SEGUIMIENTO</p><h2>Cotización → Facturación → Pagado → Producción → Despacho → Entregado</h2><p>Cada perfil ve y modifica únicamente los proyectos que le corresponden.</p></div>${
-      canCreateQuote()
-        ? `<button class="primary" data-action="new">＋ Nueva cotización</button>`
-        : ""
-    }</section>
-    <section class="project-grid">
-      ${projects
-        .map(
-          (item) => `<article class="card project-card">
-            <header><span class="status-dot ${item.project.status}"></span><small>${statusLabels[item.project.status]}</small><time>${new Date(item.updatedAt).toLocaleDateString("es-CL")}</time></header>
-            <h3>${safe(item.project.projectName || "Proyecto sin nombre")}</h3>
-            <p>${safe(item.project.clientName)}${
-              item.project.rut ? ` · ${safe(item.project.rut)}` : ""
-            }<br><small>Código: ${safe(projectCode(item.id))}${
-              item.submissionSource === "visitante" ? " · Origen: Visitante" : ""
-            }${
-              item.assignedName
-                ? ` · Comercial: ${safe(item.assignedName)}`
-                : ""
-            }${item.collaboratorIds?.length ? ` · Apoyo: ${item.collaboratorIds.length}` : ""}</small></p>
-            ${item.invoiceNumber ? `<p class="project-documents"><b>Factura:</b> ${safe(item.invoiceNumber)}${item.dispatchGuideNumber ? ` · <b>Guía:</b> ${safe(item.dispatchGuideNumber)}` : ""}</p>` : ""}
-            <div><span>Total</span><b>${clp(item.summary?.total)}</b></div>
-            ${
-              statusEntriesForRole(
-                auth.user?.role,
-                item.project.status,
-              ).length > 1
-                ? `<label>Estado<select data-project-status="${item.id}">
-                    ${statusEntriesForRole(
-                      auth.user?.role,
-                      item.project.status,
-                    )
-                      .map(
-                        ([value, label]) =>
-                          `<option value="${value}" ${
-                            value === item.project.status ? "selected" : ""
-                          }>${label}</option>`,
-                      )
-                      .join("")}
-                  </select></label>`
-                : ""
-            }
-            <div class="project-actions">
-              <button class="secondary" data-action="open-project" data-id="${item.id}">Abrir proyecto</button>
-              ${hasRole("admin") ? `<button class="ghost danger-text" data-action="delete-project" data-id="${item.id}">Eliminar</button>` : ""}
-            </div>
-          </article>`,
-        )
-        .join("")}
-    </section>`);
-}
+function projectsView() { return shell(groupedProjectsView(v5Context())); }
 
 function localIsoDate(date) {
   const year = date.getFullYear();
@@ -2581,12 +2347,12 @@ function usersView() {
       <section class="card role-access-card">
         <div class="section-title">
           <span>⌘</span>
-          <div><h3>Accesos definidos por perfil</h3><p>El Administrador puede cambiar el perfil desde el listado superior.</p></div>
+          <div><h3>Accesos definidos por perfil</h3><p>El Superadministrador puede cambiar los perfiles desde el listado superior.</p></div>
         </div>
         <div class="table-wrap"><table>
           <thead><tr><th>Perfil</th><th>Proyectos visibles</th><th>Acciones principales</th></tr></thead>
           <tbody>
-            <tr><td><b>Administrador</b></td><td>Todos</td><td>Crea usuarios, visualiza y edita todo el flujo, catálogo, CRM, precios y documentos.</td></tr>
+            <tr><td><b>Administrador</b></td><td>Todos</td><td>Administra categorías, productos, precios de venta y fotografías. Los costos y usuarios requieren permisos específicos.</td></tr>
             <tr><td><b>Comercial</b></td><td>Propios y asignados</td><td>Pasa Cotización a Facturación y luego a Facturado y pagado; producción queda en consulta.</td></tr>
             <tr><td><b>Producción</b></td><td>Todos los proyectos</td><td>Consulta las etapas previas e interviene desde Facturado y pagado hasta Entregado.</td></tr>
             <tr><td><b>Cliente</b></td><td>Solo sus cotizaciones</td><td>Consulta catálogo, cotiza, guarda, descarga y designa Comercial sin cambiar estados.</td></tr>
@@ -2613,6 +2379,10 @@ function applyProductFilter(value = "") {
 }
 
 function renderEnhancements() {
+  if(state.view==='quote') {
+    if(!permitted(auth.user,'discount')) document.querySelectorAll('[data-setting$="Discount"]').forEach(el=>{el.disabled=true;el.value=0;});
+    if(state.readOnlyRevision) document.querySelectorAll('.workspace input,.workspace select,.workspace textarea,.workspace button:not([data-action="pdf"]):not([data-action="labels-pdf"]):not([data-action="jump-plate"]):not([data-action="back"]):not([data-action="next"])').forEach(el=>el.disabled=true);
+  }
   document.querySelectorAll(".material-image").forEach((image) => {
     const fallback = () => {
       if (
@@ -2645,6 +2415,10 @@ function render() {
     app.innerHTML = passwordChangeView();
     return;
   }
+  if (['dashboard','dispatch','v5-settings','v5-catalog'].includes(state.view)) {
+    const view={dashboard:dashboardView,dispatch:dispatchView,'v5-settings':configurationView,'v5-catalog':catalogManagementView}[state.view];
+    app.innerHTML=shell(view(v5Context()));renderEnhancements();return;
+  }
   if (state.view === "projects") {
     app.innerHTML = projectsView();
     renderEnhancements();
@@ -2676,7 +2450,8 @@ function render() {
     return;
   }
   const views = [projectStep, materialStep, piecesStep, edgeStep, optimizeStep];
-  app.innerHTML = shell(views[state.step]());
+  const extra=state.step===0?`<section class="card v5-grid"><label>Nombre de esta cotización<input data-v5quote="quoteName" value="${safe(state.quoteName||'')}" placeholder="Ej. Cocina · melaminas"></label><label>Comentarios<textarea data-v5quote="comments">${safe(state.comments||'')}</textarea></label></section>`:'';
+  app.innerHTML = shell(extra+views[state.step]());
   renderEnhancements();
   if (state.step === 4 && latestResult) {
     requestAnimationFrame(() => {
@@ -3198,6 +2973,8 @@ function splitPastedExcel(text = "") {
 function autoPasteMapping(columns = []) {
   const normalized = columns.map(normalizeHeader);
   const aliases = {
+    superadmin: 'superadmin', superadministrador: 'superadmin', 'super administrador':'superadmin',
+    instalacion:'instalacion', logistica:'logistica', supervisor:'supervisor', finanzas:'finanzas',
     name: ["nombre", "pieza", "elemento", "descripcion", "detalle"],
     quantity: ["cantidad", "cant", "qty", "unidades", "ud"],
     length: ["largo", "longitud", "alto", "length", "medida 1"],
@@ -3653,7 +3430,7 @@ function exportPdf() {
   pdf.text(`RESUMEN DE OPTIMIZACIÓN · ${isSlabQuote() ? "PLACAS" : "TABLEROS"}`, 12, 22);
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(8);
-  pdf.text(`Cotización ${projectCode()} · ${new Date().toLocaleString("es-CL")}`, 12, 29);
+  pdf.text(`Cotización ${projectCode()} · R${state.revisionNo||1} · Motor ${state.settings.calculationVersion} · ${new Date().toLocaleString("es-CL")}`, 12, 29);
   pdf.setTextColor(37, 49, 60);
   pdf.setFont("helvetica", "bold");
   pdf.setFontSize(12);
@@ -3680,33 +3457,38 @@ function exportPdf() {
   pdf.setFontSize(10);
   pdf.text(isSlabQuote() ? "FORMATOS Y SERVICIOS" : "MATERIALES Y SERVICIOS", 12, 94);
   let summaryY = 102;
+  const summarySpace=(height=10)=>{if(summaryY+height>175){pdf.addPage('a4','landscape');pdf.setTextColor(37,49,60);pdf.setFont('helvetica','bold');pdf.setFontSize(12);pdf.text('RESUMEN DE OPTIMIZACIÓN · CONTINUACIÓN',12,15);pdf.setFontSize(8);summaryY=28;}};
   pdf.setFontSize(8);
   latestResult.materialSummaries.forEach((item) => {
+    const nameLines=pdf.splitTextToSize(`${item.sku} · ${item.name}`,105);
+    const detailLines=pdf.splitTextToSize(`${item.boardCount} placa(s) · fábrica ${item.rawPlateLength} × ${item.rawPlateWidth} mm · útil ${item.usablePlateLength} × ${item.usablePlateWidth} mm · despunte ${item.perimeterTrim} mm/lado`,158);
+    const height=Math.max(nameLines.length,detailLines.length)*4+4;
+    summarySpace(height);
     pdf.setFont("helvetica", "bold");
-    pdf.text(`${item.sku} · ${item.name}`, 12, summaryY);
+    pdf.text(nameLines, 12, summaryY);
     pdf.setFont("helvetica", "normal");
-    pdf.text(
-      `${item.boardCount} placa(s) · fábrica ${item.rawPlateLength} × ${item.rawPlateWidth} mm · útil ${item.usablePlateLength} × ${item.usablePlateWidth} mm · despunte ${item.perimeterTrim} mm/lado`,
-      80,
-      summaryY,
-    );
-    summaryY += 7;
+    pdf.text(detailLines,124,summaryY);
+    summaryY += height;
   });
   const edgeEntries = Object.entries(state.edgeCodeMap || {}).sort(
     (a, b) => Number(a[1].slice(1)) - Number(b[1].slice(1)),
   );
   if (edgeEntries.length) {
+    summarySpace(18);
     summaryY += 4;
     pdf.setFont("helvetica", "bold");
     pdf.text("LEYENDA GLOBAL DE TAPACANTOS", 12, summaryY);
     summaryY += 7;
     edgeEntries.forEach(([edgeId, code]) => {
       const edge = edgeBands.find((item) => item.id === edgeId);
+      const meters=latestResult.edgeSummaries.find(x=>x.edgeId===edgeId)?.meters||0;
+      const lines=pdf.splitTextToSize(`${edge?.sku || edgeId} · ${edge?.name || 'Tapacanto'} · ${meters.toFixed(2)} ml`,245);
+      summarySpace(lines.length*4+3);
       pdf.text(`${code}`, 12, summaryY);
       pdf.setFont("helvetica", "normal");
-      pdf.text(`${edge?.sku || edgeId} · ${edge?.name || "Tapacanto"}`, 27, summaryY);
+      pdf.text(lines, 27, summaryY);
       pdf.setFont("helvetica", "bold");
-      summaryY += 6;
+      summaryY += lines.length*4+3;
     });
   }
   if (latestResult.finishSummaries?.length) {
@@ -3715,6 +3497,7 @@ function exportPdf() {
     summaryY += 7;
     pdf.setFont("helvetica", "normal");
     latestResult.finishSummaries.forEach((item) => {
+      summarySpace(8);
       pdf.text(`${item.name}: ${item.meters.toFixed(2)} ml × ${clp(item.unitPrice)}/ml = ${clp(item.serviceSubtotal)}`, 12, summaryY);
       summaryY += 6;
     });
@@ -3823,6 +3606,7 @@ app.addEventListener("submit", async (event) => {
     }
     return;
   }
+  if(form.dataset.v5Form) return;
   if (form.id === "piece-form") {
     addPiece(form);
     return;
@@ -3848,7 +3632,7 @@ app.addEventListener("submit", async (event) => {
         loadUsers(),
         loadNotifications(),
       ]);
-      state.view = "projects";
+      await loadCatalog();await loadV5(v5Context());state.view = "dashboard";
     } catch (error) {
       auth.error = error.message;
     }
@@ -3883,7 +3667,7 @@ app.addEventListener("submit", async (event) => {
           loadUsers(),
           loadNotifications(),
         ]);
-        state.view = "projects";
+        await loadCatalog();await loadV5(v5Context());state.view = "dashboard";
       }
     } catch (error) {
       auth.error = error.message;
@@ -3959,6 +3743,7 @@ app.addEventListener("submit", async (event) => {
 });
 
 app.addEventListener("input", (event) => {
+  if(event.target.dataset.v5quote){state[event.target.dataset.v5quote]=event.target.value;return;}
   const target = event.target;
   if (target.dataset.contact) {
     state.contact[target.dataset.contact] = target.value;
@@ -4153,7 +3938,7 @@ app.addEventListener("change", async (event) => {
     render();
   }
   if (target.dataset.setting) {
-    const maximum = target.dataset.setting.endsWith("Discount") ? 100 : Infinity;
+    const maximum = target.dataset.setting.endsWith("Discount") ? 50 : Infinity;
     state.settings[target.dataset.setting] = Math.min(
       maximum,
       Math.max(0, Number(target.value) || 0),
@@ -4250,6 +4035,7 @@ app.addEventListener("click", async (event) => {
     ) {
       return;
     }
+    v5.importer=null;
     state.workType = nextType;
     state.categoryId = nextType === "slabs" ? "neolith" : "";
     state.materialId = "";
@@ -4290,7 +4076,7 @@ app.addEventListener("click", async (event) => {
     if (!confirmed) return;
     state.settings = {
       ...state.settings,
-      calculationVersion: CALCULATION_VERSION,
+      calculationVersion: V5,
       perimeterTrim: 10,
       neolithTrim: 30,
       kerf: 3,
@@ -4326,7 +4112,7 @@ app.addEventListener("click", async (event) => {
   }
   if (button.dataset.category) {
     const categoryHasAllowedProducts = quoteMaterials().some(
-      (material) => material.categoryId === button.dataset.category,
+      (material) => material.categoryId === button.dataset.category || material.taxonomyId === button.dataset.category,
     );
     if (!categoryHasAllowedProducts) {
       notify("Esa categoría no corresponde al tipo de optimización seleccionado.", "error");
@@ -4367,6 +4153,7 @@ app.addEventListener("click", async (event) => {
   if (action === "next") moveStep(1);
   if (action === "back") moveStep(-1);
   if (action === "new") {
+    v5.importer=null;
     state = newQuoteState();
     render();
   }
@@ -4604,6 +4391,7 @@ app.addEventListener("click", async (event) => {
     }
   }
   if (action === "open-project") {
+    openV5Quote(projectsCache.find(p=>p.id===button.dataset.id));return;
     if (button.dataset.notificationId) {
       try {
         const payload = await api(
@@ -4753,10 +4541,44 @@ app.addEventListener("click", async (event) => {
   }
 });
 
+function computeCurrentResult() {
+  const key=calculationSignature(state);
+  if(state.calculationSnapshot && (state.readOnlyRevision||key===state.loadedSignature)) return state.calculationSnapshot;
+  const unchanged=state.loadedSignature&&key===state.loadedSignature;
+  if(!unchanged && !state.readOnlyRevision){
+    state.settings={...state.settings,calculationVersion:V5,perimeterTrim:10,neolithTrim:30,kerf:3};
+    for(const [name,policy] of Object.entries(v5.config.services))state.settings[name]=policy.price;
+    state.settings.servicePolicies=v5.config.services;
+    if(!permitted(auth.user,'discount'))for(const field of ['boardDiscount','edgeDiscount','servicesDiscount'])state.settings[field]=0;
+  }
+  const result=optimizeProject(selectedMaterials(),state.pieces,edgeBands,state.settings);
+  if(unchanged && state.summary){result.summary=state.summary;result.historicalReconstruction=true;}
+  return result;
+}
+function openV5Quote(item,readOnly=false) {
+  if(!item)return;
+  const defaults=emptyState(),copy=structuredClone(item);
+  state={...defaults,...copy,projectId:item.id,view:'quote',step:4,readOnlyRevision:readOnly,
+    originalSettings:structuredClone(item.settings||{}),
+    materialIds:item.materialIds?.length?item.materialIds:[item.materialId].filter(Boolean),
+    workType:item.workType||((item.materialIds||[item.materialId]).some(id=>isNeolithMaterial(materials.find(m=>m.id===id)))?'slabs':'boards'),
+    settings:item.settings?.calculationVersion?{...defaults.settings,...item.settings}:{...defaults.settings,...item.settings,calculationVersion:'legacy-v3',perimeterTrim:0,neolithTrim:0}};
+  state.loadedSignature=calculationSignature(state);v5.importer=null;latestResult=null;render();
+}
+function v5Context() {
+  return {state,user:auth.user,projects:projectsCache,materials,edges:edgeBands,accessories:accessoriesCatalog,api,render,notify,loadProjects,loadCatalog,selectedMaterials,canCreateQuote,
+    statusEntries:status=>statusEntriesForRole(auth.user?.role,status),uploadImage:uploadProductImage,
+    pieceError:p=>pieceProductionError(p,materials.find(m=>m.id===p.materialId),edgeBands,{...state.settings,calculationVersion:V5,kerf:3,perimeterTrim:10,neolithTrim:30}),
+    openQuote:openV5Quote,
+    newQuote:(type,group)=>{state=newQuoteState();state.workType=type;state.view='quote';if(group){state.groupId=group.groupId||group.id;state.project={...state.project,projectName:group.project.projectName,clientName:group.project.clientName,rut:group.project.rut,projectAddress:group.project.projectAddress};state.assignedTo=group.assignedTo;state.collaboratorIds=group.collaboratorIds||[];}latestResult=null;},
+  };
+}
+attachV5(app,v5Context);
+
 async function initialize() {
   render();
   try {
-    await loadCatalog();
+    await loadCatalog();await loadV5(v5Context());
     const setup = await api("/api/auth/setup-status");
     auth.needsSetup = setup.needsSetup;
     if (!setup.needsSetup) {
@@ -4771,7 +4593,7 @@ async function initialize() {
             loadUsers(),
             loadNotifications(),
           ]);
-          state.view = "projects";
+          await loadCatalog();await loadV5(v5Context());state.view = "dashboard";
         }
       } catch {
         auth.user = null;

@@ -1,3 +1,5 @@
+import { initializeV5, prepareProjectV5, registerV5Routes, visibleCatalog, SUPER_EMAIL, fail } from './v5-server.mjs';
+import { ROLE_LABELS, mergeConfig, permitted, stripCosts, taxonomyPaths, calculationSignature } from './src/v5-domain.js';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync } from "node:fs";
 import { basename, extname, join } from "node:path";
@@ -24,7 +26,7 @@ const dist = join(root, "dist");
 const port = Number(process.env.PORT || 10000);
 const isProduction = process.env.NODE_ENV === "production";
 const sessionHours = 8;
-const validRoles = new Set(["admin", "comercial", "produccion", "cliente"]);
+const validRoles = new Set(Object.keys(ROLE_LABELS));
 const validStatuses = new Set([
   "cotizacion",
   "facturacion",
@@ -40,7 +42,7 @@ function rolesOf(user = {}) {
 }
 
 function userHasRole(user, role) {
-  return rolesOf(user).includes(role);
+  return rolesOf(user).includes(role) || (role === "admin" && rolesOf(user).includes("superadmin"));
 }
 
 function normalizeRoles(value, fallback = "") {
@@ -89,7 +91,7 @@ function normalizeUserInput(body = {}) {
     email: normalizeEmail(body.email),
     fullName: String(body.fullName || "").trim(),
     password: String(body.password || ""),
-    role: roles.includes("admin") ? "admin" : roles[0] || "",
+    role: roles.includes("superadmin") ? "superadmin" : roles.includes("admin") ? "admin" : roles[0] || "",
     roles,
     clientName: String(body.clientName || "").trim(),
     phone: String(body.phone || "").trim(),
@@ -182,6 +184,7 @@ function mapProject(row) {
     deletedBy: row.deleted_by || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    rowVersion: Number(row.row_version||0),
     ownerName:
       row.owner_name ||
       (row.payload?.submissionSource === "visitante" ? "Visitante" : ""),
@@ -231,10 +234,17 @@ function catalogNumber(value, fallback = 0) {
   return Number.isFinite(number) ? number : Number(fallback) || 0;
 }
 
+function catalogExtra(source) {
+  return {active:source.active!==false,supplier:String(source.supplier||''),stock:source.stock===''||source.stock==null?null:catalogNumber(source.stock),
+    colorName:String(source.colorName||''),format:String(source.format||''),taxonomyId:String(source.taxonomyId||''),materialType:String(source.materialType||'board'),
+    serviceMinPrice:catalogNumber(source.serviceMinPrice),servicePurchasePrice:catalogNumber(source.servicePurchasePrice),
+    perimeterTrim:Math.max(0,catalogNumber(source.perimeterTrim,source.materialType==='stone'||source.materialType==='neolith'?30:10))};
+}
 function normalizeCatalogProduct(productType, body = {}, current = {}) {
   const source = { ...current, ...body };
   const sku = String(source.sku || "").trim();
   const name = String(source.name || "").trim();
+  if(productType==='accessory')return {...catalogExtra(source),sku,name,description:String(source.description||''),categoryId:String(source.categoryId||'bisagras'),categoryName:String(source.categoryName||'Herrajes'),plateLength:catalogNumber(source.plateLength),plateWidth:catalogNumber(source.plateWidth),thickness:catalogNumber(source.thickness),netPrice:catalogNumber(source.netPrice),minPrice:catalogNumber(source.minPrice),purchasePrice:catalogNumber(source.purchasePrice),image:String(source.image||'')};
   if (productType === "board") {
     const categoryName = String(
       source.categoryName || source.sourceCategory || "",
@@ -251,6 +261,7 @@ function normalizeCatalogProduct(productType, body = {}, current = {}) {
           : current.categoryId || catalogSlug(categoryName)),
     ).trim();
     return {
+      ...catalogExtra(source),
       categoryId,
       categoryName,
       sourceCategory: String(source.sourceCategory || categoryName).trim(),
@@ -276,6 +287,7 @@ function normalizeCatalogProduct(productType, body = {}, current = {}) {
     };
   }
   return {
+    ...catalogExtra(source),
     group: String(source.group || "Otro tapacanto").trim(),
     material: String(source.material || "PVC").trim(),
     thickness: catalogNumber(source.thickness),
@@ -295,6 +307,7 @@ function normalizeCatalogProduct(productType, body = {}, current = {}) {
 function catalogProductError(productType, product) {
   if (!product.sku) return "El código SKU es obligatorio.";
   if (!product.name) return "El nombre del producto es obligatorio.";
+  if(productType==='accessory')return product.netPrice<0||product.minPrice<0||product.purchasePrice<0?'Los precios no pueden ser negativos.':'';
   if (productType === "board") {
     if (!product.categoryId || !product.categoryName) {
       return "La categoría del tablero es obligatoria.";
@@ -330,16 +343,17 @@ async function buildRuntimeCatalog(database) {
   );
   const baseBoards = materials.map((item) => ({
     ...item,
+    taxonomyId:item.taxonomyId||({'melamina-15':'ag-1','melamina-18':'ag-2','melamina-masisa-15':'ag-3','melamina-masisa-18':'ag-4'}[item.categoryId])||({'STYLELITE':'mdf-1','PETLITE':'mdf-2','TRUNATUR':'mdf-3','CHINO ACRILICO':'ot-2'}[item.brand])||(isStoneMaterial(item)?(item.thickness===6?'neo-1':'neo-2'):'otros-tableros'),
     categoryName:
       baseCategories.find((category) => category.id === item.categoryId)?.name ||
       item.sourceCategory ||
       "Tableros",
-    active: !replacedIds.has(item.id),
+    active: item.active!==false && !replacedIds.has(item.id),
     catalogSource: "excel",
   }));
   const baseEdges = edgeBands.map((item) => ({
     ...item,
-    active: !replacedIds.has(item.id),
+    active: item.active!==false && !replacedIds.has(item.id),
     catalogSource: "excel",
   }));
   const revisionBoards = revisions
@@ -347,7 +361,7 @@ async function buildRuntimeCatalog(database) {
     .map((revision) => ({
       ...revision.payload,
       id: revision.id,
-      active: revision.active,
+      active: revision.active && revision.payload.active!==false,
       replacesId: revision.replacesId,
       createdAt: revision.createdAt,
       catalogSource: "administracion",
@@ -357,13 +371,15 @@ async function buildRuntimeCatalog(database) {
     .map((revision) => ({
       ...revision.payload,
       id: revision.id,
-      active: revision.active,
+      active: revision.active && revision.payload.active!==false,
       replacesId: revision.replacesId,
       createdAt: revision.createdAt,
       catalogSource: "administracion",
     }));
   const allMaterials = [...baseBoards, ...revisionBoards];
   const allEdgeBands = [...baseEdges, ...revisionEdges];
+  const taxonomy=taxonomyPaths(mergeConfig(await database.getV5('config')).taxonomy);
+  for(const item of [...allMaterials,...allEdgeBands])if(taxonomy.find(n=>n.id===item.taxonomyId)?.active===false)item.active=false;
   const categoryMap = new Map(
     baseCategories.map((category) => [category.id, { ...category }]),
   );
@@ -383,7 +399,8 @@ async function buildRuntimeCatalog(database) {
         material.active !== false && material.categoryId === category.id,
     ).length,
   }));
-  return { categories, materials: allMaterials, edgeBands: allEdgeBands };
+  const accessories=revisions.filter(r=>r.productType==='accessory').map(r=>({...r.payload,id:r.id,active:r.active&&r.payload.active!==false,replacesId:r.replacesId,createdAt:r.createdAt}));
+  return { categories, materials: allMaterials, edgeBands: allEdgeBands, accessories };
 }
 
 function normalizeImageKey(value = "") {
@@ -530,7 +547,7 @@ async function sendQuoteEmail(recipients, project, creator) {
   }
 }
 
-class PostgresStore {
+export class PostgresStore {
   constructor(connectionString) {
     this.pool = new Pool({
       connectionString,
@@ -723,7 +740,7 @@ class PostgresStore {
 
   async listActiveAdmins() {
     const result = await this.pool.query(
-      "SELECT * FROM app_users WHERE ('admin'=ANY(roles) OR role='admin') AND active=TRUE ORDER BY created_at",
+      "SELECT * FROM app_users WHERE ('admin'=ANY(roles) OR 'superadmin'=ANY(roles) OR role IN ('admin','superadmin')) AND active=TRUE ORDER BY created_at",
     );
     return result.rows.map(mapUser);
   }
@@ -944,7 +961,8 @@ class PostgresStore {
          status=EXCLUDED.status,
          payload=EXCLUDED.payload,
          summary=EXCLUDED.summary,
-         updated_at=NOW()
+         updated_at=NOW(), row_version=projects.row_version+1
+       WHERE $10::bigint IS NOT NULL AND projects.row_version=$10::bigint
        RETURNING *`,
       [
         record.id,
@@ -956,8 +974,10 @@ class PostgresStore {
         record.project.status,
         JSON.stringify(record.payload || {}),
         JSON.stringify(record.summary || null),
+        record.expectedVersion ?? null,
       ],
     );
+    if(!result.rows.length) throw fail("La cotización cambió. Vuelve a abrirla antes de guardar.",409);
     return mapProject(result.rows[0]);
   }
 
@@ -966,7 +986,7 @@ class PostgresStore {
       `UPDATE projects
        SET execution_date=$2::date,
            delivery_date=$3::date,
-           updated_at=NOW()
+           updated_at=NOW(), row_version=row_version+1
        WHERE id=$1
        RETURNING *`,
       [id, executionDate || null, deliveryDate || null],
@@ -977,7 +997,7 @@ class PostgresStore {
   async deleteProject(id, userId) {
     const result = await this.pool.query(
       `UPDATE projects
-       SET deleted_at=NOW(), deleted_by=$2, updated_at=NOW()
+       SET deleted_at=NOW(), deleted_by=$2, updated_at=NOW(),row_version=row_version+1
        WHERE id=$1 AND deleted_at IS NULL
        RETURNING *`,
       [id, userId],
@@ -988,7 +1008,7 @@ class PostgresStore {
 
 export function projectVisibility(user) {
   const where =
-      (userHasRole(user, "admin") || userHasRole(user, "produccion"))
+      permitted(user,"allProjects")
         ? "TRUE"
         : userHasRole(user, "comercial")
             ? "(p.owner_id=$1 OR p.assigned_to=$1 OR COALESCE(p.payload->'collaboratorIds','[]'::jsonb) ? $1::text)"
@@ -1123,6 +1143,7 @@ class MemoryStore {
     return [...this.projects.values()]
       .filter((project) => {
         if (project.deletedAt) return false;
+        if(permitted(user,"allProjects"))return true;
         if (userHasRole(user, "admin")) return true;
         if (userHasRole(user, "produccion")) return true;
         if (userHasRole(user, "comercial")) {
@@ -1142,6 +1163,7 @@ class MemoryStore {
   }
   async saveProject(record) {
     const current = this.projects.get(record.id);
+    if(current && Number(record.expectedVersion)!==Number(current.rowVersion||0)) throw fail("La cotización cambió. Vuelve a abrirla antes de guardar.",409);
     const saved = {
       ...current,
       ...record.payload,
@@ -1156,6 +1178,7 @@ class MemoryStore {
       assignedName: this.users.get(record.assignedTo)?.fullName || "",
       createdAt: current?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      rowVersion: current ? (Number(current.rowVersion)||0)+1 : 0,
     };
     this.projects.set(saved.id, saved);
     return saved;
@@ -1189,6 +1212,7 @@ class MemoryStore {
 }
 
 export function canReadProject(user, project) {
+  if(permitted(user,"allProjects")) return true;
   if (userHasRole(user, "admin")) return true;
   if (userHasRole(user, "produccion")) return true;
   if (userHasRole(user, "comercial")) {
@@ -1202,6 +1226,7 @@ export function canReadProject(user, project) {
 }
 
 export function canEditProject(user, project) {
+  if(userHasRole(user,"logistica") && ["despacho","entregado"].includes(project.project.status)) return true;
   if (userHasRole(user, "admin")) return true;
   const productionCanEdit = userHasRole(user, "produccion") && [
       "facturado_pagado",
@@ -1221,6 +1246,7 @@ export function canEditProject(user, project) {
 
 export function canTransitionProjectStatus(user, currentStatus, nextStatus) {
   if (currentStatus === nextStatus) return true;
+  if(userHasRole(user,"logistica") && currentStatus==="despacho" && nextStatus==="entregado") return true;
   if (userHasRole(user, "admin")) return validStatuses.has(nextStatus);
   if (userHasRole(user, "comercial") && (
       (currentStatus === "cotizacion" && nextStatus === "facturacion") ||
@@ -1235,6 +1261,7 @@ export function canTransitionProjectStatus(user, currentStatus, nextStatus) {
 }
 
 function projectRecord(body, ownerId, current = null) {
+  body = { ...current, ...body, project: { ...current?.project, ...body.project } };
   const project = body.project || {};
   const assignedTo = body.assignedTo || current?.assignedTo || null;
   const materialIds = [
@@ -1353,6 +1380,10 @@ function projectDimensionError(
   if (!record.payload.workType) record.payload.workType = inferredWorkType;
   for (let invalidIndex = 0; invalidIndex < pieces.length; invalidIndex += 1) {
     const piece = pieces[invalidIndex];
+    if(!Number.isInteger(Number(piece.quantity))||Number(piece.quantity)<1||Number(piece.quantity)>10000) return `La pieza ${invalidIndex+1} requiere una cantidad entera entre 1 y 10.000.`;
+    if(piece.grain && !['longitudinal','transversal','sin-veta'].includes(piece.grain))return `La pieza ${invalidIndex+1} tiene una veta inválida.`;
+    for(const edgeId of Object.values(piece.edges||{})) if(edgeId&&!catalogEdges.some(e=>e.id===edgeId))return `La pieza ${invalidIndex+1} usa un tapacanto que no existe.`;
+    for(const finish of Object.values(piece.finishes||{})) if(finish&&!['rough','bevel','miter45'].includes(finish))return `La pieza ${invalidIndex+1} usa una terminación desconocida.`;
     const material = catalogMaterials.find(
       (item) => item.id === piece.materialId,
     );
@@ -1394,9 +1425,6 @@ function projectDimensionError(
         .flatMap((piece) => Object.values(piece.edges || {}))
         .filter(Boolean),
     );
-    if (usedEdges.size > 3) {
-      return `El tablero ${material?.sku || materialId} utiliza ${usedEdges.size} tapacantos distintos. El máximo operativo por placa es 3.`;
-    }
   }
   return "";
 }
@@ -1461,6 +1489,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
         ? new PostgresStore(databaseUrl)
         : new MemoryStore());
   await database.init();
+  await initializeV5(database);
 
   const app = express();
   app.set("trust proxy", 1);
@@ -1476,7 +1505,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
       },
     }),
   );
-  app.use(express.json({ limit: "2mb" }));
+  app.use(express.json({ limit: "16mb" }));
 
   app.use("/api", (request, response, next) => {
     if (!["POST", "PUT", "PATCH", "DELETE"].includes(request.method)) return next();
@@ -1551,6 +1580,20 @@ export async function createApplication({ store, useMemory = false } = {}) {
     userHasRole(request.auth.user, "admin")
       ? next()
       : response.status(403).json({ error: "Acceso exclusivo de administrador." });
+
+  const superOnly = (req,res,next) => permitted(req.auth.user,'users') ? next() : res.status(403).json({error:'Acceso exclusivo del superadministrador.'});
+  const catalogOnly = (req,res,next) => permitted(req.auth.user,'catalog') ? next() : res.status(403).json({error:'Sin permiso de catálogo.'});
+  const productsOnly = (req,res,next) => permitted(req.auth.user,'products') ? next() : res.status(403).json({error:'Sin permiso para editar productos o fotografías.'});
+  app.use('/api',async(req,res,next)=>{
+    const token=parseCookies(req.get('cookie')).casa_session;
+    const session=token?await database.getSession(hashToken(token)):null;
+    const original=res.json.bind(res);
+    res.json=payload=>original(stripCosts(payload,session?.user));
+    req.catalogUser=session?.user?.mustChangePassword?null:session?.user;
+    res.set('Cache-Control','no-store');
+    next();
+  });
+  registerV5Routes(app,{db:database,authenticate,csrf,canReadProject});
 
   const createSession = async (response, user) => {
     const token = randomBytes(32).toString("base64url");
@@ -1639,15 +1682,15 @@ export async function createApplication({ store, useMemory = false } = {}) {
     const assigned = record.assignedTo
       ? await database.getUser(record.assignedTo)
       : null;
-    if (assignedRequired && (!assigned?.active || assigned.role !== "comercial")) {
+    if (assignedRequired && (!assigned?.active || !userHasRole(assigned,"comercial"))) {
       return "Selecciona el ejecutivo comercial que atenderá esta cotización.";
     }
-    if (record.assignedTo && (!assigned?.active || assigned.role !== "comercial")) {
+    if (record.assignedTo && (!assigned?.active || !userHasRole(assigned,"comercial"))) {
       return "El ejecutivo comercial seleccionado no está disponible.";
     }
     for (const collaboratorId of record.payload.collaboratorIds || []) {
       const collaborator = await database.getUser(collaboratorId);
-      if (!collaborator?.active || collaborator.role !== "comercial") {
+      if (!collaborator?.active || !userHasRole(collaborator,"comercial")) {
         return "Uno de los comerciales colaboradores no está disponible.";
       }
     }
@@ -1659,15 +1702,15 @@ export async function createApplication({ store, useMemory = false } = {}) {
   });
 
   app.get("/api/catalog", async (_request, response) => {
-    response.json(await buildRuntimeCatalog(database));
+    response.json(visibleCatalog(await buildRuntimeCatalog(database),_request.catalogUser));
   });
 
   app.get(
     "/api/admin/catalog",
     authenticate,
-    adminOnly,
+    catalogOnly,
     async (_request, response) => {
-      response.json(await buildRuntimeCatalog(database));
+      response.json(visibleCatalog(await buildRuntimeCatalog(database),_request.catalogUser));
     },
   );
 
@@ -1675,16 +1718,19 @@ export async function createApplication({ store, useMemory = false } = {}) {
     "/api/admin/catalog",
     authenticate,
     csrf,
-    adminOnly,
+    catalogOnly,
     async (request, response) => {
-      const productType = request.body.productType === "edge" ? "edge" : "board";
+      const productType = ["board","edge","accessory"].includes(request.body.productType) ? request.body.productType : "board";
+      if(!permitted(request.auth.user,'products')) throw fail('No tienes permiso para crear productos.',403);
       const product = normalizeCatalogProduct(productType, request.body.product);
+      if(!permitted(request.auth.user,'costs')) {product.purchasePrice=0;product.minPrice=0;product.servicePurchasePrice=0;product.serviceMinPrice=0;}
+      if(!permitted(request.auth.user,'salesPrices')) {product.netPrice=0;product.price=0;product.serviceRate=0;product.active=false;}
       const validationError = catalogProductError(productType, product);
       if (validationError) {
         return response.status(400).json({ error: validationError });
       }
       const catalog = await buildRuntimeCatalog(database);
-      const collection = productType === "board" ? catalog.materials : catalog.edgeBands;
+      const collection = productType === "board" ? catalog.materials : productType === "edge" ? catalog.edgeBands : catalog.accessories;
       if (
         collection.some(
           (item) =>
@@ -1706,7 +1752,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
       });
       return response.status(201).json({
         revision,
-        catalog: await buildRuntimeCatalog(database),
+        catalog: visibleCatalog(await buildRuntimeCatalog(database),request.auth.user),
       });
     },
   );
@@ -1715,16 +1761,16 @@ export async function createApplication({ store, useMemory = false } = {}) {
     "/api/admin/catalog/:productType/:id",
     authenticate,
     csrf,
-    adminOnly,
+    catalogOnly,
     async (request, response) => {
-      const productType = request.params.productType === "edge" ? "edge" : "board";
+      const productType = ["board","edge","accessory"].includes(request.params.productType) ? request.params.productType : "board";
       const catalog = await buildRuntimeCatalog(database);
-      const collection = productType === "board" ? catalog.materials : catalog.edgeBands;
+      const collection = productType === "board" ? catalog.materials : productType === "edge" ? catalog.edgeBands : catalog.accessories;
       const current = collection.find((item) => item.id === request.params.id);
       if (!current) {
         return response.status(404).json({ error: "Producto no encontrado." });
       }
-      if (current.active === false) {
+      if (current.active === false && (await database.listCatalogRevisions()).some(r=>r.replacesId===current.id)) {
         return response.status(409).json({
           error: "Esa revisión ya fue reemplazada. Abre la versión activa del producto.",
         });
@@ -1734,6 +1780,9 @@ export async function createApplication({ store, useMemory = false } = {}) {
         request.body.product,
         current,
       );
+      for(const key of ['purchasePrice','minPrice','servicePurchasePrice','serviceMinPrice']) if(!permitted(request.auth.user,'costs')) product[key]=current[key]||0;
+      for(const key of ['netPrice','price','serviceRate']) if(!permitted(request.auth.user,'salesPrices')) product[key]=current[key]||0;
+      if(!permitted(request.auth.user,'products')) for(const key of Object.keys(product)) if(!['purchasePrice','minPrice','servicePurchasePrice','serviceMinPrice'].includes(key)) product[key]=current[key];
       const validationError = catalogProductError(productType, product);
       if (validationError) {
         return response.status(400).json({ error: validationError });
@@ -1760,7 +1809,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
       });
       return response.json({
         revision,
-        catalog: await buildRuntimeCatalog(database),
+        catalog: visibleCatalog(await buildRuntimeCatalog(database),request.auth.user),
       });
     },
   );
@@ -1786,8 +1835,8 @@ export async function createApplication({ store, useMemory = false } = {}) {
       email,
       passwordHash: await bcrypt.hash(password, 12),
       fullName,
-      role: "admin",
-      roles: ["admin"],
+      role: email===SUPER_EMAIL ? "superadmin" : "admin",
+      roles: email===SUPER_EMAIL ? ["superadmin","admin"] : ["admin"],
       clientName: "",
       active: true,
       mustChangePassword: false,
@@ -1814,6 +1863,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
         error: "Primero debe crearse la cuenta administradora del sistema.",
       });
     }
+    if(normalizeEmail(request.body.email)===SUPER_EMAIL) return response.status(403).json({error:"Este correo está reservado para el superadministrador."});
     const input = normalizeUserInput({
       ...request.body,
       role: "cliente",
@@ -1914,7 +1964,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
     response.status(204).end();
   });
 
-  app.get("/api/users", authenticate, adminOnly, async (_request, response) => {
+  app.get("/api/users", authenticate, superOnly, async (_request, response) => {
     response.json({ users: (await database.listUsers()).map(publicUser) });
   });
 
@@ -1938,7 +1988,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
     });
   });
 
-  app.post("/api/users", authenticate, csrf, adminOnly, async (request, response) => {
+  app.post("/api/users", authenticate, csrf, superOnly, async (request, response) => {
     const input = normalizeUserInput(request.body);
     const validationError = userInputError(input);
     if (validationError) {
@@ -1975,7 +2025,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
     "/api/users/bulk",
     authenticate,
     csrf,
-    adminOnly,
+    superOnly,
     async (request, response) => {
       const entries = Array.isArray(request.body.users)
         ? request.body.users
@@ -2071,7 +2121,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
     "/api/users/:id",
     authenticate,
     csrf,
-    adminOnly,
+    superOnly,
     async (request, response) => {
       const current = await database.getUser(request.params.id);
       if (!current) return response.status(404).json({ error: "Usuario no encontrado." });
@@ -2113,7 +2163,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
           });
         }
         changes.roles = roles;
-        changes.role = roles.includes("admin") ? "admin" : roles[0];
+        changes.role = roles.includes("superadmin") ? "superadmin" : roles.includes("admin") ? "admin" : roles[0];
       }
       if (request.body.active !== undefined) changes.active = Boolean(request.body.active);
       if (request.body.password) {
@@ -2123,6 +2173,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
         changes.passwordHash = await bcrypt.hash(String(request.body.password), 12);
         changes.mustChangePassword = true;
       }
+      if(current.email===SUPER_EMAIL && (changes.active===false || (changes.roles&&!changes.roles.includes('superadmin')))) throw fail('La cuenta principal debe conservar su acceso de superadministrador.');
       const user = await database.updateUser(current.id, changes);
       return response.json({ user: publicUser(user) });
     },
@@ -2164,7 +2215,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
     "/api/material-images/import",
     authenticate,
     csrf,
-    adminOnly,
+    productsOnly,
     express.raw({ type: ["application/zip", "application/x-zip-compressed"], limit: "80mb" }),
     async (request, response) => {
       if (!Buffer.isBuffer(request.body) || !request.body.length) {
@@ -2210,7 +2261,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
     "/api/material-images/:sku",
     authenticate,
     csrf,
-    adminOnly,
+    productsOnly,
     express.raw({ type: ["image/jpeg", "image/png", "image/webp"], limit: "2.5mb" }),
     async (request, response) => {
       if (!Buffer.isBuffer(request.body) || !request.body.length) {
@@ -2276,6 +2327,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
         },
         null,
       );
+      record.payload.settings={...record.payload.settings,calculationVersion:"5.0",kerf:3,perimeterTrim:10,neolithTrim:30};
       record.id = randomUUID();
       record.ownerId = null;
       record.project.status = "cotizacion";
@@ -2329,6 +2381,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
         record.payload.settings,
       );
       record.summary = result.summary;
+      await prepareProjectV5(record, typeof current !== 'undefined' ? current : null, request.auth?.user||null, catalog, mergeConfig(await database.getV5('config')), database, request.body);
       const saved = await database.saveProject(record);
       await announceNewQuote(saved, {
         fullName: `${contact.name} (Visitante)`,
@@ -2366,7 +2419,9 @@ export async function createApplication({ store, useMemory = false } = {}) {
         error: "Producción puede revisar todos los proyectos, pero no crear cotizaciones.",
       });
     }
+    if(!permitted(request.auth.user,"quote")) throw fail("Tu perfil no puede crear cotizaciones.",403);
     const record = projectRecord(request.body, request.auth.user.id);
+    record.payload.settings={...record.payload.settings,calculationVersion:"5.0",kerf:3,perimeterTrim:10,neolithTrim:30};
     record.id = randomUUID();
     if (!record.project.clientName) {
       return response.status(400).json({ error: "El nombre del cliente es obligatorio." });
@@ -2399,7 +2454,8 @@ export async function createApplication({ store, useMemory = false } = {}) {
       return response.status(400).json({ error: assignmentError });
     }
     record.project.status = "cotizacion";
-    const saved = await database.saveProject(record);
+    await prepareProjectV5(record, typeof current !== 'undefined' ? current : null, request.auth?.user||null, catalog, mergeConfig(await database.getV5('config')), database, request.body);
+      const saved = await database.saveProject(record);
     await announceNewQuote(saved, request.auth.user);
     return response.status(201).json({ project: saved });
   });
@@ -2436,6 +2492,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
     const productionChanged =
       projectProductionSignature(record.payload) !==
       projectProductionSignature(current);
+    if(calculationSignature(record.payload)!==calculationSignature(current) && userHasRole(request.auth.user,'logistica') && !['admin','produccion','comercial'].some(role=>userHasRole(request.auth.user,role))) throw fail('Logística puede actualizar la entrega, pero no el cálculo.',403);
     const dimensionError = productionChanged
       ? projectDimensionError(record, catalog.materials, catalog.edgeBands)
       : "";
@@ -2491,7 +2548,8 @@ export async function createApplication({ store, useMemory = false } = {}) {
     const enteredPaid =
       current.project.status !== "facturado_pagado" &&
       record.project.status === "facturado_pagado";
-    const saved = await database.saveProject(record);
+    await prepareProjectV5(record, typeof current !== 'undefined' ? current : null, request.auth?.user||null, catalog, mergeConfig(await database.getV5('config')), database, request.body);
+      const saved = await database.saveProject(record);
     for (const collaboratorId of addedCollaborators) {
       await database.createNotification({
         id: randomUUID(),
@@ -2553,7 +2611,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
     "/api/projects/:id",
     authenticate,
     csrf,
-    adminOnly,
+    superOnly,
     async (request, response) => {
       const current = await database.getProject(request.params.id);
       if (!current) {
@@ -2638,8 +2696,8 @@ export async function createApplication({ store, useMemory = false } = {}) {
   }
 
   app.use((error, _request, response, _next) => {
-    console.error(error);
-    response.status(500).json({ error: "Ocurrió un error interno." });
+    if(!error.status || error.status>=500) console.error(error);
+    response.status(error.status||500).json({ error: error.status ? error.message : "Ocurrió un error interno." });
   });
 
   return { app, store: database };
