@@ -1,13 +1,14 @@
-V5.0.0 - ACTUALIZACIÓN DEL SERVICIO EXISTENTE
+V5.1.0 - ACTUALIZACIÓN DEL SERVICIO EXISTENTE
 
-Lee ACTUALIZACION_V5.0.0.md antes de cargar los archivos.
+Lee ACTUALIZACION_V5.1.0.md.
 Descomprime el ZIP y carga su contenido en la raíz del repositorio actual.
-Conserva el mismo servicio de Render y la misma DATABASE_URL.
-No crees otra base ni elimines tablas o registros.
+Conserva el servicio de Render y la misma DATABASE_URL.
+Incluye los catálogos anterior y nuevo; no elimines tablas ni registros.
 
 Build: npm ci --include=dev && npm test && npm run build
 Start: npm start
 Node: 24
+Health: /api/health -> version 5.1.0, database postgresql
 
-El paquete incluye código, catálogo, pruebas y documentación.
-No incluye tus pedidos productivos ni modifica el servicio hasta su despliegue.
+El paquete incluye código, Excel fuente, pruebas y documentación.
+No contiene pedidos productivos ni despliega el servicio automáticamente.

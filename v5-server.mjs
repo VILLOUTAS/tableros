@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { optimizeProject, isStoneMaterial, createEdgeCodeMap } from './src/logic.js';
 import { V5, mergeConfig, permitted, stripCosts, publicCatalogItem, calculateFreight, monthlyDashboard, calculationSignature } from './src/v5-domain.js';
+import { kerfValue, updateQuoteProducts, effectiveConfig, SERVICE_KEYS } from './src/v51-domain.js';
 
 export const SUPER_EMAIL = 'edmundo@villoutas.cl';
 export const fail = (message,status=400) => Object.assign(new Error(message),{status});
@@ -13,7 +14,7 @@ export async function initializeV5(db) {
       ALTER TABLE app_users DROP CONSTRAINT IF EXISTS app_users_role_check;
       ALTER TABLE app_users ADD CONSTRAINT app_users_role_check CHECK(role IN ('superadmin','admin','comercial','produccion','instalacion','logistica','supervisor','finanzas','cliente'));
       ALTER TABLE catalog_product_revisions DROP CONSTRAINT IF EXISTS catalog_product_revisions_product_type_check;
-      ALTER TABLE catalog_product_revisions ADD CONSTRAINT catalog_product_revisions_product_type_check CHECK(product_type IN ('board','edge','accessory'));
+      ALTER TABLE catalog_product_revisions ADD CONSTRAINT catalog_product_revisions_product_type_check CHECK(product_type IN ('board','edge','accessory','service'));
       ALTER TABLE projects ADD COLUMN IF NOT EXISTS row_version BIGINT NOT NULL DEFAULT 0;
       CREATE TABLE IF NOT EXISTS v5_documents (id TEXT PRIMARY KEY,payload JSONB NOT NULL,updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
       UPDATE app_users SET role='superadmin',roles=array_append(roles,'superadmin')
@@ -32,11 +33,12 @@ export async function initializeV5(db) {
   }
 }
 export function visibleCatalog(catalog,user) {
-  return {...catalog,materials:catalog.materials.map(i=>publicCatalogItem(i,user)),edgeBands:catalog.edgeBands.map(i=>publicCatalogItem(i,user)),accessories:(catalog.accessories||[]).map(i=>publicCatalogItem(i,user))};
+  return {...catalog,materials:catalog.materials.map(i=>publicCatalogItem(i,user)),edgeBands:catalog.edgeBands.map(i=>publicCatalogItem(i,user)),accessories:(catalog.accessories||[]).map(i=>publicCatalogItem(i,user)),services:(catalog.services||[]).map(i=>publicCatalogItem(i,user))};
 }
 export function settingsV5(settings, config, user) {
   const c=mergeConfig(config);
-  const clean={calculationVersion:V5,bladeThickness:3,kerf:3,perimeterTrim:10,neolithTrim:30,
+  const kerf=kerfValue(settings?.kerf,c.defaultKerf??3);
+  const clean={calculationVersion:V5,kerf,edgeWastePercent:2,includeStoneMaterial:settings?.includeStoneMaterial===true,perimeterTrim:10,neolithTrim:30,
     optimizationMode:['longitudinal','free'].includes(settings?.optimizationMode)?settings.optimizationMode:'longitudinal'};
   for(const [key,policy] of Object.entries(c.services)) clean[key]=Number(policy.price)||0;
   clean.servicePolicies=structuredClone(c.services);
@@ -44,7 +46,7 @@ export function settingsV5(settings, config, user) {
   return clean;
 }
 function selectedSnapshot(p,catalog) {
-  const selected=p.materialIds.map(id=>catalog.materials.find(m=>m.id===id)).filter(Boolean).map(m=>({...m,name:p.materialCustomizations?.[m.id]?.color||m.name,netPrice:isStoneMaterial(m)?0:m.netPrice}));
+  const selected=p.materialIds.map(id=>catalog.materials.find(m=>m.id===id)).filter(Boolean).map(m=>({...m,name:m.customColor?p.materialCustomizations?.[m.id]?.color||m.name:m.name,netPrice:isStoneMaterial(m)&&!p.settings?.includeStoneMaterial?0:m.netPrice}));
   const edgeIds=new Set(p.pieces.flatMap(piece=>Object.values(piece.edges||{})).filter(Boolean));
   return {materials:selected,edgeBands:catalog.edgeBands.filter(e=>edgeIds.has(e.id))};
 }
@@ -85,12 +87,19 @@ export async function prepareProjectV5(record,current,user,catalog,config,db,bod
       p.history.push({...archive,archivedAt:new Date().toISOString(),archivedBy:user?.id||null});
       p.revisionNo=(current.revisionNo||1)+1;
     }
-    p.settings=settingsV5(p.settings,config,user);
+    updateQuoteProducts(p,catalog.materials,catalog.edgeBands);
+    p.settings=settingsV5(p.settings,effectiveConfig(config,catalog.services),user);
     p.priceSnapshot=selectedSnapshot(p,catalog);
+    for(const edge of p.priceSnapshot.edgeBands){
+      const key=Object.keys(SERVICE_KEYS).find(k=>SERVICE_KEYS[k]===edge.serviceSku);
+      const policy=key&&p.settings.servicePolicies[key];
+      if(policy){edge.serviceRate=policy.price;edge.serviceMinPrice=policy.minPrice;edge.servicePurchasePrice=policy.purchasePrice;delete edge.serviceDiscountLimit;}
+    }
     for(const m of p.priceSnapshot.materials) {
+      if(!(m.plateLength>0&&m.plateWidth>0&&m.thickness>0))throw fail(`Completa las dimensiones y el espesor de ${m.sku} en Catálogo.`);
       const previouslySelected=current?.materialIds?.includes(m.id);
       if(m.active===false && !previouslySelected) throw fail(`El producto ${m.sku} está inactivo.`);
-      if(!isStoneMaterial(m)&&!(m.netPrice>0)) throw fail(`Configura el precio de venta de ${m.sku} antes de cotizar.`);
+      if((!isStoneMaterial(m)||p.settings.includeStoneMaterial)&&!(m.netPrice>0)) throw fail(`Configura el precio de venta de ${m.sku} antes de cotizar.`);
     }
     p.calculationSnapshot=optimizeProject(p.priceSnapshot.materials,p.pieces,p.priceSnapshot.edgeBands,p.settings);
     if(p.calculationSnapshot.warnings?.length) throw fail(p.calculationSnapshot.warnings.join(' '));
@@ -117,13 +126,15 @@ export async function prepareProjectV5(record,current,user,catalog,config,db,bod
   return record;
 }
 
-export function registerV5Routes(app,{db,authenticate,csrf,canReadProject}) {
+export function registerV5Routes(app,{db,authenticate,csrf,canReadProject,loadConfig}) {
+  const getConfig=loadConfig|| (async()=>mergeConfig(await db.getV5('config')));
   const allowed=action=>(req,res,next)=>permitted(req.auth.user,action)?next():res.status(403).json({error:'Tu perfil no permite esta operación.'});
   const publicConfig=(config,user)=>({...config,services:Object.fromEntries(Object.entries(config.services).map(([key,policy])=>[key,publicCatalogItem(policy,user)]))});
-  app.get('/api/v5/config',authenticate,async(req,res)=>res.json(stripCosts(publicConfig(mergeConfig(await db.getV5('config')),req.auth.user),req.auth.user)));
-  app.get('/api/v5/public-config',async(req,res)=>res.json(stripCosts(publicConfig(mergeConfig(await db.getV5('config')),null),null)));
+  app.get('/api/v5/config',authenticate,async(req,res)=>res.json(stripCosts(publicConfig(await getConfig(),req.auth.user),req.auth.user)));
+  app.get('/api/v5/public-config',async(req,res)=>res.json(stripCosts(publicConfig(await getConfig(),null),null)));
   app.patch('/api/v5/config',authenticate,csrf,async(req,res)=>{
     const current=mergeConfig(await db.getV5('config')),b=req.body||{},user=req.auth.user;
+    if(b.defaultKerf!==undefined)b.defaultKerf=kerfValue(b.defaultKerf);
     if(b.taxonomy && !permitted(user,'categories')) throw fail('Sin permiso para modificar categorías.',403);
     if(Object.keys(b).some(k=>!['taxonomy','services','version'].includes(k))&&!permitted(user,'settings')) throw fail('Solo el superadministrador puede configurar despachos e indicadores.',403);
     if(b.services&&!permitted(user,'salesPrices')&&!permitted(user,'costs'))throw fail('Sin permiso para modificar servicios.',403);

@@ -1,11 +1,12 @@
-export const V5 = '5.0';
+import { RELEASE, internalUser } from './v51-domain.js';
+export const V5 = RELEASE;
 export function calculationSignature(p={}) {
   const settings=p.settings||{};
   return JSON.stringify({materialIds:p.materialIds?.length?p.materialIds:[p.materialId],
     custom:Object.entries(p.materialCustomizations||{}).sort(([a],[b])=>a.localeCompare(b)),
     pieces:(p.pieces||[]).map(x=>[x.materialId||p.materialId,Number(x.length),Number(x.width),Number(x.quantity),x.grain,x.measurementMode||'finished',
       ['top','bottom','left','right'].map(side=>x.edges?.[side]||null),['top','bottom','left','right'].map(side=>x.finishes?.[side]||'rough')]),
-    settings:['calculationVersion','kerf','perimeterTrim','neolithTrim','optimizationMode','boardDiscount','edgeDiscount','servicesDiscount','melamineCutRate','specialCutRate','stoneCutPerPlateRate','stoneBevelRate','stoneMiter45Rate'].map(k=>[k,settings[k]??null])});
+    settings:['calculationVersion','kerf','perimeterTrim','neolithTrim','optimizationMode','boardDiscount','edgeDiscount','servicesDiscount','melamineCutRate','specialCutRate','stoneCutPerPlateRate','stoneBevelRate','stoneMiter45Rate','includeStoneMaterial','acrylicCutRate','styleliteCutRate'].map(k=>[k,settings[k]??null])});
 }
 export const ROLE_LABELS = {
   superadmin: 'Superadministrador', admin: 'Administrador', comercial: 'Comercial',
@@ -20,7 +21,7 @@ export function permitted(user, action) {
     users: [], settings: [], costs: ['finanzas'], reports: ['admin','finanzas','supervisor','comercial','produccion','logistica'],
     catalog: ['admin','produccion','finanzas'], categories: ['admin'], salesPrices: ['admin'],
     products: ['admin','produccion'], quote: ['admin','comercial','cliente'], discount: ['admin','comercial'],
-    dispatch: ['admin','logistica','produccion'], allProjects: ['admin','produccion','logistica','supervisor','finanzas'],
+    dispatch: ['admin','logistica','produccion'], allProjects: ['admin','produccion','logistica','supervisor','finanzas','comercial','instalacion'],
   };
   return (grants[action] || []).some(r => roles.includes(r));
 }
@@ -116,12 +117,13 @@ export function publicCatalogItem(item,user) {
   copy.discountLimit=permitted(user,'discount')?discountLimit(Number(item.netPrice??item.price)||0,item):0;
   copy.serviceDiscountLimit=permitted(user,'discount')?discountLimit(Number(item.serviceRate)||0,{minPrice:item.serviceMinPrice,purchasePrice:item.servicePurchasePrice}):0;
   if(!permitted(user,'costs')) for(const key of ['purchasePrice','minPrice','servicePurchasePrice','serviceMinPrice']) delete copy[key];
+  if(!internalUser(user)) for(const key of ['supplierCode','sourceId','originCode','barcode']) delete copy[key];
   return copy;
 }
 export function stripCosts(value,user) {
   if(permitted(user,'costs'))return value;
   if(value instanceof Date)return value;
   if(Array.isArray(value))return value.map(x=>stripCosts(x,user));
-  if(value && typeof value==='object')return Object.fromEntries(Object.entries(value).filter(([key])=>!['purchasePrice','minPrice','servicePurchasePrice','serviceMinPrice','costSnapshot'].includes(key)).map(([key,v])=>[key,stripCosts(v,user)]));
+  if(value && typeof value==='object')return Object.fromEntries(Object.entries(value).filter(([key])=>!['purchasePrice','minPrice','servicePurchasePrice','serviceMinPrice','costSnapshot',...(!internalUser(user)?['supplierCode','sourceId','originCode','barcode']:[])].includes(key)).map(([key,v])=>[key,stripCosts(v,user)]));
   return value;
 }

@@ -1,3 +1,5 @@
+import {initializeV51,registerV51Routes} from './v51-server.mjs';
+import {effectiveConfig,kerfValue,RELEASE} from './src/v51-domain.js';
 import { initializeV5, prepareProjectV5, registerV5Routes, visibleCatalog, SUPER_EMAIL, fail } from './v5-server.mjs';
 import { ROLE_LABELS, mergeConfig, permitted, stripCosts, taxonomyPaths, calculationSignature } from './src/v5-domain.js';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
@@ -12,7 +14,7 @@ import helmet from "helmet";
 import pg from "pg";
 import unzipper from "unzipper";
 
-import { categories as baseCategories, edgeBands, materials } from "./src/data.js";
+import { categories as baseCategories, edgeBands, materials, services as baseServices, catalog51 } from "./src/data.js";
 import {
   isStoneMaterial,
   optimizeProject,
@@ -235,7 +237,7 @@ function catalogNumber(value, fallback = 0) {
 }
 
 function catalogExtra(source) {
-  return {active:source.active!==false,supplier:String(source.supplier||''),stock:source.stock===''||source.stock==null?null:catalogNumber(source.stock),
+  return {catalogRelease:'5.1',imageKey:String(source.imageKey||('foto-v51-'+source.sku)),unit:String(source.unit||'unidad'),cutServiceKey:String(source.cutServiceKey||''),serviceSku:String(source.serviceSku||''),customColor:!!source.customColor,active:source.active!==false,supplier:String(source.supplier||''),stock:source.stock===''||source.stock==null?null:catalogNumber(source.stock),
     colorName:String(source.colorName||''),format:String(source.format||''),taxonomyId:String(source.taxonomyId||''),materialType:String(source.materialType||'board'),
     serviceMinPrice:catalogNumber(source.serviceMinPrice),servicePurchasePrice:catalogNumber(source.servicePurchasePrice),
     perimeterTrim:Math.max(0,catalogNumber(source.perimeterTrim,source.materialType==='stone'||source.materialType==='neolith'?30:10))};
@@ -244,7 +246,7 @@ function normalizeCatalogProduct(productType, body = {}, current = {}) {
   const source = { ...current, ...body };
   const sku = String(source.sku || "").trim();
   const name = String(source.name || "").trim();
-  if(productType==='accessory')return {...catalogExtra(source),sku,name,description:String(source.description||''),categoryId:String(source.categoryId||'bisagras'),categoryName:String(source.categoryName||'Herrajes'),plateLength:catalogNumber(source.plateLength),plateWidth:catalogNumber(source.plateWidth),thickness:catalogNumber(source.thickness),netPrice:catalogNumber(source.netPrice),minPrice:catalogNumber(source.minPrice),purchasePrice:catalogNumber(source.purchasePrice),image:String(source.image||'')};
+  if(['accessory','service'].includes(productType))return {...catalogExtra(source),sku,name,description:String(source.description||''),categoryId:String(source.categoryId||'bisagras'),categoryName:String(source.categoryName||'Herrajes'),plateLength:catalogNumber(source.plateLength),plateWidth:catalogNumber(source.plateWidth),thickness:catalogNumber(source.thickness),netPrice:catalogNumber(source.netPrice),minPrice:catalogNumber(source.minPrice),purchasePrice:source.purchasePrice==null||source.purchasePrice===''?null:catalogNumber(source.purchasePrice),image:String(source.image||''),supplierCode:String(source.supplierCode||'')};
   if (productType === "board") {
     const categoryName = String(
       source.categoryName || source.sourceCategory || "",
@@ -274,7 +276,7 @@ function normalizeCatalogProduct(productType, body = {}, current = {}) {
       thickness: catalogNumber(source.thickness),
       netPrice: Math.round(catalogNumber(source.netPrice)),
       minPrice: Math.round(catalogNumber(source.minPrice)),
-      purchasePrice: Math.round(catalogNumber(source.purchasePrice)),
+      purchasePrice: source.purchasePrice==null||source.purchasePrice===''?null:Math.round(catalogNumber(source.purchasePrice)),
       supplierCode: String(source.supplierCode || "").trim(),
       sourceId: String(source.sourceId || "").trim(),
       image: String(source.image || `/materiales/${catalogSlug(sku)}.jpg`),
@@ -297,7 +299,7 @@ function normalizeCatalogProduct(productType, body = {}, current = {}) {
     color: String(source.color || "#334155"),
     price: Math.round(catalogNumber(source.price)),
     minPrice: Math.round(catalogNumber(source.minPrice)),
-    purchasePrice: Math.round(catalogNumber(source.purchasePrice)),
+    purchasePrice: source.purchasePrice==null||source.purchasePrice===''?null:Math.round(catalogNumber(source.purchasePrice)),
     supplierCode: String(source.supplierCode || "").trim(),
     serviceRate: Math.round(catalogNumber(source.serviceRate)),
     style: String(source.style || "solid"),
@@ -307,7 +309,7 @@ function normalizeCatalogProduct(productType, body = {}, current = {}) {
 function catalogProductError(productType, product) {
   if (!product.sku) return "El código SKU es obligatorio.";
   if (!product.name) return "El nombre del producto es obligatorio.";
-  if(productType==='accessory')return product.netPrice<0||product.minPrice<0||product.purchasePrice<0?'Los precios no pueden ser negativos.':'';
+  if(['accessory','service'].includes(productType))return product.netPrice<0||product.minPrice<0||product.purchasePrice<0?'Los precios no pueden ser negativos.':'';
   if (productType === "board") {
     if (!product.categoryId || !product.categoryName) {
       return "La categoría del tablero es obligatoria.";
@@ -319,6 +321,7 @@ function catalogProductError(productType, product) {
     ) {
       return "Las medidas y el espesor del tablero deben ser mayores que cero.";
     }
+    if(product.plateLength<=2*product.perimeterTrim||product.plateWidth<=2*product.perimeterTrim)return "El despunte debe dejar una superficie útil positiva.";
     if (
       product.netPrice < 0 ||
       product.minPrice < 0 ||
@@ -338,6 +341,8 @@ function catalogProductError(productType, product) {
 
 async function buildRuntimeCatalog(database) {
   const revisions = await database.listCatalogRevisions();
+  const archive=await database.getV5('v51:catalog-migration');
+  const archivedIds=new Set(archive?.revisionIds||[]);
   const replacedIds = new Set(
     revisions.map((revision) => revision.replacesId).filter(Boolean),
   );
@@ -361,7 +366,8 @@ async function buildRuntimeCatalog(database) {
     .map((revision) => ({
       ...revision.payload,
       id: revision.id,
-      active: revision.active && revision.payload.active!==false,
+      active: revision.active && revision.payload.active!==false && !replacedIds.has(revision.id) && !archivedIds.has(revision.id),
+      legacyCatalog:archivedIds.has(revision.id),
       replacesId: revision.replacesId,
       createdAt: revision.createdAt,
       catalogSource: "administracion",
@@ -371,13 +377,19 @@ async function buildRuntimeCatalog(database) {
     .map((revision) => ({
       ...revision.payload,
       id: revision.id,
-      active: revision.active && revision.payload.active!==false,
+      active: revision.active && revision.payload.active!==false && !replacedIds.has(revision.id) && !archivedIds.has(revision.id),
+      legacyCatalog:archivedIds.has(revision.id),
       replacesId: revision.replacesId,
       createdAt: revision.createdAt,
       catalogSource: "administracion",
     }));
   const allMaterials = [...baseBoards, ...revisionBoards];
   const allEdgeBands = [...baseEdges, ...revisionEdges];
+  for(const collection of [allMaterials,allEdgeBands])for(const item of collection.filter(i=>i.legacyCatalog&&i.replacesId)){
+    let parent=collection.find(i=>i.id===item.replacesId),seen=new Set();
+    while(parent?.replacesId&&!seen.has(parent.id)){seen.add(parent.id);parent=collection.find(i=>i.id===parent.replacesId);}
+    if(parent?.successorId&&parent.sku===item.sku)item.successorId=parent.successorId;
+  }
   const taxonomy=taxonomyPaths(mergeConfig(await database.getV5('config')).taxonomy);
   for(const item of [...allMaterials,...allEdgeBands])if(taxonomy.find(n=>n.id===item.taxonomyId)?.active===false)item.active=false;
   const categoryMap = new Map(
@@ -400,7 +412,13 @@ async function buildRuntimeCatalog(database) {
     ).length,
   }));
   const accessories=revisions.filter(r=>r.productType==='accessory').map(r=>({...r.payload,id:r.id,active:r.active&&r.payload.active!==false,replacesId:r.replacesId,createdAt:r.createdAt}));
-  return { categories, materials: allMaterials, edgeBands: allEdgeBands, accessories };
+  const serviceItems=[...baseServices.map(s=>({...s,active:s.active!==false&&!replacedIds.has(s.id)})),...revisions.filter(r=>r.productType==='service').map(r=>({...r.payload,id:r.id,active:r.active&&r.payload.active!==false&&!replacedIds.has(r.id),replacesId:r.replacesId}))];
+  for(const s of serviceItems)if(taxonomy.find(n=>n.id===s.taxonomyId)?.active===false)s.active=false;
+  for(const edge of allEdgeBands.filter(e=>!e.legacyCatalog)){
+    const service=serviceItems.find(s=>s.sku===edge.serviceSku&&s.active!==false);
+    if(service){edge.serviceRate=service.netPrice;edge.serviceMinPrice=service.minPrice;edge.servicePurchasePrice=service.purchasePrice;}
+  }
+  return { categories, materials: allMaterials, edgeBands: allEdgeBands, accessories, services:serviceItems }; 
 }
 
 function normalizeImageKey(value = "") {
@@ -1406,7 +1424,7 @@ function projectDimensionError(
       const color = String(
         record.payload.materialCustomizations?.[materialId]?.color || "",
       ).trim();
-      if (!color) {
+      if (!color && material.customColor!==false) {
         return `El formato Neolith ${material?.sku || materialId} requiere el nombre del color.`;
       }
       const invalidPiece = pieces.find(
@@ -1490,6 +1508,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
         : new MemoryStore());
   await database.init();
   await initializeV5(database);
+  await initializeV51(database);
 
   const app = express();
   app.set("trust proxy", 1);
@@ -1593,7 +1612,8 @@ export async function createApplication({ store, useMemory = false } = {}) {
     res.set('Cache-Control','no-store');
     next();
   });
-  registerV5Routes(app,{db:database,authenticate,csrf,canReadProject});
+  registerV5Routes(app,{db:database,authenticate,csrf,canReadProject,loadConfig:async()=>effectiveConfig(mergeConfig(await database.getV5('config')),(await buildRuntimeCatalog(database)).services)});
+  registerV51Routes(app,{db:database,authenticate,csrf,buildCatalog:()=>buildRuntimeCatalog(database),normalizeCatalogProduct,catalogProductError});
 
   const createSession = async (response, user) => {
     const token = randomBytes(32).toString("base64url");
@@ -1698,7 +1718,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
   };
 
   app.get("/api/health", (_request, response) => {
-    response.json({ ok: true, database: databaseUrl ? "postgresql" : "memoria-local" });
+    response.json({ ok: true, version:'5.1.0', database: databaseUrl ? "postgresql" : "memoria-local" });
   });
 
   app.get("/api/catalog", async (_request, response) => {
@@ -1720,7 +1740,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
     csrf,
     catalogOnly,
     async (request, response) => {
-      const productType = ["board","edge","accessory"].includes(request.body.productType) ? request.body.productType : "board";
+      const productType = ["board","edge","accessory","service"].includes(request.body.productType) ? request.body.productType : "board";
       if(!permitted(request.auth.user,'products')) throw fail('No tienes permiso para crear productos.',403);
       const product = normalizeCatalogProduct(productType, request.body.product);
       if(!permitted(request.auth.user,'costs')) {product.purchasePrice=0;product.minPrice=0;product.servicePurchasePrice=0;product.serviceMinPrice=0;}
@@ -1730,7 +1750,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
         return response.status(400).json({ error: validationError });
       }
       const catalog = await buildRuntimeCatalog(database);
-      const collection = productType === "board" ? catalog.materials : productType === "edge" ? catalog.edgeBands : catalog.accessories;
+      const collection = productType === "board" ? catalog.materials : productType === "edge" ? catalog.edgeBands : productType === "service" ? catalog.services : catalog.accessories;
       if (
         collection.some(
           (item) =>
@@ -1763,9 +1783,9 @@ export async function createApplication({ store, useMemory = false } = {}) {
     csrf,
     catalogOnly,
     async (request, response) => {
-      const productType = ["board","edge","accessory"].includes(request.params.productType) ? request.params.productType : "board";
+      const productType = ["board","edge","accessory","service"].includes(request.params.productType) ? request.params.productType : "board";
       const catalog = await buildRuntimeCatalog(database);
-      const collection = productType === "board" ? catalog.materials : productType === "edge" ? catalog.edgeBands : catalog.accessories;
+      const collection = productType === "board" ? catalog.materials : productType === "edge" ? catalog.edgeBands : productType === "service" ? catalog.services : catalog.accessories;
       const current = collection.find((item) => item.id === request.params.id);
       if (!current) {
         return response.status(404).json({ error: "Producto no encontrado." });
@@ -2327,7 +2347,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
         },
         null,
       );
-      record.payload.settings={...record.payload.settings,calculationVersion:"5.0",kerf:3,perimeterTrim:10,neolithTrim:30};
+      record.payload.settings={...record.payload.settings,calculationVersion:RELEASE,kerf:kerfValue(record.payload.settings?.kerf),perimeterTrim:10,neolithTrim:30};
       record.id = randomUUID();
       record.ownerId = null;
       record.project.status = "cotizacion";
@@ -2421,7 +2441,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
     }
     if(!permitted(request.auth.user,"quote")) throw fail("Tu perfil no puede crear cotizaciones.",403);
     const record = projectRecord(request.body, request.auth.user.id);
-    record.payload.settings={...record.payload.settings,calculationVersion:"5.0",kerf:3,perimeterTrim:10,neolithTrim:30};
+    record.payload.settings={...record.payload.settings,calculationVersion:RELEASE,kerf:kerfValue(record.payload.settings?.kerf),perimeterTrim:10,neolithTrim:30};
     record.id = randomUUID();
     if (!record.project.clientName) {
       return response.status(400).json({ error: "El nombre del cliente es obligatorio." });

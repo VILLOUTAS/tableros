@@ -20,7 +20,7 @@ test("el catálogo administrativo es exclusivo y conserva revisiones usadas por 
     assert.equal(publicCatalog.response.status, 200);
     assert.equal(
       publicCatalog.body.materials.filter((item) => item.active !== false).length,
-      149,
+      299,
     );
 
     const setup = await request(base, "/api/auth/setup", {

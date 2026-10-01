@@ -456,7 +456,7 @@ test("las consultas por perfil solo envían parámetros cuando el SQL los usa", 
   );
   assert.deepEqual(
     projectVisibility({ id: "comercial-1", role: "comercial" }).params,
-    ["comercial-1"],
+    [],
   );
 });
 
@@ -953,7 +953,7 @@ test("separa cotizaciones de tableros y placas y guarda el tipo elegido", async 
         workType: "boards",
         project: { clientName: "Flujo mezclado" },
         materialId: "62-egger-1502-1",
-        materialIds: ["62-egger-1502-1", "neolith-12-1600x3200"],
+        materialIds: ["62-egger-1502-1", "v51-15-2022-1009"],
         pieces: [{
           id: "pieza-tablero",
           materialId: "62-egger-1502-1",
@@ -974,10 +974,10 @@ test("separa cotizaciones de tableros y placas y guarda el tipo elegido", async 
       body: JSON.stringify({
         workType: "slabs",
         project: { clientName: "Proyecto Neolith" },
-        materialId: "neolith-12-1600x3200",
-        materialIds: ["neolith-12-1600x3200"],
+        materialId: "v51-15-2022-1009",
+        materialIds: ["v51-15-2022-1009"],
         materialCustomizations: {
-          "neolith-12-1600x3200": { color: "Calacatta Luxe" },
+          "v51-15-2022-1009": { color: "Calacatta Luxe" },
         },
         settings: {
           calculationVersion: "4.1",
@@ -986,7 +986,7 @@ test("separa cotizaciones de tableros y placas y guarda el tipo elegido", async 
         },
         pieces: [{
           id: "pieza-neolith",
-          materialId: "neolith-12-1600x3200",
+          materialId: "v51-15-2022-1009",
           length: 3200,
           width: 1600,
           quantity: 1,

@@ -1,175 +1,160 @@
-# Casa Diseño · Optimizador V5.0.0
+# Casa Diseño · Optimizador V5.1.0
 
-Actualización de V4.1 para el repositorio y servicio existentes. Mantiene los
-pedidos, usuarios, fotografías y cotizaciones en la misma base PostgreSQL.
-**Para instalar, lee `ACTUALIZACION_V5.0.0.md`.**
+Actualización de V5.0.0 para el repositorio y servicio existentes.
+Para instalar, lee **ACTUALIZACION_V5.1.0.md**. Mantén la misma base PostgreSQL.
 
-## Interfaz y módulos
+## CRM, proyectos y agendas
 
-- Panel general con accesos a Tableros, Placas y Despachos, selección de mes,
-  venta neta por comercial/familia y cantidades producidas.
-- Navegación superior general; barra lateral solo dentro de una cotización.
-- Un proyecto contiene cotizaciones independientes de Tableros y Placas.
-  En Proyectos → + Cotización se agrega otra al mismo proyecto.
-- Próximamente: Herrajes, Armado, Amoblamiento, Remodelación, Producción,
-  Instalaciones y Otros. Las fichas de herrajes ya se pueden administrar.
-- La agenda y los estados de producción existentes se conservan en el menú
-  de usuario → Agenda de pedidos, mientras se prepara el módulo ampliado.
+- **CRM de Producción** en la barra principal para todos los perfiles internos.
+  Clientes y visitas no tienen acceso, ni desde la interfaz ni desde la API.
+- Vistas **Por estados** y **Calendario**. El calendario ubica cada trabajo en
+  su fecha de inicio; permite cambiar el mes y consultar trabajos sin programar.
+- Tres agendas independientes: **Tableros**, **Placas** e **Instalaciones**.
+  Tableros y Placas admiten trabajos de dimensionado y servicios asociados a
+  sus cotizaciones. Instalaciones admite cotizaciones de ambas familias.
+- Cada trabajo guarda proyecto, cotizaciones, inicio, término, responsable,
+  observaciones y estado: Programado, En ejecución, Terminado o Anulado.
+- La programación está separada de la nota de venta. Cambiar una fecha o el
+  estado del trabajo no cambia facturación, importes ni estado comercial.
+- Administración programa las tres agendas; Producción programa Tableros y
+  Placas; Instalación programa Instalaciones. Los demás internos consultan.
+- El buscador general encuentra cliente, comercial, nombre de proyecto,
+  cotización y código. Ignora diferencias de mayúsculas y tildes.
+- Un proyecto puede contener varias cotizaciones de Tableros y Placas.
+  Los permisos de edición de cada cotización se mantienen por rol/asignación.
 
-## Historial protegido
+## Catálogo nuevo
 
-Consultar proyectos o cambiar nombre, cliente, dirección y comentarios no
-recalcula la cotización. Cambiar medidas, cantidades, veta, materiales,
-tapacantos, acabados o condiciones de cálculo genera una revisión al guardar.
-El historial conserva la anterior y permite descargar su PDF.
+El Excel del 30-09-2026 reemplaza los productos anteriores del catálogo activo:
+**471 referencias únicas: 299 tableros/placas, 149 tapacantos y 23 servicios**.
+Los 299 incluyen 135 productos Neolith. El archivo recibido se conserva intacto
+como `catalog/PRODUCTOS_20260930.xlsx`; el importador aplica las correcciones.
 
-Cada cálculo V5 guarda precios, parámetros, planos y resultados completos.
-Un cambio posterior del catálogo no altera esas cotizaciones. La versión de
-fila impide que dos usuarios sobrescriban sus cambios al guardar a la vez.
-
-Los proyectos antiguos sin planos almacenados se representan con su motor
-histórico V3/V4 y conservan el resumen monetario guardado. No es posible
-recuperar una imagen de PDF que nunca fue almacenada: se reconstruye con los
-datos disponibles y las reglas históricas, sin aplicar el rebaje V5.
-
-La migración no borra ni vacía tablas de pedidos o usuarios, ni ejecuta
-optimizaciones masivas. La antigua operación de archivo lógico queda
-restringida al superadministrador, sin botón de eliminación en el listado V5.
-
-## Excel y pegado directo
-
-Selecciona primero los materiales. Después carga XLS, XLSX o CSV, o pega las
-celdas en Material y piezas. El archivo original no se modifica.
-
-1. Selecciona hoja, encabezados y rango de filas. Para varios bloques
-   horizontales, incorpora uno y cambia las columnas para el siguiente.
-2. Elige mm o cm para todo el bloque. Internamente se trabaja en mm; las
-   cantidades y códigos no se multiplican. Puedes transponer filas/columnas.
-3. Asigna las columnas de nombre, cantidad, Largo, Ancho, material, veta, tipo
-   y cuatro lados. No se exige el orden de una plantilla.
-4. Define L/T/SV, X u otros símbolos y códigos 1/2/3/4… según el cliente.
-   Se admiten más de cuatro tapacantos. Los números en columnas de lados pueden
-   interpretarse como longitudes marcadas activando la opción correspondiente.
-5. Revisa la vista previa y corrige dimensiones, cantidad, veta o cada lado.
-   Los errores bloquean la incorporación del bloque: corrige el rango o usa
-   Omitir filas para excluir títulos, totales o piezas que no correspondan.
-6. Guarda la interpretación para reutilizarla en este navegador. Se guardan
-   columnas, símbolos y unidades; no se guarda el archivo del cliente.
-
-| Campo | Significado |
+| Columna Excel | Campo |
 |---|---|
-| Largo | Eje L ingresado; puede ser menor que Ancho |
-| Ancho | Eje A ingresado |
-| Longitudinal | Veta paralela al Largo |
-| Transversal | Veta paralela al Ancho |
-| Sin veta | Permite ambas orientaciones |
-| L1 / L2 | Superior / inferior, paralelos a Largo |
-| A1 / A2 | Izquierdo / derecho, paralelos a Ancho |
+| Referencia | Código CDChile / SKU |
+| Nombre | Nombre del producto o servicio |
+| Descripción | Información adicional |
+| Precio base de venta | Precio base neto |
+| Precio mínimo | Mínimo de venta, restringido por rol |
+| Código de barras | Código de origen, exclusivo del equipo interno |
+| Familia de productos | Categoría |
 
-Tableros admite tapacanto por lado. Placas admite Lineal, Biselado/Pulido o 45°.
-Los códigos T1, T2… son únicos dentro de cada optimización y se mantienen en
-todas sus hojas. En columnas agrupadas se define si un símbolo significa uno
-o dos lados del eje; no se presupone el significado de un asterisco.
-
-Los archivos deben tener celdas tabulares legibles. Archivos cifrados,
-imágenes, fórmulas sin resultado guardado y varios datos dentro de una misma
-celda requieren preparación. Límites: 12 MB por archivo, 20.000 filas y 300
-columnas con contenido; por cotización, 3.000 filas de piezas y 10.000 unidades.
-
-## Fabricación y precios
-
-| Concepto | Regla V5 |
+| Grupo | Subcategorías |
 |---|---|
-| Tableros | Rebaje previo de 10 mm por lado; consumo de disco 3 mm |
-| Neolith 12 mm | Fábrica 3260 × 1660; útil 3200 × 1600 mm |
+| TABLEROS | Tableros de Melamina; Tableros Egr Decor; Tableros Chinos; Otros Tableros |
+| TAPACANTOS | Tapacantos; Tapacantos EGR; Tapacantos Chinos |
+| PLACAS | Neolith de 06mm; Neolith de 12mm; Cuarzo 18mm (próximamente); Granito 20mm (próximamente) |
+| SERVICIOS PARA TABLEROS | Dimensionados de Tableros; Servicios para Tableros |
+| SERVICIOS PARA PLACAS | Dimensionados de Placas; Servicios de Placas |
+| OTROS SERVICIOS | Despachos; Armado de Muebles; Servicios de Instalacion de Muebles; Servicios de Instalacion de Placas |
+
+La fila 275, Carbon Trumatte, usa **73-STYLE-CRTM**. Cinnabar conserva
+73-STYLE-CBTM. Lamitech Noce tiene **1200 × 1125 mm**; no es Neolith.
+Las fichas Neolith usan el código, color y espesor del Excel: no necesitan
+escribir nuevamente un color libre. Se corrigen sus errores de formato.
+
+Los servicios nuevos quedan registrados en su categoría. La agenda de
+instalaciones está disponible; los módulos completos de armado, instalación,
+herrajes y otros productos/fotografías siguen pendientes de la próxima entrega.
+Los servicios con precio cero figuran como **Por cotizar**.
+
+Las fotografías antiguas solo se reutilizan cuando coinciden código, producto
+y espesor. Las referencias cambiadas tienen una clave de foto independiente,
+para evitar mostrar la imagen de otro producto que antes usaba el mismo código.
+
+## Configuración de dimensiones
+
+En Configuración → **Catálogo y dimensiones**, o Administración:
+
+1. Selecciona **Tableros y placas** y filtra por categoría o producto.
+2. Usa **Editar** para cambiar una ficha: categoría, largo/ancho de fábrica,
+   espesor, despunte por lado, servicio de corte y otros datos autorizados.
+3. Para varios productos, selecciónalos y abre **Editar dimensiones**.
+   Completa solo los campos que quieras modificar. La operación se valida
+   completa antes de guardar; las casillas vacías conservan sus valores.
+
+Se muestran dimensiones de fábrica y útiles. Cada cambio crea una revisión
+del producto; no modifica el resultado de cotizaciones guardadas.
+Hay siete fichas con espesor por completar: consulta `docs/CATALOGO_V5.1.md`.
+
+## Optimización y precios
+
+| Concepto | Regla V5.1 |
+|---|---|
+| Consumo de disco | Un único valor por corte, 3 mm iniciales; editable de 2 a 5 mm |
+| Predeterminado | Configuración → Parámetros de optimización; se aplica a nuevas cotizaciones |
+| Tableros | Despunte inicial de 10 mm por lado, editable por producto |
 | Neolith 6 mm | Fábrica 3260 × 1560; útil 3200 × 1500 mm |
-| Neolith | Reborde de 30 mm por lado; consumo 3 mm; color libre |
-| Corte piedra | $75.000 netos por placa utilizada |
-| Biselado / Pulido | $12.500 netos/ml del lado seleccionado |
-| 45° | $7.500 netos/ml del lado seleccionado |
+| Neolith 12 mm | Fábrica 3260 × 1660; útil 3200 × 1600 mm |
+| Tapacanto material | Metros instalados × 1,02, por tipo |
+| Servicio de tapacanto | Metros instalados × 1,00 |
+| Despacho | Un recorrido de ida; en cargas mixtas se cobra el mayor flete |
 
-Piedras valoriza los servicios, sin venta de la placa ni tapacantos. Otras
-piedras requieren una ficha con su formato de fábrica. El PDF incluye resumen,
-listado con veta y lados y las hojas de corte.
+Por ejemplo, 100 ml instalados generan 102 ml de material y 100 ml de servicio.
+El resumen y el PDF indican los metros instalados, la merma y el total de material.
+El indicador de producción cuenta únicamente los metros efectivamente instalados.
 
-Los descuentos se validan en el servidor: máximo 50%, limitado por el mayor
-entre costo y mínimo de venta de cada producto/servicio. Si el precio de lista
-es inferior a ese límite, se exige corregirlo. Visitas y clientes cotizan sin
-descuento. IVA: 19%. Los precios de servicios y fletes son netos.
+Los servicios de corte y tapacanto usan los precios del catálogo vigente.
+Valores iniciales netos: melamina $7.500/placa, acrílico $10.000/placa,
+Stylelite $15.000/placa, Neolith $75.000/placa, biselado/pulido y corte 45°
+$12.500/ml. Tapacanto: 0,4 y 1,0 mm a $600/ml; 1,5 mm a $750/ml;
+2,0 mm a $800/ml. Se editan en Administración → Servicios.
 
-## Catálogo y roles
+En Placas, **Incluir suministro de las placas** agrega el valor del material.
+Está desmarcado inicialmente para conservar el flujo de cotización de servicios
+de V5.0. Las cotizaciones históricas mantienen su valorización original.
 
-Incluye la taxonomía de Aglomerados, MDF, Otros Tableros, Neolith, Otras Placas,
-Bisagras, Guías Correderas y Sistemas de Elevación, con sus subcategorías.
-Las fichas incluyen nombre, código, proveedor, formato, espesor, precio,
-stock, color, foto y estado. El stock es informativo: no se descuentan
-existencias ni se registran movimientos de bodega en esta versión.
+IVA: 19%. Los descuentos se validan en el servidor, con máximo de 50% y
+respetando el mayor entre costo y mínimo de venta. Cliente y visita no aplican
+descuentos. Compra y mínimos solo se envían a Finanzas/Superadministrador;
+códigos de origen se excluyen de toda respuesta a clientes y visitas.
 
-Se agregan 18 variantes MDF delgado una cara con los formatos, espesores y
-colores solicitados. Quedan **inactivas**, con stock no informado, hasta completar
-proveedor y precios. No se inventan valores comerciales.
+## Cotizaciones históricas
 
-| Perfil | Facultades |
-|---|---|
-| Superadministrador | Todos los accesos, configuración y usuarios |
-| Administrador | Proyectos, categorías, productos, venta y fotografías |
-| Comercial | Cotizaciones propias/asignadas, colaboradores y descuentos limitados |
-| Producción | Proyectos, fabricación, productos y fotos; no cambia precios/costos |
-| Instalación | Rol preparado para el próximo módulo, sin administración |
-| Logística | Proyectos, despachos y entrega; no modifica cálculos |
-| Supervisor | Consulta de proyectos e informes |
-| Finanzas | Proyectos, costos/mínimos e informes de venta neta |
-| Cliente | Sus cotizaciones, documentos y seguimiento |
-| Visita | Catálogo y cotización sin login, costos ni descuentos |
+La actualización no borra proyectos, usuarios, documentos ni fotografías y no
+recalcula cotizaciones en bloque. Conserva códigos, precios, parámetros, planos
+y resultados de cada revisión guardada. Cambiar datos descriptivos conserva
+el cálculo. Cambiar piezas, materiales o condiciones de cálculo crea una nueva
+revisión V5.1 y archiva la anterior.
 
-Los roles internos son acumulables. Cliente se mantiene exclusivo. Compra y
-mínimos solo se envían al navegador de Finanzas y Superadministrador. Un
-Administrador puede combinarse con Finanzas si necesita ese acceso. Los
-productos nuevos creados por Producción quedan inactivos hasta valorizarlos.
-
-La cuenta `edmundo@villoutas.cl` se promueve automáticamente si ya era
-administradora. Para otro caso, consulta la guía de actualización.
+Las referencias se relacionan por identidad de producto y espesor. No se usa
+solo el código: el catálogo anterior tenía códigos repetidos. Si no existe
+una equivalencia inequívoca, se solicita elegir el producto vigente al editar.
+Las versiones antiguas sin plano almacenado se reconstruyen con su motor
+histórico, conservando el resumen monetario guardado.
 
 ## Despachos
 
-Origen: **Casa Diseño · Bodega — 53GC+2J, 4030000 Concepción, Bío Bío**.
-Se conserva el enlace de Maps suministrado como referencia de ubicación.
+Origen: Casa Diseño · Bodega, Concepción. Se conservan origen, comunas y
+kilómetros previamente configurados. La primera actualización carga:
 
-| Familia | Neto de ida |
+| Familia | Tarifa neta de ida |
 |---|---|
-| Tableros | $10.000 + $100 × km |
-| Placas | $20.000 + $100 × km |
-| Herrajes | $7.500 + $50 × km |
+| Melamina / otros tableros | $10.000 + $200 × km |
+| Acrílico / EGR Decor | $10.000 + $120 × km |
+| Placas Neolith | $20.000 + $150 × km |
+| Salice | $7.500 + $50 × km |
 | Otros | $200 × km |
 
-En envíos mixtos se toma el **mayor valor final**, no la suma. Se exige calle y
-comuna. El superadministrador carga kilómetros por carretera desde la bodega
-al centro de cada comuna y una referencia de verificación. La tabla parte
-vacía: sin distancia verificada, queda **Por cotizar**.
+Se mantienen las bases fijas de V5.0 y se actualiza el valor por km con el Excel.
+No se duplica la distancia por el regreso. En mezclas se toma el mayor valor.
+Una comuna sin kilómetros viales verificados queda Por cotizar. No se consulta
+un servicio externo para calcular automáticamente rutas. Los despachos ya
+valorizados conservan su tarifa; un despacho facturado no admite recálculo.
 
-No requiere API pagada ni autocompletado. Los enlaces abren Maps para comprobar
-origen/destino; no geocodifican ni calculan automáticamente distancias. Cada
-flete guarda su tarifa y no se recalcula después de facturado.
+## Importación de piezas
 
-## Criterios del panel
+Se conserva la carga XLS/XLSX/CSV y el pegado desde Excel: selección de hoja,
+filas y columnas; conversión cm/mm; transposición; mapeo de materiales, veta,
+tapacantos y terminaciones; vista previa editable. Largo y Ancho conservan sus
+ejes aunque Largo sea menor. Longitudinal sigue Largo y Transversal sigue Ancho.
+L1/L2 son los lados paralelos a Largo; A1/A2, los paralelos a Ancho.
+Los símbolos de cada cliente deben definirse y revisarse antes de incorporar.
 
-Ventas: primer ingreso a **Facturado y pagado**, configurable a Facturación.
-Se guarda el importe y comercial de ese hito. Familias operativas: Tableros,
-Placas y Despachos. Los fletes se suman una vez al registrar factura y fecha.
+## Desarrollo y comprobación
 
-Producción: primer ingreso a **Despacho**, conservando el conteo al llegar a
-Entregado. Se registran tableros/placas utilizados y metros instalados o
-terminados. Una revisión posterior no vuelve a sumar producción; un trabajo
-adicional se ingresa como otra cotización.
-
-Los históricos sin fecha del hito se muestran como pendientes de información
-y se excluyen del mes; no se usa la última edición para inventar su fecha.
-El mes usa `America/Santiago`. Los comerciales ven sus proyectos accesibles.
-Los informes son de gestión, no un libro contable ni facturación tributaria.
-
-## Desarrollo y validación
-
-Node.js 24, Express, PostgreSQL y Vite. SheetJS 0.20.3 se incluye en `vendor/`.
+Node.js 24, Express, PostgreSQL y Vite. SheetJS se incluye en `vendor/`.
 
 ```bash
 npm ci --include=dev
@@ -178,8 +163,10 @@ npm run build
 npm start
 ```
 
-Sin `DATABASE_URL`, el modo local usa memoria temporal para pruebas. En
-producción PostgreSQL es obligatorio. La migración SQL se prueba con PostgreSQL
-embebido (PGlite) y registros de ensayo, sin acceder a la base productiva.
-Consulta `docs/VALIDACION_V5.md`. Los manuales anteriores están en
-`docs/historial/`; para instalar V5 rige la guía nueva.
+Sin DATABASE_URL, el entorno local usa memoria temporal. Producción requiere
+PostgreSQL. `npm run catalog:import:v51` regenera el catálogo desde el Excel
+incluido. El importador y catálogo anteriores se conservan por compatibilidad;
+no se deben regenerar al actualizar referencias de V5.1.
+
+Consulta `docs/VALIDACION_V5.1.md`: 58 pruebas, compilación y revisión del PDF
+de ensayo. No se ha desplegado ni probado sobre la base productiva.

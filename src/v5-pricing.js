@@ -1,4 +1,5 @@
 import { discountedLine } from './v5-domain.js';
+import { isV51, serviceKeyFor } from './v51-domain.js';
 
 // Se aplica exclusivamente a V5. Los motores históricos conservan sus reglas.
 export function priceV5(result, materials, edges, settings) {
@@ -9,13 +10,13 @@ export function priceV5(result, materials, edges, settings) {
   };
   for (const row of result.materialSummaries) {
     const material = materials.find(m => m.id === row.materialId) || {};
-    add('board', row.materialId, row.name, row.unitPrice, row.boardCount, settings.boardDiscount, material);
-    const key = row.isStone ? 'stoneCutPerPlateRate' : (row.cutRatePerBoard === Number(settings.melamineCutRate) ? 'melamineCutRate' : 'specialCutRate');
+    if(!row.isStone||row.unitPrice>0) add('board', row.materialId, row.name, row.unitPrice, row.boardCount, settings.boardDiscount, material);
+    const key = isV51(settings)?serviceKeyFor(material):row.isStone ? 'stoneCutPerPlateRate' : (row.cutRatePerBoard === Number(settings.melamineCutRate) ? 'melamineCutRate' : 'specialCutRate');
     add('service', key, `Corte · ${row.name}`, row.cutRatePerBoard, row.boardCount, settings.servicesDiscount, policies[key]);
   }
   for (const row of result.edgeSummaries) {
     const edge = edges.find(e => e.id === row.edgeId) || {};
-    add('edge', row.edgeId, row.name, row.unitPrice, row.meters, settings.edgeDiscount, edge);
+    add('edge', row.edgeId, row.name, row.unitPrice, row.materialMeters??row.meters, settings.edgeDiscount, edge);
     add('service', row.edgeId, `Instalación · ${row.name}`, row.serviceRate, row.meters, settings.servicesDiscount,
       {purchasePrice:edge.servicePurchasePrice,minPrice:edge.serviceMinPrice,discountLimit:edge.serviceDiscountLimit});
   }

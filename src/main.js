@@ -1,3 +1,6 @@
+import './v51.css';
+import {v51,attachV51,crm51View,management51View,catalog51View,searchForm,filteredProjects} from './v51-ui.js';
+import {internalUser,kerfValue,updateQuoteProducts,serviceKeyFor} from './v51-domain.js';
 import "./style.css";
 import "./v5.css";
 import { V5, ROLE_LABELS, permitted, calculationSignature, taxonomyPaths } from './v5-domain.js';
@@ -88,7 +91,6 @@ function emptyState() {
     edgeCodeMap: {},
     settings: {
       calculationVersion: V5,
-      bladeThickness: 3,
       kerf: 3,
       perimeterTrim: 10,
       neolithTrim: 30,
@@ -131,6 +133,7 @@ let state = emptyState();
 let latestResult = null;
 let projectsCache = [];
 let accessoriesCatalog = [];
+let servicesCatalog = [];
 let usersCache = [];
 let notificationsCache = [];
 let commercialsCache = [];
@@ -165,7 +168,7 @@ const projectMaterial = (material) => {
   if (!material) return null;
   const customization = state.materialCustomizations?.[material.id] || {};
   if (!isNeolithMaterial(material)) return material;
-  const color = String(customization.color || "").trim();
+  const color = material.customColor === false ? '' : String(customization.color || "").trim();
   const preservesV40Pricing = state.settings?.calculationVersion === "4.0";
   return {
     ...material,
@@ -173,7 +176,7 @@ const projectMaterial = (material) => {
     colorName: color,
     netPrice: preservesV40Pricing
       ? Math.max(0, Number(customization.netPrice ?? material.netPrice) || 0)
-      : 0,
+      : state.settings.calculationVersion==='5.1'&&state.settings.includeStoneMaterial?material.netPrice:0,
   };
 };
 
@@ -192,7 +195,7 @@ const selectedMaterial = (id = state.materialId) =>
   projectMaterial(materials.find((item) => item.id === id)) || selectedMaterials()[0];
 
 const materialImageUrl = (material) =>
-  `/api/material-images/${encodeURIComponent(material?.sku || material?.id || "")}`;
+  `/api/material-images/${encodeURIComponent(material?.imageKey || material?.sku || material?.id || "")}`;
 
 const activeMaterials = () =>
   materials.filter((item) => item.active !== false);
@@ -236,7 +239,8 @@ function applyCatalogPayload(payload = {}) {
 }
 
 async function loadCatalog() {
-  applyCatalogPayload(await api("/api/catalog"));
+  const payload=await api("/api/catalog");servicesCatalog=payload.services||[];
+  applyCatalogPayload(payload);
 }
 
 async function api(path, options = {}) {
@@ -319,6 +323,8 @@ function canCreateQuote() {
 
 function newQuoteState() {
   const fresh = emptyState();
+  fresh.settings.kerf=v5.config.defaultKerf??3;
+  for(const [key,policy] of Object.entries(v5.config.services))fresh.settings[key]=policy.price;
   if (hasRole("cliente")) {
     fresh.project.clientName =
       auth.user.clientName || auth.user.fullName || "";
@@ -452,7 +458,7 @@ function validateCurrentStep() {
     state.step === 1 &&
     selectedMaterials().some(
       (material) =>
-        isNeolithMaterial(material) &&
+        isNeolithMaterial(material) && material.customColor !== false &&
         !String(state.materialCustomizations?.[material.id]?.color || "").trim(),
     )
   ) {
@@ -496,7 +502,7 @@ async function saveProject(showMessage = true) {
   if (
     selectedMaterials().some(
       (material) =>
-        isNeolithMaterial(material) &&
+        isNeolithMaterial(material) && material.customColor !== false &&
         !String(state.materialCustomizations?.[material.id]?.color || "").trim(),
     )
   ) {
@@ -715,9 +721,9 @@ function passwordChangeView() {
 
 function shell(content) {
   const quote=state.view==='quote';
-  const title=quote?(state.workType==='slabs'?'Placas':'Tableros'):({dashboard:'Panel general',projects:'Proyectos',dispatch:'Despachos','v5-settings':'Configuración','v5-catalog':'Catálogo',users:'Usuarios',catalog:'Catálogo',production:'Agenda de pedidos',notifications:'Notificaciones'}[state.view]||'Casa Diseño');
-  return `<div class="v5-shell"><header class="v5-topbar"><button class="v5-brand" data-v5="home"><img class="brand-logo" src="/logo-casa-diseno.png" alt="Casa Diseño"><span>GESTIÓN & PROYECTOS <b>V5.0</b></span></button><nav aria-label="Navegación general"><button data-v5="home" class="${state.view==='dashboard'?'active':''}">Panel</button>${auth.user?'<button data-v5="projects">Proyectos</button>':''}<button data-v5="module" data-module="boards">Tableros</button><button data-v5="module" data-module="slabs">Placas</button>${auth.user?'<button data-v5="module" data-module="dispatch">Despachos</button>':''}<button data-action="catalog">Catálogo</button>${permitted(auth.user,'catalog')?'<button data-v5="catalog-manage">Administración</button>':''}</nav><details class="v5-account"><summary>${safe(auth.user?.fullName||'Visitante')} ▾</summary><div><small>${userRoles().map(r=>roleLabels[r]).join(' · ')||'Venta sin descuento'}</small>${permitted(auth.user,'users')?'<button data-action="users">Usuarios y roles</button>':''}${permitted(auth.user,'settings')||permitted(auth.user,'catalog')?'<button data-v5="settings">Configuración</button>':''}${hasAnyRole(['admin','produccion'])?'<button data-action="production-dashboard">Agenda de pedidos</button>':''}${auth.user?'<button data-action="notifications">Notificaciones</button>':''}<button data-action="${auth.visitor?'visitor-exit':'logout'}">Cerrar sesión</button></div></details></header>
-  <div class="v5-layout ${quote?'has-context':''}">${quote?`<aside class="v5-context"><p class="eyebrow">${title.toUpperCase()}</p><h3>${safe(state.project.projectName||'Nuevo proyecto')}</h3><p>${safe(state.quoteName||'Cotización')}</p><nav aria-label="Etapas de cotización">${steps.map(([label,subtitle],i)=>`<button class="step-link ${state.step===i?'active':''}" data-action="step" data-step="${i}"><span>${i+1}</span><b>${label}<small>${subtitle}</small></b></button>`).join('')}</nav><div class="v5-context-note"><b>R${state.revisionNo||1} · cálculo ${safe(state.settings.calculationVersion)}</b><p>Las modificaciones de medidas, veta, materiales y servicios generan una nueva revisión al guardar.</p>${state.readOnlyRevision?'<strong>Historial · solo consulta</strong>':''}</div></aside>`:''}<main class="v5-main"><header class="v5-page-header"><p class="eyebrow">${quote?'COTIZACIÓN / '+title.toUpperCase():'ESPACIO DE TRABAJO'}</p><h1>${quote?steps[state.step][0]:title}</h1>${quote?`<span class="status-pill">${statusLabels[state.project.status]}</span>`:''}</header><div class="workspace">${content}</div></main></div>${state.message?`<div class="toast ${state.message.type}">${safe(state.message.text)}</div>`:''}</div>`;
+  const title=quote?(state.workType==='slabs'?'Placas':'Tableros'):({dashboard:'Panel general',projects:'Proyectos',dispatch:'Despachos','v5-settings':'Configuración','v5-catalog':'Catálogo',users:'Usuarios',catalog:'Catálogo',production:'Agenda de pedidos',crm:'CRM de Producción',notifications:'Notificaciones'}[state.view]||'Casa Diseño');
+  return `<div class="v5-shell"><header class="v5-topbar"><button class="v5-brand" data-v5="home"><img class="brand-logo" src="/logo-casa-diseno.png" alt="Casa Diseño"><span>GESTIÓN & PROYECTOS <b>V5.1</b></span></button><nav aria-label="Navegación general"><button data-v5="home" class="${state.view==='dashboard'?'active':''}">Panel</button>${auth.user?'<button data-v5="projects">Proyectos</button>':''}${internalUser(auth.user)?'<button data-v51="crm">CRM de Producción</button>':''}<button data-v5="module" data-module="boards">Tableros</button><button data-v5="module" data-module="slabs">Placas</button>${auth.user?'<button data-v5="module" data-module="dispatch">Despachos</button>':''}<button data-action="catalog">Catálogo</button>${permitted(auth.user,'catalog')?'<button data-v5="catalog-manage">Administración</button>':''}</nav><details class="v5-account"><summary>${safe(auth.user?.fullName||'Visitante')} ▾</summary><div><small>${userRoles().map(r=>roleLabels[r]).join(' · ')||'Venta sin descuento'}</small>${permitted(auth.user,'users')?'<button data-action="users">Usuarios y roles</button>':''}${permitted(auth.user,'settings')||permitted(auth.user,'catalog')?'<button data-v5="settings">Configuración</button>':''}${auth.user?'<button data-action="notifications">Notificaciones</button>':''}<button data-action="${auth.visitor?'visitor-exit':'logout'}">Cerrar sesión</button></div></details></header>
+  <div class="v5-layout ${quote?'has-context':''}">${quote?`<aside class="v5-context"><p class="eyebrow">${title.toUpperCase()}</p><h3>${safe(state.project.projectName||'Nuevo proyecto')}</h3><p>${safe(state.quoteName||'Cotización')}</p><nav aria-label="Etapas de cotización">${steps.map(([label,subtitle],i)=>`<button class="step-link ${state.step===i?'active':''}" data-action="step" data-step="${i}"><span>${i+1}</span><b>${label}<small>${subtitle}</small></b></button>`).join('')}</nav><div class="v5-context-note"><b>R${state.revisionNo||1} · cálculo ${safe(state.settings.calculationVersion)}</b><p>Las modificaciones de medidas, veta, materiales y servicios generan una nueva revisión al guardar.</p>${state.readOnlyRevision?'<strong>Historial · solo consulta</strong>':''}</div></aside>`:''}<main class="v5-main"><header class="v5-page-header"><p class="eyebrow">${quote?'COTIZACIÓN / '+title.toUpperCase():'ESPACIO DE TRABAJO'}</p><h1>${quote?steps[state.step][0]:title}</h1>${quote?`<span class="status-pill">${statusLabels[state.project.status]}</span>`:''}</header><div class="workspace">${auth.user?searchForm():''}${content}</div></main></div>${state.message?`<div class="toast ${state.message.type}">${safe(state.message.text)}</div>`:''}</div>`;
 }
 
 function pieceImportPreview() {
@@ -1047,7 +1053,7 @@ function materialStep() {
   const productNoun = slabQuote ? "placa(s)" : "tablero(s)";
   return `
     <section class="intro-row">
-      <div><p class="eyebrow">${slabQuote ? "PLACAS · PIEDRAS" : "TABLEROS · MADERAS"}</p><h2>${slabQuote ? "Selecciona el formato de placa" : "Selecciona uno o más tableros"}</h2><p>${slabQuote ? "En Neolith solo se cotiza el servicio: corte por placa y acabados opcionales por lado." : "Puedes cambiar de categoría y seguir incorporando productos al mismo proyecto."}</p></div>
+      <div><p class="eyebrow">${slabQuote ? "PLACAS · PIEDRAS" : "TABLEROS · MADERAS"}</p><h2>${slabQuote ? "Selecciona las placas del catálogo" : "Selecciona uno o más tableros"}</h2><p>${slabQuote ? "Elige el producto y su espesor. En el resumen puedes incluir el suministro de la placa, además del corte y los acabados." : "Puedes cambiar de categoría y seguir incorporando productos al mismo proyecto."}</p></div>
       <div class="selection-flow"><b class="${state.categoryId ? "done" : ""}">1 Categoría</b><span>→</span><b class="${chosenMaterials.length ? "done" : ""}">${chosenMaterials.length} ${productNoun}</b></div>
     </section>
     ${
@@ -1066,14 +1072,14 @@ function materialStep() {
         : ""
     }
     ${chosenMaterials.some(isNeolithMaterial) ? `<section class="card neolith-config-card">
-      <div class="section-title"><span>◆</span><div><h3>Datos de Neolith para este proyecto</h3><p>Escribe el color y confirma el formato. La cotización considera servicios, no el valor del material.</p></div></div>
+      <div class="section-title"><span>◆</span><div><h3>Placas de este proyecto</h3><p>El código y el color corresponden al producto seleccionado del catálogo.</p></div></div>
       <div class="paste-config-grid">
         ${chosenMaterials.filter(isNeolithMaterial).map((material) => {
           const custom = state.materialCustomizations?.[material.id] || {};
-          return `<label>${safe(material.sku)} · Color <em>*</em>
-            <input data-neolith-color="${material.id}" value="${safe(custom.color || "")}" placeholder="Ej. Calacatta Luxe" required />
-            <small>Fábrica ${material.plateLength} × ${material.plateWidth} × ${material.thickness} mm · útil ${material.usablePlateLength || material.plateLength - 60} × ${material.usablePlateWidth || material.plateWidth - 60} mm.</small>
-          </label><div class="stone-rate-note"><b>${clp(state.settings.stoneCutPerPlateRate)} neto</b><span>Corte por cada placa utilizada</span><small>El material no se valoriza en esta cotización. Biselado/Pulido y 45° se agregan por lado solo cuando corresponda.</small></div>`;
+          return `<div><b>${safe(material.sku)} · ${safe(material.name)}</b>
+            ${material.customColor!==false?`<label>Color <em>*</em><input data-neolith-color="${material.id}" value="${safe(custom.color || "")}" placeholder="Ej. Calacatta Luxe" required /></label>`:''}
+            <p>Fábrica ${material.plateLength} × ${material.plateWidth} × ${material.thickness} mm · útil ${material.plateLength - 2*(material.perimeterTrim??30)} × ${material.plateWidth - 2*(material.perimeterTrim??30)} mm.</p>
+          </div><div class="stone-rate-note"><b>${clp(state.settings.stoneCutPerPlateRate)} neto</b><span>Corte por cada placa utilizada</span><small>Biselado/Pulido y 45° se agregan por lado cuando corresponda.</small></div>`;
         }).join("")}
       </div>
     </section>` : ""}
@@ -1109,7 +1115,7 @@ function materialStep() {
                     <span class="sample" style="background:${material.texture}">
                       <img class="material-image" src="${materialImageUrl(material)}" data-fallback="${safe(material.image)}" alt="" loading="lazy" />
                     </span>
-                    <span class="product-copy"><small>${safe(material.brand)} · ${safe(material.sku)}</small><b>${safe(material.name)}</b><em>${isNeolithMaterial(material) ? `Útil ${material.usablePlateLength} × ${material.usablePlateWidth} × ${material.thickness} mm · fábrica ${material.plateLength} × ${material.plateWidth} mm` : `${material.plateLength} × ${material.plateWidth} × ${material.thickness} mm`}</em><strong>${isNeolithMaterial(material) ? `${clp(state.settings.stoneCutPerPlateRate)} neto por placa cortada` : `${clp(material.netPrice)} neto`}</strong>
+                    <span class="product-copy"><small>${safe(material.brand)} · ${safe(material.sku)}</small><b>${safe(material.name)}</b><em>${isNeolithMaterial(material) ? `Útil ${material.plateLength - 2*(material.perimeterTrim??30)} × ${material.plateWidth - 2*(material.perimeterTrim??30)} × ${material.thickness} mm · fábrica ${material.plateLength} × ${material.plateWidth} mm` : `${material.plateLength} × ${material.plateWidth} × ${material.thickness} mm`}</em><strong>${isNeolithMaterial(material) ? `${clp(state.settings.stoneCutPerPlateRate)} neto por placa cortada` : `${clp(material.netPrice)} neto`}</strong>
                     ${
                       permitted(auth.user,"costs")
                         ? `<span class="admin-prices">Mínimo ${clp(material.minPrice)} · Compra ${clp(material.purchasePrice)}</span>`
@@ -1128,7 +1134,9 @@ function materialStep() {
   `;
 }
 
-function catalogView() {
+function catalogView(){return shell(catalog51View(v5Context()));}
+
+function legacyCatalogView() {
   const edgeGroups = [...new Set(activeEdgeBands().map((item) => item.group))];
   const showingBoards = state.catalogKind !== "edges";
   const products = showingBoards
@@ -1576,6 +1584,7 @@ function summaryRows(summary) {
       ? summary.cuttingSubtotal / summary.boardCount
       : state.settings.stoneCutPerPlateRate;
     return `
+      ${summary.boardSubtotal?`<div class="summary-row"><span>Suministro de placas</span><b>${clp(summary.boardSubtotal)}</b></div>`:""}
       <div class="summary-row"><span>Corte por placa <small>${summary.boardCount} placa(s) × ${clp(cutRate)} neto</small></span><b>${clp(summary.cuttingSubtotal)}</b></div>
       <div class="summary-row"><span>Biselado o Pulido <small>${Number(summary.finishMetersByType?.bevel || 0).toFixed(2)} ml</small></span><b>${clp(Number(summary.finishMetersByType?.bevel || 0) * Number(summary.finishRates?.bevel || state.settings.stoneBevelRate))}</b></div>
       <div class="summary-row"><span>Corte 45° <small>${Number(summary.finishMetersByType?.miter45 || 0).toFixed(2)} ml</small></span><b>${clp(Number(summary.finishMetersByType?.miter45 || 0) * Number(summary.finishRates?.miter45 || state.settings.stoneMiter45Rate))}</b></div>
@@ -1632,8 +1641,8 @@ function invoiceBreakdown(result) {
         .map(
           (item) => `<article class="invoice-item">
             <header><b>${safe(item.sku)}</b><span>${safe(item.name)}</span></header>
-            ${item.isStone ? `<div class="invoice-line"><span>Formato<small>Fábrica ${item.rawPlateLength} × ${item.rawPlateWidth} mm · útil ${item.usablePlateLength} × ${item.usablePlateWidth} mm</small></span><strong>Servicio</strong></div>` : `<div class="invoice-line">
-              <span>Tablero<small>${item.boardCount} placa(s) × ${clp(item.unitPrice)}</small></span>
+            ${item.isStone && !item.boardSubtotal ? `<div class="invoice-line"><span>Formato<small>Fábrica ${item.rawPlateLength} × ${item.rawPlateWidth} mm · útil ${item.usablePlateLength} × ${item.usablePlateWidth} mm</small></span><strong>Servicio</strong></div>` : `<div class="invoice-line">
+              <span>${item.isStone ? "Placa" : "Tablero"}<small>${item.boardCount} placa(s) × ${clp(item.unitPrice)}</small></span>
               <strong>${clp(item.boardSubtotal)}</strong>
             </div>`}
             <div class="invoice-line service">
@@ -1656,7 +1665,7 @@ function invoiceBreakdown(result) {
                 (item) => `<article class="invoice-item">
                   <header><b>${safe(item.sku)}</b><span>${safe(item.group)} · ${safe(item.name)}</span></header>
                   <div class="invoice-line">
-                    <span>Tapacanto<small>${meters(item.meters)} ml × ${clp(item.unitPrice)}/ml</small></span>
+                    <span>Tapacanto<small>${meters(item.materialMeters??item.meters)} ml × ${clp(item.unitPrice)}/ml${item.wasteMeters?` · incluye ${meters(item.wasteMeters)} ml de merma (2%)`:""}</small></span>
                     <strong>${clp(item.materialSubtotal)}</strong>
                   </div>
                   <div class="invoice-line service">
@@ -1671,7 +1680,7 @@ function invoiceBreakdown(result) {
     </section>`}
     ${finishRows.length ? `<section class="invoice-group">
       <div class="invoice-group-title"><b>Acabados opcionales por lado</b><span>${finishRows.length} servicio(s)</span></div>
-      ${finishRows.map((item) => `<article class="invoice-item"><header><b>${safe(item.name)}</b></header><div class="invoice-line service"><span>Acabado<small>${meters(item.meters)} ml × ${clp(item.unitPrice)}/ml</small></span><strong>${clp(item.serviceSubtotal)}</strong></div></article>`).join("")}
+      ${finishRows.map((item) => `<article class="invoice-item"><header><b>${safe(item.name)}</b></header><div class="invoice-line service"><span>Acabado<small>${meters(item.materialMeters??item.meters)} ml × ${clp(item.unitPrice)}/ml${item.wasteMeters?` · incluye ${meters(item.wasteMeters)} ml de merma (2%)`:""}</small></span><strong>${clp(item.serviceSubtotal)}</strong></div></article>`).join("")}
     </section>` : ""}
   </div>`;
 }
@@ -1820,7 +1829,7 @@ function optimizeStep() {
       <div><span>PLACAS</span><b>${summary.boardCount}</b></div>
       <div><span>APROVECHAMIENTO</span><b>${(100 - summary.waste).toFixed(1)} %</b></div>
       <div><span>DESPERDICIO</span><b>${summary.waste.toFixed(1)} %</b></div>
-      <div><span>DISCO / CONSUMO</span><b>${state.settings.bladeThickness || 2} / ${state.settings.kerf} mm</b></div>
+      <div><span>CONSUMO DE DISCO</span><b>${state.settings.kerf} mm</b></div>
     </div>
     ${
       !canEditCurrent()
@@ -1869,9 +1878,9 @@ function optimizeStep() {
         </section>
         <section class="card settings-card">
           <p class="eyebrow">PARÁMETROS</p>
-          <label>Espesor nominal del disco (mm)<input type="number" min="0" step="0.1" data-setting="bladeThickness" value="${state.settings.bladeThickness || 2}" /></label>
-          <label>Consumo efectivo por corte (mm)<input type="number" min="0" step="0.1" data-setting="kerf" value="${state.settings.kerf}" /></label>
-          <small>Valor predeterminado: disco 2 mm y consumo real 3 mm por cada corte. ${slabQuote ? "La placa de fábrica incorpora 30 mm adicionales por lado para el despunte." : "Los tableros consideran un rebaje de 10 mm por lado."}</small>
+          <label>Consumo de disco por corte (mm)<input type="number" min="2" max="5" step="0.1" data-setting="kerf" value="${state.settings.kerf}" /></label>
+          <small>Predeterminado: 3 mm. Rango permitido: 2 a 5 mm. El despunte se configura en cada producto.</small>
+          ${slabQuote?`<label class="checkbox-row"><input type="checkbox" data-v51-stone-supply ${state.settings.includeStoneMaterial?'checked':''}>Incluir suministro de las placas</label><small>Desmarcado: se cotizan corte y terminaciones.</small>`:''}
           <label>Modo de optimización<select data-setting-text="optimizationMode">
             <option value="longitudinal" ${state.settings.optimizationMode === "longitudinal" ? "selected" : ""}>Priorizar primer corte longitudinal</option>
             <option value="free" ${state.settings.optimizationMode === "free" ? "selected" : ""}>Sin priorizar</option>
@@ -1886,16 +1895,16 @@ function optimizeStep() {
             <span>Melamina 15/18 mm <strong>${clp(
               state.settings.melamineCutRate,
             )}</strong></span>
-            <span>EGR y otros <strong>${clp(
-              state.settings.specialCutRate,
-            )}</strong></span>
+            <span>Acrílico / Petlite / Trunatur <strong>${clp(
+              state.settings.acrylicCutRate??state.settings.specialCutRate,
+            )}</strong></span><span>Stylelite <strong>${clp(state.settings.styleliteCutRate)}</strong></span>
           </div>
           <div class="rate-table">
             <b>Servicio tapacanto / ml</b>
-            <span>0,4 mm <strong>${clp(500)}</strong></span>
-            <span>1,0 mm <strong>${clp(600)}</strong></span>
-            <span>1,5 mm <strong>${clp(700)}</strong></span>
-            <span>2,0 mm <strong>${clp(850)}</strong></span>
+            <span>0,4 mm <strong>${clp(state.settings.edge04??500)}</strong></span>
+            <span>1,0 mm <strong>${clp(state.settings.edge10??600)}</strong></span>
+            <span>1,5 mm <strong>${clp(state.settings.edge15??700)}</strong></span>
+            <span>2,0 mm <strong>${clp(state.settings.edge20??850)}</strong></span>
           </div>`}
           <p class="eyebrow settings-subtitle">DESCUENTOS</p>
           ${slabQuote ? "" : `<label>Tableros (%)<input type="number" min="0" max="50" step="0.1" data-setting="boardDiscount" value="${state.settings.boardDiscount}" /></label>
@@ -2415,8 +2424,9 @@ function render() {
     app.innerHTML = passwordChangeView();
     return;
   }
+  if(state.view==='crm'){app.innerHTML=shell(crm51View(v5Context()));renderEnhancements();return;}
   if (['dashboard','dispatch','v5-settings','v5-catalog'].includes(state.view)) {
-    const view={dashboard:dashboardView,dispatch:dispatchView,'v5-settings':configurationView,'v5-catalog':catalogManagementView}[state.view];
+    const view={dashboard:dashboardView,dispatch:dispatchView,'v5-settings':configurationView,'v5-catalog':management51View}[state.view];
     app.innerHTML=shell(view(v5Context()));renderEnhancements();return;
   }
   if (state.view === "projects") {
@@ -2472,6 +2482,7 @@ function render() {
               generatedAt: new Date().toLocaleString("es-CL"),
               kerf: state.settings.kerf,
               bladeThickness: state.settings.bladeThickness || 2,
+              calculationVersion:state.settings.calculationVersion,
               edgeCodeMap: state.edgeCodeMap,
             });
           }
@@ -3481,8 +3492,8 @@ function exportPdf() {
     summaryY += 7;
     edgeEntries.forEach(([edgeId, code]) => {
       const edge = edgeBands.find((item) => item.id === edgeId);
-      const meters=latestResult.edgeSummaries.find(x=>x.edgeId===edgeId)?.meters||0;
-      const lines=pdf.splitTextToSize(`${edge?.sku || edgeId} · ${edge?.name || 'Tapacanto'} · ${meters.toFixed(2)} ml`,245);
+      const edgeSummary=latestResult.edgeSummaries.find(x=>x.edgeId===edgeId);const meters=edgeSummary?.meters||0;const wasteLabel=edgeSummary?.wasteMeters?` instalados + ${edgeSummary.wasteMeters.toFixed(2)} ml merma = ${edgeSummary.materialMeters.toFixed(2)} ml material`:'';
+      const lines=pdf.splitTextToSize(`${edge?.sku || edgeId} · ${edge?.name || 'Tapacanto'} · ${meters.toFixed(2)} ml${wasteLabel}`,245);
       summarySpace(lines.length*4+3);
       pdf.text(`${code}`, 12, summaryY);
       pdf.setFont("helvetica", "normal");
@@ -3606,7 +3617,7 @@ app.addEventListener("submit", async (event) => {
     }
     return;
   }
-  if(form.dataset.v5Form) return;
+  if(form.dataset.v5Form||form.dataset.v51Form) return;
   if (form.id === "piece-form") {
     addPiece(form);
     return;
@@ -3937,7 +3948,9 @@ app.addEventListener("change", async (event) => {
     }
     render();
   }
+  if(target.matches('[data-v51-stone-supply]')){state.settings.includeStoneMaterial=target.checked;render();}
   if (target.dataset.setting) {
+    if(target.dataset.setting==='kerf'){try{state.settings.kerf=kerfValue(target.value);}catch(e){notify(e.message,'error');return;}render();return;}
     const maximum = target.dataset.setting.endsWith("Discount") ? 50 : Infinity;
     state.settings[target.dataset.setting] = Math.min(
       maximum,
@@ -4391,7 +4404,6 @@ app.addEventListener("click", async (event) => {
     }
   }
   if (action === "open-project") {
-    openV5Quote(projectsCache.find(p=>p.id===button.dataset.id));return;
     if (button.dataset.notificationId) {
       try {
         const payload = await api(
@@ -4408,89 +4420,8 @@ app.addEventListener("click", async (event) => {
         return;
       }
     }
-    const item = projectsCache.find((project) => project.id === button.dataset.id);
-    if (item) {
-      const defaults = emptyState();
-      const materialIds = [
-        ...new Set(
-          [
-            ...(Array.isArray(item.materialIds) ? item.materialIds : []),
-            item.materialId,
-            ...(item.pieces || []).map((piece) => piece.materialId),
-          ].filter((id) => materials.some((material) => material.id === id)),
-        ),
-      ];
-      const primaryMaterialId =
-        materialIds.includes(item.materialId) ? item.materialId : materialIds[0];
-      const loadedWorkType =
-        item.workType ||
-        (materialIds.some((id) =>
-          isNeolithMaterial(materials.find((material) => material.id === id)),
-        )
-          ? "slabs"
-          : "boards");
-      const loadedSettings = item.settings?.calculationVersion
-        ? {
-            ...defaults.settings,
-            ...(item.settings || {}),
-            stoneCutPerPlateRate: Number(
-              item.settings?.stoneCutPerPlateRate ??
-                item.settings?.neolithLinearRate ??
-                defaults.settings.stoneCutPerPlateRate,
-            ),
-            stoneBevelRate: Number(
-              item.settings?.stoneBevelRate ??
-                item.settings?.neolithBevelRate ??
-                defaults.settings.stoneBevelRate,
-            ),
-            stoneMiter45Rate: Number(
-              item.settings?.stoneMiter45Rate ??
-                item.settings?.neolithMiter45Rate ??
-                defaults.settings.stoneMiter45Rate,
-            ),
-          }
-        : {
-            ...defaults.settings,
-            ...(item.settings || {}),
-            calculationVersion: "legacy-v3",
-            perimeterTrim: 0,
-            neolithTrim: 0,
-          };
-      state = {
-        ...defaults,
-        ...item,
-        project: { ...item.project },
-        assignedTo: item.assignedTo || "",
-        collaboratorIds: [...(item.collaboratorIds || [])],
-        workType: loadedWorkType,
-        materialId: primaryMaterialId || "",
-        materialIds,
-        materialCustomizations: { ...(item.materialCustomizations || {}) },
-        edgeCodeMap: { ...(item.edgeCodeMap || {}) },
-        settings: loadedSettings,
-        pieces: (item.pieces || []).map((piece) => ({
-          ...piece,
-          materialId: piece.materialId || primaryMaterialId || "",
-          edges: {
-            top: null,
-            right: null,
-            bottom: null,
-            left: null,
-            ...(piece.edges || {}),
-          },
-          finishes: {
-            top: "rough",
-            right: "rough",
-            bottom: "rough",
-            left: "rough",
-            ...(piece.finishes || {}),
-          },
-        })),
-        view: "quote",
-        step: 4,
-      };
-      render();
-    }
+    openV5Quote(projectsCache.find(p=>p.id===button.dataset.id));
+    return;
   }
   if (action === "mark-notification") {
     try {
@@ -4546,12 +4477,15 @@ function computeCurrentResult() {
   if(state.calculationSnapshot && (state.readOnlyRevision||key===state.loadedSignature)) return state.calculationSnapshot;
   const unchanged=state.loadedSignature&&key===state.loadedSignature;
   if(!unchanged && !state.readOnlyRevision){
-    state.settings={...state.settings,calculationVersion:V5,perimeterTrim:10,neolithTrim:30,kerf:3};
+    state.settings={...state.settings,calculationVersion:V5,perimeterTrim:10,neolithTrim:30,kerf:kerfValue(state.settings.kerf,v5.config.defaultKerf??3)};
     for(const [name,policy] of Object.entries(v5.config.services))state.settings[name]=policy.price;
     state.settings.servicePolicies=v5.config.services;
     if(!permitted(auth.user,'discount'))for(const field of ['boardDiscount','edgeDiscount','servicesDiscount'])state.settings[field]=0;
   }
+  let mappingWarning='';
+  if(!unchanged&&!state.readOnlyRevision&&state.materialIds.length){try{const mapped=updateQuoteProducts(structuredClone(state),materials,edgeBands);for(const key of ['materialIds','materialId','pieces','edgeCodeMap','materialCustomizations'])state[key]=mapped[key];}catch(e){mappingWarning=e.message;}}
   const result=optimizeProject(selectedMaterials(),state.pieces,edgeBands,state.settings);
+  if(mappingWarning)result.warnings.push(mappingWarning);
   if(unchanged && state.summary){result.summary=state.summary;result.historicalReconstruction=true;}
   return result;
 }
@@ -4566,14 +4500,16 @@ function openV5Quote(item,readOnly=false) {
   state.loadedSignature=calculationSignature(state);v5.importer=null;latestResult=null;render();
 }
 function v5Context() {
-  return {state,user:auth.user,projects:projectsCache,materials,edges:edgeBands,accessories:accessoriesCatalog,api,render,notify,loadProjects,loadCatalog,selectedMaterials,canCreateQuote,
+  return {state,user:auth.user,projects:projectsCache,materials,edges:edgeBands,accessories:accessoriesCatalog,services:servicesCatalog,api,render,notify,loadProjects,loadCatalog,selectedMaterials,canCreateQuote,
+    canEditRecord:p=>hasRole('admin')||(hasRole('produccion')&&['facturado_pagado','produccion','despacho','entregado'].includes(p.project.status))||(hasRole('comercial')&&['cotizacion','facturacion'].includes(p.project.status)&&(p.ownerId===auth.user?.id||p.assignedTo===auth.user?.id||p.collaboratorIds?.includes(auth.user?.id)))||(hasRole('logistica')&&p.project.status==='despacho'),
     statusEntries:status=>statusEntriesForRole(auth.user?.role,status),uploadImage:uploadProductImage,
-    pieceError:p=>pieceProductionError(p,materials.find(m=>m.id===p.materialId),edgeBands,{...state.settings,calculationVersion:V5,kerf:3,perimeterTrim:10,neolithTrim:30}),
+    pieceError:p=>pieceProductionError(p,materials.find(m=>m.id===p.materialId),edgeBands,{...state.settings,calculationVersion:V5,kerf:kerfValue(state.settings.kerf),perimeterTrim:10,neolithTrim:30}),
     openQuote:openV5Quote,
-    newQuote:(type,group)=>{state=newQuoteState();state.workType=type;state.view='quote';if(group){state.groupId=group.groupId||group.id;state.project={...state.project,projectName:group.project.projectName,clientName:group.project.clientName,rut:group.project.rut,projectAddress:group.project.projectAddress};state.assignedTo=group.assignedTo;state.collaboratorIds=group.collaboratorIds||[];}latestResult=null;},
+    newQuote:(type,group)=>{state=newQuoteState();state.settings.kerf=v5.config.defaultKerf??3;state.workType=type;state.view='quote';if(group){state.groupId=group.groupId||group.id;state.project={...state.project,projectName:group.project.projectName,clientName:group.project.clientName,rut:group.project.rut,projectAddress:group.project.projectAddress};state.assignedTo=group.assignedTo;state.collaboratorIds=group.collaboratorIds||[];}latestResult=null;},
   };
 }
 attachV5(app,v5Context);
+attachV51(app,v5Context);
 
 async function initialize() {
   render();

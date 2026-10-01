@@ -1,11 +1,14 @@
 import {
   catalogMeta,
   categories as generatedCategories,
-  edgeBands,
+  edgeBands as generatedEdgeBands,
   materials as generatedMaterials,
 } from "./catalog.generated.js";
 
-export { catalogMeta, edgeBands };
+import catalog51 from './catalog.v51.generated.js';
+export { catalogMeta, catalog51 };
+export const edgeBands = [...generatedEdgeBands.map(e=>({...e,legacyCatalog:true,active:false,successorId:catalog51.aliases[e.id]||''})),...catalog51.edgeBands];
+export const services = catalog51.services;
 
 export const categories = [
   ...generatedCategories,
@@ -92,6 +95,10 @@ export const materials = [
     perimeterTrim: 30,
   },
 ];
+
+for(const material of materials){material.legacyCatalog=true;material.active=false;material.successorId=catalog51.aliases[material.id]||'';}
+materials.push(...catalog51.materials);
+categories.push(...catalog51.categories);
 
 export const statusLabels = {
   cotizacion: "Cotización",

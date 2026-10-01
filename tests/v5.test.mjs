@@ -80,18 +80,18 @@ test('V5 preserva un proyecto V3 al editar metadatos y archiva su precio al revi
   const id=randomUUID(),legacy={id,ownerId:f.user.id,project:{projectName:'Antiguo',clientName:'Cliente',status:'cotizacion'},payload:{workType:'boards',materialId:'62-egger-1502-1',materialIds:['62-egger-1502-1'],pieces:[{name:'Pieza',length:500,width:400,quantity:2,grain:'sin-veta'}],settings:{}},summary:{net:32123,vat:6103,total:38226}};
   const saved=await f.store.saveProject(legacy);
   let response=await f.request(`/api/projects/${id}`,'PATCH',{project:{clientName:'Cliente corregido'}},f.headers);assert.equal(response.status,200);assert.deepEqual(response.body.project.summary,legacy.summary);assert.deepEqual(response.body.project.settings,{});assert.equal(response.body.project.revisionNo,1);
-  response=await f.request(`/api/projects/${id}`,'PATCH',{pieces:legacy.payload.pieces.map(p=>({...p,length:600}))},f.headers);assert.equal(response.status,200,JSON.stringify(response.body));assert.equal(response.body.project.settings.calculationVersion,'5.0');assert.deepEqual(response.body.project.history[0].summary,legacy.summary);assert.deepEqual(response.body.project.history[0].settings,{});
+  response=await f.request(`/api/projects/${id}`,'PATCH',{pieces:legacy.payload.pieces.map(p=>({...p,length:600}))},f.headers);assert.equal(response.status,200,JSON.stringify(response.body));assert.equal(response.body.project.settings.calculationVersion,'5.1');assert.deepEqual(response.body.project.history[0].summary,legacy.summary);assert.deepEqual(response.body.project.history[0].settings,{});
  }finally{await f.close();}
 });
 test('V5 agrupa tableros y placas, protege flete facturado y no revela costos públicos',async()=>{
  const f=await sessionFixture();try{
   const catalog=await f.request('/api/catalog');assert.equal(JSON.stringify(catalog.body).includes('purchasePrice'),false);assert.equal(JSON.stringify(catalog.body).includes('minPrice'),false);
   const a=await f.request('/api/projects','POST',sample(),f.headers);const p=a.body.project;
-  const stone={...sample(),groupId:p.groupId,workType:'slabs',materialId:'neolith-12-1600x3200',materialCustomizations:{'neolith-12-1600x3200':{color:'Color libre'}},pieces:[{name:'Cubierta',length:1600,width:700,quantity:1,grain:'sin-veta',edges:{},finishes:{top:'bevel',right:'miter45'}}]};
+  const stone={...sample(),groupId:p.groupId,workType:'slabs',materialId:'v51-15-2022-1009',materialCustomizations:{'v51-15-2022-1009':{color:'Color libre'}},pieces:[{name:'Cubierta',length:1600,width:700,quantity:1,grain:'sin-veta',edges:{},finishes:{top:'bevel',right:'miter45'}}]};
   const b=await f.request('/api/projects','POST',stone,f.headers);assert.equal(b.status,201,JSON.stringify(b.body));assert.equal(b.body.project.groupId,p.groupId);assert.equal(b.body.project.calculationSnapshot.plates[0].usablePlateLength,3200);assert.equal(b.body.project.calculationSnapshot.plates[0].usablePlateWidth,1600);
   await f.request('/api/v5/config','PATCH',{communes:[{id:'test',name:'Comuna',roadKm:10,verified:true}]},f.headers);
   const body={groupId:p.groupId,communeId:'test',street:'Calle 123',families:['boards','slabs'],status:'scheduled',invoiceNumber:'F1',invoiceDate:'2026-09-15'};
-  const d=await f.request('/api/v5/dispatches','POST',body,f.headers);assert.equal(d.status,201,JSON.stringify(d.body));assert.equal(d.body.dispatch.quote.net,21000);
+  const d=await f.request('/api/v5/dispatches','POST',body,f.headers);assert.equal(d.status,201,JSON.stringify(d.body));assert.equal(d.body.dispatch.quote.net,21500);
   const denied=await f.request('/api/v5/dispatches','POST',{...body,id:d.body.dispatch.id,street:'Otra calle'},f.headers);assert.equal(denied.status,400);
   const acc=await f.request('/api/admin/catalog','POST',{productType:'accessory',product:{sku:'B-TEST',name:'Bisagra prueba',categoryId:'bisagras',categoryName:'Bisagras',netPrice:1000,stock:0}},f.headers);assert.equal(acc.status,201);assert.equal(acc.body.catalog.accessories[0].sku,'B-TEST');
  }finally{await f.close();}

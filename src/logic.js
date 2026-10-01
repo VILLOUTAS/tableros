@@ -1,4 +1,5 @@
 import { priceV5 } from './v5-pricing.js';
+import { isV51, serviceKeyFor } from './v51-domain.js';
 const sides = ["top", "right", "bottom", "left"];
 export const MINIMUM_CUT_SIDE = 50;
 export const CALCULATION_VERSION = "4.1";
@@ -41,6 +42,7 @@ function calculationPlateDimensions(material = {}, settings = {}) {
 }
 
 export function materialPerimeterTrim(material = {}, settings = {}) {
+  if(isV51(settings))return Math.max(0,Number(material.perimeterTrim ?? (isStoneMaterial(material)?30:10)));
   if (!settings?.calculationVersion || settings.calculationVersion === "legacy-v3") {
     return Math.max(0, Number(settings.perimeterTrim) || 0);
   }
@@ -655,6 +657,7 @@ export function assignPieceCodes(pieces = []) {
 }
 
 export function cutRateForMaterial(material = {}, settings = {}) {
+  if(isV51(settings))return Math.max(0,Number(settings[serviceKeyFor(material)] ?? settings.servicePolicies?.[serviceKeyFor(material)]?.price ?? 0));
   if (isNeolithMaterial(material)) {
     return Math.max(
       0,
@@ -1144,7 +1147,7 @@ export function optimize(material, pieces, edgeBands, settings = {}) {
   }
 
   const billsStoneMaterial =
-    isStoneMaterial(material) && normalizedSettings.calculationVersion === "4.0";
+    isStoneMaterial(material) && (normalizedSettings.calculationVersion === "4.0" || (isV51(settings)&&settings.includeStoneMaterial===true));
   const materialUnitPrice =
     isStoneMaterial(material) && !billsStoneMaterial
       ? 0
@@ -1152,7 +1155,7 @@ export function optimize(material, pieces, edgeBands, settings = {}) {
   const boardSubtotal = plates.length * materialUnitPrice;
   const edgeSubtotal = Object.entries(metersByEdge).reduce((total, [id, meters]) => {
     const price = edgeBands.find((item) => item.id === id)?.price ?? 0;
-    return total + meters * price;
+    return total + meters * (isV51(settings)?1.02:1) * price;
   }, 0);
   const cutCount = plates.reduce(
     (total, plate) =>
@@ -1439,8 +1442,10 @@ export function optimizeProject(
           material: edge.material || "",
           thickness: Number(edge.thickness) || 0,
           meters: Number(meters) || 0,
+          materialMeters: (Number(meters)||0)*(isV51(settings)?1.02:1),
+          wasteMeters: isV51(settings)?(Number(meters)||0)*0.02:0,
           unitPrice,
-          materialSubtotal: (Number(meters) || 0) * unitPrice,
+          materialSubtotal: (Number(meters) || 0) * (isV51(settings)?1.02:1) * unitPrice,
           serviceRate,
           serviceSubtotal: (Number(meters) || 0) * serviceRate,
         };
@@ -1489,7 +1494,7 @@ export function optimizeProject(
         serviceSubtotal: item.meters * item.unitPrice,
       })),
   };
-  return settings.calculationVersion === '5.0' ? priceV5(projectResult,activeMaterials,edgeBands,settings) : projectResult;
+  return ['5.0','5.1'].includes(settings.calculationVersion) ? priceV5(projectResult,activeMaterials,edgeBands,settings) : projectResult;
 }
 
 export function summarizePlateLeftovers(plate) {
@@ -2047,7 +2052,7 @@ export function drawCutPlan(
   ctx.fillText("TOTAL ML DE CORTE", metricLabelX, 52);
   ctx.fillText(neolith ? "TOTAL ML DE ACABADOS" : "TOTAL ML DE ENCHAPE", metricLabelX, 76);
   ctx.fillText("PASADAS / PÉRDIDA TOTAL", metricLabelX, 100);
-  ctx.fillText("DISCO NOMINAL / POR PASADA", metricLabelX, 124);
+  ctx.fillText(context.calculationVersion==='5.1'?"CONSUMO DE DISCO POR CORTE":"DISCO NOMINAL / POR PASADA", metricLabelX, 124);
   ctx.textAlign = "right";
   ctx.fillText(
     productionMetrics.cutMeters.toLocaleString("es-CL", {
@@ -2073,7 +2078,7 @@ export function drawCutPlan(
     100,
   );
   ctx.fillText(
-    `${bladeThickness.toLocaleString("es-CL")} / ${effectiveKerf.toLocaleString(
+    `${context.calculationVersion==='5.1'?'':bladeThickness.toLocaleString("es-CL")+' / '}${effectiveKerf.toLocaleString(
       "es-CL",
     )} mm`,
     metricValueX,

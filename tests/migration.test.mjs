@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
 import { PostgresStore } from '../server.mjs';
+import {initializeV51} from '../v51-server.mjs';
 import { initializeV5 } from '../v5-server.mjs';
 
 test('PostgreSQL: migración aditiva, repetible, datos históricos intactos y concurrencia por versión',async()=>{
@@ -16,7 +17,7 @@ test('PostgreSQL: migración aditiva, repetible, datos históricos intactos y co
     await pg.query(`INSERT INTO app_users(id,email,password_hash,full_name,role) VALUES($1,'edmundo@villoutas.cl','hash-de-prueba','Edmundo','admin')`,[owner]);
     await pg.query(`INSERT INTO projects(id,owner_id,client_name,status,payload,summary)VALUES($1,$2,'Cliente histórico','cotizacion',$3,$4)`,[id,owner,JSON.stringify(payload),JSON.stringify(summary)]);
     const before=(await pg.query('SELECT * FROM projects')).rows[0];
-    await store.init();await initializeV5(store);await store.init();await initializeV5(store);
+    await store.init();await initializeV5(store);await initializeV51(store);await store.init();await initializeV5(store);await initializeV51(store);
     const after=(await pg.query('SELECT * FROM projects')).rows[0];
     for(const key of Object.keys(before))assert.deepEqual(after[key],before[key],`Cambió ${key}`);
     assert.equal((await store.getUser(owner)).role,'superadmin');
