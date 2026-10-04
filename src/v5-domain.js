@@ -2,7 +2,7 @@ import { RELEASE, internalUser } from './v51-domain.js';
 export const V5 = RELEASE;
 export function calculationSignature(p={}) {
   const settings=p.settings||{};
-  return JSON.stringify({materialIds:p.materialIds?.length?p.materialIds:[p.materialId],
+  return JSON.stringify({saleLines:(p.saleLines||[]).map(l=>[l.productId,Number(l.quantity),Number(l.discount||0)]),delivery:p.delivery?.required?[p.delivery.communeId,p.delivery.street,Number(p.delivery.discount||0)]:false,materialIds:p.materialIds?.length?p.materialIds:[p.materialId],
     custom:Object.entries(p.materialCustomizations||{}).sort(([a],[b])=>a.localeCompare(b)),
     pieces:(p.pieces||[]).map(x=>[x.materialId||p.materialId,Number(x.length),Number(x.width),Number(x.quantity),x.grain,x.measurementMode||'finished',
       ['top','bottom','left','right'].map(side=>x.edges?.[side]||null),['top','bottom','left','right'].map(side=>x.finishes?.[side]||'rough')]),
@@ -11,17 +11,21 @@ export function calculationSignature(p={}) {
 export const ROLE_LABELS = {
   superadmin: 'Superadministrador', admin: 'Administrador', comercial: 'Comercial',
   produccion: 'Producción', instalacion: 'Instalación', logistica: 'Logística',
-  supervisor: 'Supervisor', finanzas: 'Finanzas', cliente: 'Cliente',
+  supervisor: 'Supervisor', finanzas: 'Finanzas', operador:'Operador', instalador:'Instalador', cliente: 'Cliente',
 };
 export const rolesOf = (user = {}) => [...new Set((Array.isArray(user?.roles) ? user.roles : [user?.role]).filter(r => ROLE_LABELS[r]))];
 export function permitted(user, action) {
   const roles = rolesOf(user);
   if (roles.includes('superadmin')) return true;
+  if(['users','costs'].includes(action)&&roles.includes('admin')&&user?.permissions?.includes(action))return true;
   const grants = {
-    users: [], settings: [], costs: ['finanzas'], reports: ['admin','finanzas','supervisor','comercial','produccion','logistica'],
-    catalog: ['admin','produccion','finanzas'], categories: ['admin'], salesPrices: ['admin'],
-    products: ['admin','produccion'], quote: ['admin','comercial','cliente'], discount: ['admin','comercial'],
-    dispatch: ['admin','logistica','produccion'], allProjects: ['admin','produccion','logistica','supervisor','finanzas','comercial','instalacion'],
+    users: [], settings: ['admin'], shippingSettings:['admin'], costs: ['finanzas'], payRates:['admin','produccion','finanzas'],
+    reports: ['admin','finanzas','supervisor','comercial','produccion','instalacion','logistica'],
+    catalog: ['admin'], categories: ['admin'], salesPrices: ['admin'], products: ['admin'],
+    quote: ['admin','comercial','cliente'], discount: ['admin','comercial'],
+    dispatch: ['admin','logistica','produccion'], suggestDispatch:['admin','comercial'],
+    tasks:['admin','produccion','instalacion','logistica'], resources:['admin','produccion','instalacion'],
+    allProjects: ['admin','produccion','instalacion','logistica','supervisor','finanzas'],
   };
   return (grants[action] || []).some(r => roles.includes(r));
 }
@@ -107,7 +111,7 @@ export function monthlyDashboard(projects, month, salesBasis='facturado_pagado',
     } else if(!production && ['despacho','entregado'].includes(p.project?.status)) result.undatedProduction++;
   }
   // Fletes son una familia independiente; no se suman por cada cotización del envío.
-  for(const d of dispatches){if(d.invoiceDate && d.invoiceNumber && monthInChile(`${d.invoiceDate}T12:00:00-03:00`)===month && d.status!=='cancelled'){
+  for(const d of dispatches){if(!d.includedInQuote && d.invoiceDate && d.invoiceNumber && monthInChile(`${d.invoiceDate}T12:00:00-03:00`)===month && d.status!=='cancelled'){
     const net=Number(d.quote?.net)||0;result.netSales+=net;families.Despachos=(families.Despachos||0)+net;sales[d.sellerName||'Despachos']=(sales[d.sellerName||'Despachos']||0)+net;
   }}
   return {...result,sales,families};
@@ -121,9 +125,10 @@ export function publicCatalogItem(item,user) {
   return copy;
 }
 export function stripCosts(value,user) {
-  if(permitted(user,'costs'))return value;
-  if(value instanceof Date)return value;
-  if(Array.isArray(value))return value.map(x=>stripCosts(x,user));
-  if(value && typeof value==='object')return Object.fromEntries(Object.entries(value).filter(([key])=>!['purchasePrice','minPrice','servicePurchasePrice','serviceMinPrice','costSnapshot',...(!internalUser(user)?['supplierCode','sourceId','originCode','barcode']:[])].includes(key)).map(([key,v])=>[key,stripCosts(v,user)]));
-  return value;
+  const hidden=new Set();
+  if(!permitted(user,'costs'))for(const k of ['purchasePrice','minPrice','servicePurchasePrice','serviceMinPrice','costSnapshot','unitCost','plannedCost','actualCost','laborCost','margin'])hidden.add(k);
+  if(!permitted(user,'payRates')&&!permitted(user,'costs'))for(const k of ['payAmount','payRateSnapshot','payTotal','unitRate','hourRate'])hidden.add(k);
+  if(!internalUser(user))for(const k of ['supplierCode','sourceId','originCode','barcode','assignedOperatorIds'])hidden.add(k);
+  const walk=v=>v instanceof Date?v:Array.isArray(v)?v.map(walk):v&&typeof v==='object'?Object.fromEntries(Object.entries(v).filter(([k])=>!hidden.has(k)).map(([k,x])=>[k,walk(x)])):v;
+  return walk(value);
 }

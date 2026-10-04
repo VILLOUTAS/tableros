@@ -1,7 +1,8 @@
-export const RELEASE = '5.1';
-export const isV51 = settings => settings?.calculationVersion === RELEASE;
+import {SERVICE_KEYS55} from './v55-domain.js';
+export const RELEASE = '5.5';
+export const isV51 = settings => ['5.1','5.5'].includes(settings?.calculationVersion);
 export const normalizeSearch = value => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
-export const internalUser = user => (user?.roles || [user?.role]).some(r => ['superadmin','admin','comercial','produccion','instalacion','logistica','supervisor','finanzas'].includes(r));
+export const internalUser = user => (user?.roles || [user?.role]).some(r => ['superadmin','admin','comercial','produccion','instalacion','logistica','supervisor','finanzas','operador','instalador'].includes(r));
 export const canSchedule = (user, kind) => (user?.roles || [user?.role]).some(r => ['superadmin','admin',kind === 'installations' ? 'instalacion' : 'produccion'].includes(r));
 export const CALENDARS = {boards:'Tableros',slabs:'Placas',installations:'Instalaciones'};
 export const SCHEDULE_STATES = {scheduled:'Programado',in_progress:'En ejecución',completed:'Terminado',cancelled:'Anulado'};
@@ -23,14 +24,14 @@ export function kerfValue(value, fallback=3) {
   return number;
 }
 export function serviceKeyFor(material) {
-  if (['stone','neolith'].includes(material.materialType)) return 'stoneCutPerPlateRate';
   if (material.cutServiceKey) return material.cutServiceKey;
+  if (['stone','neolith'].includes(material.materialType)) return 'stoneCutPerPlateRate';
   const text=normalizeSearch(material.name+' '+material.brand+' '+material.categoryName);
   return /stylelite/.test(text)?'styleliteCutRate':/acrilico|petlite|trunatur/.test(text)?'acrylicCutRate':'melamineCutRate';
 }
 export function effectiveConfig(config, services=[]) {
   const policies={...config.services};
-  for(const [key,sku] of Object.entries(SERVICE_KEYS)) {
+  for(const [key,sku] of Object.entries(services.some(s=>s.catalogRelease==='5.5')?SERVICE_KEYS55:SERVICE_KEYS)) {
     const item=services.find(s=>s.sku===sku && s.active!==false);
     if(item) policies[key]={name:item.name,sku,price:item.netPrice,minPrice:item.minPrice,purchasePrice:item.purchasePrice,discountLimit:item.discountLimit};
   }

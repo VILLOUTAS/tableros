@@ -7,8 +7,8 @@ import {
 
 import catalog51 from './catalog.v51.generated.js';
 export { catalogMeta, catalog51 };
-export const edgeBands = [...generatedEdgeBands.map(e=>({...e,legacyCatalog:true,active:false,successorId:catalog51.aliases[e.id]||''})),...catalog51.edgeBands];
-export const services = catalog51.services;
+export const edgeBands = [...generatedEdgeBands.map(e=>({...e,legacyCatalog:true,active:false,successorId:catalog51.aliases[e.id]||''})),...structuredClone(catalog51.edgeBands)];
+export const services = structuredClone(catalog51.services);
 
 export const categories = [
   ...generatedCategories,
@@ -97,7 +97,7 @@ export const materials = [
 ];
 
 for(const material of materials){material.legacyCatalog=true;material.active=false;material.successorId=catalog51.aliases[material.id]||'';}
-materials.push(...catalog51.materials);
+materials.push(...structuredClone(catalog51.materials));
 categories.push(...catalog51.categories);
 
 export const statusLabels = {
@@ -121,3 +121,9 @@ export const sides = [
   ["left", "A1 · Izquierdo"],
   ["right", "A2 · Derecho"],
 ];
+
+import catalog55 from './catalog.v55.generated.js';
+export {catalog55};
+export const accessories=catalog55.accessories;
+for(const list of [materials,edgeBands,services])for(const p of list){p.active=false;p.legacyCatalog=true;if(catalog55.aliases[p.id])p.successorId=catalog55.aliases[p.id];}
+materials.push(...catalog55.materials);edgeBands.push(...catalog55.edgeBands);services.push(...catalog55.services);categories.push(...catalog55.categories);

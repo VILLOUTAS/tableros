@@ -1,3 +1,5 @@
+import {productionReady} from './src/v55-domain.js';
+import {initializeV55,registerV55Routes,enrichCatalog55,isAssigned} from './v55-server.mjs';
 import {initializeV51,registerV51Routes} from './v51-server.mjs';
 import {effectiveConfig,kerfValue,RELEASE} from './src/v51-domain.js';
 import { initializeV5, prepareProjectV5, registerV5Routes, visibleCatalog, SUPER_EMAIL, fail } from './v5-server.mjs';
@@ -14,7 +16,7 @@ import helmet from "helmet";
 import pg from "pg";
 import unzipper from "unzipper";
 
-import { categories as baseCategories, edgeBands, materials, services as baseServices, catalog51 } from "./src/data.js";
+import { categories as baseCategories, edgeBands, materials, services as baseServices, accessories as baseAccessories, catalog51, catalog55 } from "./src/data.js";
 import {
   isStoneMaterial,
   optimizeProject,
@@ -63,6 +65,7 @@ const publicUser = (user) =>
     fullName: user.fullName,
     role: user.role,
     roles: rolesOf(user),
+    permissions:user.permissions||[],
     clientName: user.clientName || "",
     phone: user.phone || "",
     rut: user.rut || "",
@@ -237,13 +240,13 @@ function catalogNumber(value, fallback = 0) {
 }
 
 function catalogExtra(source) {
-  return {catalogRelease:'5.1',imageKey:String(source.imageKey||('foto-v51-'+source.sku)),unit:String(source.unit||'unidad'),cutServiceKey:String(source.cutServiceKey||''),serviceSku:String(source.serviceSku||''),customColor:!!source.customColor,active:source.active!==false,supplier:String(source.supplier||''),stock:source.stock===''||source.stock==null?null:catalogNumber(source.stock),
+  return {productType:source.productType,hardwareType:source.hardwareType,finish:source.finish,series:source.series,weightKey:source.weightKey,componentRule:source.componentRule,compatibilityPending:source.compatibilityPending,completeKit:source.completeKit,includesMaterial:source.includesMaterial,catalogRelease:'5.5',imageKey:String(source.imageKey||('foto-v55-'+source.sku)),unit:String(source.unit||'unidad'),cutServiceKey:String(source.cutServiceKey||''),serviceSku:String(source.serviceSku||''),customColor:!!source.customColor,active:source.active!==false,supplier:String(source.supplier||''),stock:source.stock===''||source.stock==null?null:catalogNumber(source.stock),
     colorName:String(source.colorName||''),format:String(source.format||''),taxonomyId:String(source.taxonomyId||''),materialType:String(source.materialType||'board'),
     serviceMinPrice:catalogNumber(source.serviceMinPrice),servicePurchasePrice:catalogNumber(source.servicePurchasePrice),
     perimeterTrim:Math.max(0,catalogNumber(source.perimeterTrim,source.materialType==='stone'||source.materialType==='neolith'?30:10))};
 }
 function normalizeCatalogProduct(productType, body = {}, current = {}) {
-  const source = { ...current, ...body };
+  const source = { ...current, ...body,productType };
   const sku = String(source.sku || "").trim();
   const name = String(source.name || "").trim();
   if(['accessory','service'].includes(productType))return {...catalogExtra(source),sku,name,description:String(source.description||''),categoryId:String(source.categoryId||'bisagras'),categoryName:String(source.categoryName||'Herrajes'),plateLength:catalogNumber(source.plateLength),plateWidth:catalogNumber(source.plateWidth),thickness:catalogNumber(source.thickness),netPrice:catalogNumber(source.netPrice),minPrice:catalogNumber(source.minPrice),purchasePrice:source.purchasePrice==null||source.purchasePrice===''?null:catalogNumber(source.purchasePrice),image:String(source.image||''),supplierCode:String(source.supplierCode||'')};
@@ -342,7 +345,8 @@ function catalogProductError(productType, product) {
 async function buildRuntimeCatalog(database) {
   const revisions = await database.listCatalogRevisions();
   const archive=await database.getV5('v51:catalog-migration');
-  const archivedIds=new Set(archive?.revisionIds||[]);
+  const archive55=await database.getV5('v55:migration');
+  const archivedIds=new Set([...(archive?.revisionIds||[]),...(archive55?.revisionIds||[])]);
   const replacedIds = new Set(
     revisions.map((revision) => revision.replacesId).filter(Boolean),
   );
@@ -411,14 +415,14 @@ async function buildRuntimeCatalog(database) {
         material.active !== false && material.categoryId === category.id,
     ).length,
   }));
-  const accessories=revisions.filter(r=>r.productType==='accessory').map(r=>({...r.payload,id:r.id,active:r.active&&r.payload.active!==false,replacesId:r.replacesId,createdAt:r.createdAt}));
-  const serviceItems=[...baseServices.map(s=>({...s,active:s.active!==false&&!replacedIds.has(s.id)})),...revisions.filter(r=>r.productType==='service').map(r=>({...r.payload,id:r.id,active:r.active&&r.payload.active!==false&&!replacedIds.has(r.id),replacesId:r.replacesId}))];
+  const accessories=[...baseAccessories.map(p=>({...p,active:p.active!==false&&!replacedIds.has(p.id)})),...revisions.filter(r=>r.productType==='accessory').map(r=>({...r.payload,id:r.id,active:r.active&&r.payload.active!==false,replacesId:r.replacesId,createdAt:r.createdAt,legacyCatalog:archivedIds.has(r.id),active:r.active&&r.payload.active!==false&&!replacedIds.has(r.id)&&!archivedIds.has(r.id)}))];
+  const serviceItems=[...baseServices.map(s=>({...s,active:s.active!==false&&!replacedIds.has(s.id)})),...revisions.filter(r=>r.productType==='service').map(r=>({...r.payload,id:r.id,active:r.active&&r.payload.active!==false&&!replacedIds.has(r.id)&&!archivedIds.has(r.id),legacyCatalog:archivedIds.has(r.id),replacesId:r.replacesId}))];
   for(const s of serviceItems)if(taxonomy.find(n=>n.id===s.taxonomyId)?.active===false)s.active=false;
   for(const edge of allEdgeBands.filter(e=>!e.legacyCatalog)){
     const service=serviceItems.find(s=>s.sku===edge.serviceSku&&s.active!==false);
     if(service){edge.serviceRate=service.netPrice;edge.serviceMinPrice=service.minPrice;edge.servicePurchasePrice=service.purchasePrice;}
   }
-  return { categories, materials: allMaterials, edgeBands: allEdgeBands, accessories, services:serviceItems }; 
+  return enrichCatalog55({ categories, materials: allMaterials, edgeBands: allEdgeBands, accessories, services:serviceItems },database); 
 }
 
 function normalizeImageKey(value = "") {
@@ -1028,7 +1032,9 @@ export function projectVisibility(user) {
   const where =
       permitted(user,"allProjects")
         ? "TRUE"
-        : userHasRole(user, "comercial")
+        : rolesOf(user).some(r=>["operador","instalador"].includes(r))
+          ? "COALESCE(p.payload->'assignedOperatorIds','[]'::jsonb) ? $1::text"
+          : userHasRole(user, "comercial")
             ? "(p.owner_id=$1 OR p.assigned_to=$1 OR COALESCE(p.payload->'collaboratorIds','[]'::jsonb) ? $1::text)"
             : "p.owner_id=$1";
   const params = where === "TRUE"
@@ -1060,6 +1066,7 @@ class MemoryStore {
       mustChangePassword: false,
       ...user,
       roles: rolesOf(user),
+    permissions:user.permissions||[],
       createdAt: new Date().toISOString(),
     };
     this.users.set(record.id, record);
@@ -1162,6 +1169,7 @@ class MemoryStore {
       .filter((project) => {
         if (project.deletedAt) return false;
         if(permitted(user,"allProjects"))return true;
+        if(rolesOf(user).some(r=>["operador","instalador"].includes(r)))return isAssigned(user,project);
         if (userHasRole(user, "admin")) return true;
         if (userHasRole(user, "produccion")) return true;
         if (userHasRole(user, "comercial")) {
@@ -1231,6 +1239,7 @@ class MemoryStore {
 
 export function canReadProject(user, project) {
   if(permitted(user,"allProjects")) return true;
+  if(rolesOf(user).some(r=>["operador","instalador"].includes(r)))return isAssigned(user,project);
   if (userHasRole(user, "admin")) return true;
   if (userHasRole(user, "produccion")) return true;
   if (userHasRole(user, "comercial")) {
@@ -1244,7 +1253,7 @@ export function canReadProject(user, project) {
 }
 
 export function canEditProject(user, project) {
-  if(userHasRole(user,"logistica") && ["despacho","entregado"].includes(project.project.status)) return true;
+  if(["produccion","instalacion","logistica"].some(r=>userHasRole(user,r)) && ["facturado_pagado","produccion","despacho","entregado"].includes(project.project.status)) return true;
   if (userHasRole(user, "admin")) return true;
   const productionCanEdit = userHasRole(user, "produccion") && [
       "facturado_pagado",
@@ -1270,7 +1279,7 @@ export function canTransitionProjectStatus(user, currentStatus, nextStatus) {
       (currentStatus === "cotizacion" && nextStatus === "facturacion") ||
       (currentStatus === "facturacion" && nextStatus === "facturado_pagado")
     )) return true;
-  if (userHasRole(user, "produccion") && (
+  if (["produccion","instalacion","logistica"].some(r=>userHasRole(user,r)) && (
       (currentStatus === "facturado_pagado" && nextStatus === "produccion") ||
       (currentStatus === "produccion" && nextStatus === "despacho") ||
       (currentStatus === "despacho" && nextStatus === "entregado")
@@ -1325,8 +1334,12 @@ function projectRecord(body, ownerId, current = null) {
       ).trim(),
     },
     payload: {
+      assignedOperatorIds:current?.assignedOperatorIds||[],
+      actualProductionEnd:current?.actualProductionEnd||null,
+      saleLines:Array.isArray(body.saleLines)?body.saleLines:current?.saleLines||[],
+      delivery:body.delivery??current?.delivery??{required:false},
       workType:
-        body.workType === "slabs" || body.workType === "boards"
+        ["slabs","boards","hardware"].includes(body.workType)
           ? body.workType
           : current?.workType || "",
       categoryId: String(body.categoryId || ""),
@@ -1509,6 +1522,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
   await database.init();
   await initializeV5(database);
   await initializeV51(database);
+  await initializeV55(database);
 
   const app = express();
   app.set("trust proxy", 1);
@@ -1570,6 +1584,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
     if (!token) return response.status(401).json({ error: "Debes iniciar sesión." });
     const session = await database.getSession(hashToken(token));
     if (!session) return response.status(401).json({ error: "Sesión vencida." });
+    session.user={...session.user,permissions:(await database.getV5('permissions:'+session.user.id))?.permissions||[]};
     request.auth = { ...session, rawToken: token };
     const passwordChangeAllowed = new Set([
       "/api/auth/me",
@@ -1606,12 +1621,14 @@ export async function createApplication({ store, useMemory = false } = {}) {
   app.use('/api',async(req,res,next)=>{
     const token=parseCookies(req.get('cookie')).casa_session;
     const session=token?await database.getSession(hashToken(token)):null;
+    if(session)session.user={...session.user,permissions:(await database.getV5('permissions:'+session.user.id))?.permissions||[]};
     const original=res.json.bind(res);
     res.json=payload=>original(stripCosts(payload,session?.user));
     req.catalogUser=session?.user?.mustChangePassword?null:session?.user;
     res.set('Cache-Control','no-store');
     next();
   });
+  registerV55Routes(app,{db:database,authenticate,csrf,buildCatalog:()=>buildRuntimeCatalog(database),canReadProject});
   registerV5Routes(app,{db:database,authenticate,csrf,canReadProject,loadConfig:async()=>effectiveConfig(mergeConfig(await database.getV5('config')),(await buildRuntimeCatalog(database)).services)});
   registerV51Routes(app,{db:database,authenticate,csrf,buildCatalog:()=>buildRuntimeCatalog(database),normalizeCatalogProduct,catalogProductError});
 
@@ -1718,7 +1735,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
   };
 
   app.get("/api/health", (_request, response) => {
-    response.json({ ok: true, version:'5.1.0', database: databaseUrl ? "postgresql" : "memoria-local" });
+    response.json({ ok: true, version:'5.5.0', database: databaseUrl ? "postgresql" : "memoria-local" });
   });
 
   app.get("/api/catalog", async (_request, response) => {
@@ -1985,7 +2002,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
   });
 
   app.get("/api/users", authenticate, superOnly, async (_request, response) => {
-    response.json({ users: (await database.listUsers()).map(publicUser) });
+    response.json({ users: await Promise.all((await database.listUsers()).map(async u=>publicUser({...u,permissions:(await database.getV5('permissions:'+u.id))?.permissions||[]}))) });
   });
 
   app.get("/api/public/commercials", async (_request, response) => {
@@ -2010,6 +2027,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
 
   app.post("/api/users", authenticate, csrf, superOnly, async (request, response) => {
     const input = normalizeUserInput(request.body);
+    if(input.roles.includes('superadmin')&&!userHasRole(request.auth?.user,'superadmin'))throw fail('Solo el Superadministrador puede asignar ese perfil.',403);
     const validationError = userInputError(input);
     if (validationError) {
       return response.status(400).json({ error: validationError });
@@ -2066,7 +2084,8 @@ export async function createApplication({ store, useMemory = false } = {}) {
             ? Number(entry.sourceRow)
             : index + 2;
         const input = normalizeUserInput(entry);
-        const validationError = userInputError(input);
+        if(input.roles.includes('superadmin')&&!userHasRole(request.auth?.user,'superadmin'))throw fail('Solo el Superadministrador puede asignar ese perfil.',403);
+    const validationError = userInputError(input);
         if (validationError) {
           errors.push({ row: sourceRow, email: input.email, error: validationError });
           return;
@@ -2145,6 +2164,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
     async (request, response) => {
       const current = await database.getUser(request.params.id);
       if (!current) return response.status(404).json({ error: "Usuario no encontrado." });
+      if(!userHasRole(request.auth.user,'superadmin')&&(rolesOf(current).includes('superadmin')||normalizeRoles(request.body.roles,request.body.role).includes('superadmin')))throw fail('No puedes administrar un Superadministrador.',403);
       const changes = {};
       if (request.body.fullName !== undefined) {
         changes.fullName = String(request.body.fullName).trim();
@@ -2347,7 +2367,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
         },
         null,
       );
-      record.payload.settings={...record.payload.settings,calculationVersion:RELEASE,kerf:kerfValue(record.payload.settings?.kerf),perimeterTrim:10,neolithTrim:30};
+      record.payload.settings={...record.payload.settings,calculationVersion:RELEASE,kerf:kerfValue(record.payload.settings?.kerf,(await database.getV5('config'))?.defaultKerf??3),perimeterTrim:10,neolithTrim:30};
       record.id = randomUUID();
       record.ownerId = null;
       record.project.status = "cotizacion";
@@ -2441,7 +2461,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
     }
     if(!permitted(request.auth.user,"quote")) throw fail("Tu perfil no puede crear cotizaciones.",403);
     const record = projectRecord(request.body, request.auth.user.id);
-    record.payload.settings={...record.payload.settings,calculationVersion:RELEASE,kerf:kerfValue(record.payload.settings?.kerf),perimeterTrim:10,neolithTrim:30};
+    record.payload.settings={...record.payload.settings,calculationVersion:RELEASE,kerf:kerfValue(record.payload.settings?.kerf,(await database.getV5('config'))?.defaultKerf??3),perimeterTrim:10,neolithTrim:30};
     record.id = randomUUID();
     if (!record.project.clientName) {
       return response.status(400).json({ error: "El nombre del cliente es obligatorio." });
@@ -2512,7 +2532,8 @@ export async function createApplication({ store, useMemory = false } = {}) {
     const productionChanged =
       projectProductionSignature(record.payload) !==
       projectProductionSignature(current);
-    if(calculationSignature(record.payload)!==calculationSignature(current) && userHasRole(request.auth.user,'logistica') && !['admin','produccion','comercial'].some(role=>userHasRole(request.auth.user,role))) throw fail('Logística puede actualizar la entrega, pero no el cálculo.',403);
+    if(calculationSignature(record.payload)!==calculationSignature(current) && !permitted(request.auth.user,'quote')) throw fail('Tu perfil puede gestionar el trabajo, pero no cambiar su valorización.',403);
+    if(current.settings?.calculationVersion==='5.5'&&requestedStatus==='despacho'&&current.project.status!=='despacho'){const tasks=(await database.listV5('task:')).filter(t=>t.groupId===(current.groupId||current.id)&&t.required&&['boards','slabs'].includes(t.area));const siblings=(await database.listProjects({role:'superadmin'})).filter(p=>(p.groupId||p.id)===(current.groupId||current.id));if(!productionReady(siblings,tasks))throw fail('Completa las tareas de producción requeridas antes de pasar a despacho.');}
     const dimensionError = productionChanged
       ? projectDimensionError(record, catalog.materials, catalog.edgeBands)
       : "";
@@ -2545,7 +2566,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
     }
     if (userHasRole(request.auth.user, "cliente")) {
       record.project.status = "cotizacion";
-      record.assignedTo = current.assignedTo;
+      record.assignedTo = request.body.assignedTo||current.assignedTo;
       record.payload.collaboratorIds = current.collaboratorIds || [];
     } else if (userHasRole(request.auth.user, "comercial")) {
       record.assignedTo = current.assignedTo || request.auth.user.id;

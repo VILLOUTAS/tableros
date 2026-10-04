@@ -1,3 +1,4 @@
+import {serviceDemand} from '../src/v55-domain.js';
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -36,7 +37,7 @@ async function request(base, path, options = {}) {
 }
 
 test("protege acceso, crea perfiles y permite guardar proyectos por perfil", async () => {
-  const { app } = await createApplication({ useMemory: true });
+  const { app,store } = await createApplication({ useMemory: true });
   const server = app.listen(0, "127.0.0.1");
   await new Promise((resolve) => server.once("listening", resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -371,6 +372,8 @@ test("protege acceso, crea perfiles y permite guardar proyectos por perfil", asy
     assert.equal(scheduled.body.project.executionDate, "2026-08-03");
     assert.equal(scheduled.body.project.deliveryDate, "2026-08-05");
 
+    // Fixture de producción validada: el flujo de tareas se prueba en v55.test.mjs.
+    for(const [serviceSku,quantity] of Object.entries(serviceDemand(enteredProduction.body.project)))await store.putV5('task:auth-'+serviceSku,{id:'auth-'+serviceSku,quoteId:project.body.project.id,groupId:project.body.project.groupId,area:'boards',required:true,status:'completed',serviceSku,quantity});
     const dispatched = await request(
       base,
       `/api/projects/${project.body.project.id}`,
@@ -456,7 +459,7 @@ test("las consultas por perfil solo envían parámetros cuando el SQL los usa", 
   );
   assert.deepEqual(
     projectVisibility({ id: "comercial-1", role: "comercial" }).params,
-    [],
+    ["comercial-1"],
   );
 });
 

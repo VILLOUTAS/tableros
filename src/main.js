@@ -1,3 +1,5 @@
+import './v55.css';
+import {attach55,load55,v55,dispatch55View,operations55View,parameters55View,costs55View,quoteExtras55,summaryExtras55,pricePreview55,permissions55View} from './v55-ui.js';
 import './v51.css';
 import {v51,attachV51,crm51View,management51View,catalog51View,searchForm,filteredProjects} from './v51-ui.js';
 import {internalUser,kerfValue,updateQuoteProducts,serviceKeyFor} from './v51-domain.js';
@@ -176,7 +178,7 @@ const projectMaterial = (material) => {
     colorName: color,
     netPrice: preservesV40Pricing
       ? Math.max(0, Number(customization.netPrice ?? material.netPrice) || 0)
-      : state.settings.calculationVersion==='5.1'&&state.settings.includeStoneMaterial?material.netPrice:0,
+      : ['5.1','5.5'].includes(state.settings.calculationVersion)&&state.settings.includeStoneMaterial?material.netPrice:0,
   };
 };
 
@@ -345,7 +347,7 @@ function newQuoteState() {
 
 function canEditCurrent() {
   if(state.readOnlyRevision) return false;
-  if(hasRole("logistica") && ["despacho","entregado"].includes(state.project.status)) return true;
+  if(hasAnyRole(["produccion","instalacion","logistica"]) && ["facturado_pagado","produccion","despacho","entregado"].includes(state.project.status)) return true;
   if (auth.visitor) return !state.visitorSubmitted;
   if (!auth.user) return false;
   if (hasRole("admin")) return true;
@@ -375,7 +377,7 @@ function statusEntriesForRole(
   }
   const allowed = new Set([currentStatus]);
   if (roles.includes("logistica") && currentStatus==="despacho") allowed.add("entregado");
-  if (roles.includes("produccion")) {
+  if (roles.some(r=>["produccion","instalacion","logistica"].includes(r))) {
     if (currentStatus === "facturado_pagado") {
       allowed.add("produccion");
     } else if (currentStatus === "produccion") {
@@ -473,6 +475,7 @@ function validateCurrentStep() {
 }
 
 function moveStep(delta) {
+  if(state.workType==='hardware'){state.step=delta>0?4:3;render();return;}
   if (delta > 0 && !validateCurrentStep()) return;
   state.step = Math.max(0, Math.min(4, state.step + delta));
   render();
@@ -483,8 +486,7 @@ async function saveProject(showMessage = true) {
   if (
     !state.project.clientName.trim() ||
     (state.project.rut.trim() && !validateRut(state.project.rut)) ||
-    selectedMaterials().length === 0 ||
-    state.pieces.length === 0
+    ((!selectedMaterials().length || !state.pieces.length)&&!state.saleLines?.length)
   ) {
     notify("Faltan datos obligatorios para guardar el proyecto.", "error");
     return false;
@@ -527,6 +529,7 @@ async function saveProject(showMessage = true) {
     edgeCodeMap: state.edgeCodeMap,
     defaultGrain: state.defaultGrain,
     pieces: state.pieces,
+    saleLines:state.saleLines||[],delivery:state.delivery||{required:false},
     settings: state.settings,
     invoiceNumber: state.invoiceNumber,
     dispatchGuideNumber: state.dispatchGuideNumber,
@@ -720,10 +723,11 @@ function passwordChangeView() {
 }
 
 function shell(content) {
+  const limited=userRoles().some(r=>["operador","instalador"].includes(r))&&!permitted(auth.user,"allProjects");
   const quote=state.view==='quote';
-  const title=quote?(state.workType==='slabs'?'Placas':'Tableros'):({dashboard:'Panel general',projects:'Proyectos',dispatch:'Despachos','v5-settings':'Configuración','v5-catalog':'Catálogo',users:'Usuarios',catalog:'Catálogo',production:'Agenda de pedidos',crm:'CRM de Producción',notifications:'Notificaciones'}[state.view]||'Casa Diseño');
-  return `<div class="v5-shell"><header class="v5-topbar"><button class="v5-brand" data-v5="home"><img class="brand-logo" src="/logo-casa-diseno.png" alt="Casa Diseño"><span>GESTIÓN & PROYECTOS <b>V5.1</b></span></button><nav aria-label="Navegación general"><button data-v5="home" class="${state.view==='dashboard'?'active':''}">Panel</button>${auth.user?'<button data-v5="projects">Proyectos</button>':''}${internalUser(auth.user)?'<button data-v51="crm">CRM de Producción</button>':''}<button data-v5="module" data-module="boards">Tableros</button><button data-v5="module" data-module="slabs">Placas</button>${auth.user?'<button data-v5="module" data-module="dispatch">Despachos</button>':''}<button data-action="catalog">Catálogo</button>${permitted(auth.user,'catalog')?'<button data-v5="catalog-manage">Administración</button>':''}</nav><details class="v5-account"><summary>${safe(auth.user?.fullName||'Visitante')} ▾</summary><div><small>${userRoles().map(r=>roleLabels[r]).join(' · ')||'Venta sin descuento'}</small>${permitted(auth.user,'users')?'<button data-action="users">Usuarios y roles</button>':''}${permitted(auth.user,'settings')||permitted(auth.user,'catalog')?'<button data-v5="settings">Configuración</button>':''}${auth.user?'<button data-action="notifications">Notificaciones</button>':''}<button data-action="${auth.visitor?'visitor-exit':'logout'}">Cerrar sesión</button></div></details></header>
-  <div class="v5-layout ${quote?'has-context':''}">${quote?`<aside class="v5-context"><p class="eyebrow">${title.toUpperCase()}</p><h3>${safe(state.project.projectName||'Nuevo proyecto')}</h3><p>${safe(state.quoteName||'Cotización')}</p><nav aria-label="Etapas de cotización">${steps.map(([label,subtitle],i)=>`<button class="step-link ${state.step===i?'active':''}" data-action="step" data-step="${i}"><span>${i+1}</span><b>${label}<small>${subtitle}</small></b></button>`).join('')}</nav><div class="v5-context-note"><b>R${state.revisionNo||1} · cálculo ${safe(state.settings.calculationVersion)}</b><p>Las modificaciones de medidas, veta, materiales y servicios generan una nueva revisión al guardar.</p>${state.readOnlyRevision?'<strong>Historial · solo consulta</strong>':''}</div></aside>`:''}<main class="v5-main"><header class="v5-page-header"><p class="eyebrow">${quote?'COTIZACIÓN / '+title.toUpperCase():'ESPACIO DE TRABAJO'}</p><h1>${quote?steps[state.step][0]:title}</h1>${quote?`<span class="status-pill">${statusLabels[state.project.status]}</span>`:''}</header><div class="workspace">${auth.user?searchForm():''}${content}</div></main></div>${state.message?`<div class="toast ${state.message.type}">${safe(state.message.text)}</div>`:''}</div>`;
+  const title=quote?(state.workType==='hardware'?'Herrajes y servicios':state.workType==='slabs'?'Placas':'Tableros'):({dashboard:'Panel general',projects:'Proyectos',dispatch:'Despachos','v5-settings':'Configuración','v5-catalog':'Catálogo',users:'Usuarios',catalog:'Catálogo',production:'Agenda de pedidos',crm:'CRM de Producción',notifications:'Notificaciones'}[state.view]||'Casa Diseño');
+  return `<div class="v5-shell"><header class="v5-topbar"><button class="v5-brand" data-v5="home"><img class="brand-logo" src="/logo-casa-diseno.png" alt="Casa Diseño"><span>GESTIÓN & PROYECTOS <b>V5.5</b></span></button><nav aria-label="Navegación general">${!limited?'<button data-v5="home">Panel</button>':''}${auth.user?'<button data-v5="projects">Proyectos</button>':''}${internalUser(auth.user)?'<button data-v51="crm">CRM de Producción</button>':''}${!limited?'<button data-v5="module" data-module="boards">Tableros</button><button data-v5="module" data-module="slabs">Placas</button><button data-v55="dispatch">Despachos</button><button data-action="catalog">Catálogo</button>':''}${canCreateQuote()?'<button data-v55="new-sale">Herrajes y servicios</button>':''}${permitted(auth.user,'catalog')?'<button data-v5="catalog-manage">Administración</button>':''}</nav><details class="v5-account"><summary>${safe(auth.user?.fullName||'Visitante')} ▾</summary><div><small>${userRoles().map(r=>roleLabels[r]).join(' · ')||'Venta sin descuento'}</small>${permitted(auth.user,'users')?'<button data-action="users">Usuarios y roles</button>':''}${permitted(auth.user,'settings')||permitted(auth.user,'catalog')?'<button data-v5="settings">Configuración</button>':''}${auth.user?'<button data-action="notifications">Notificaciones</button>':''}<button data-action="${auth.visitor?'visitor-exit':'logout'}">Cerrar sesión</button></div></details></header>
+  <div class="v5-layout ${quote?'has-context':''}">${quote?`<aside class="v5-context"><p class="eyebrow">${title.toUpperCase()}</p><h3>${safe(state.project.projectName||'Nuevo proyecto')}</h3><p>${safe(state.quoteName||'Cotización')}</p><nav aria-label="Etapas de cotización">${steps.map(([label,subtitle],i)=>({label,subtitle,i})).filter(({i})=>state.workType!=='hardware'||i>=3).map(({label,subtitle,i})=>`<button class="step-link ${state.step===i?'active':''}" data-action="step" data-step="${i}"><span>${state.workType==='hardware'?i-2:i+1}</span><b>${state.workType==='hardware'?(i===3?'Datos y productos':'Resumen'):label}<small>${state.workType==='hardware'?(i===3?'Cliente, servicios y despacho':'Revisión y descarga'):subtitle}</small></b></button>`).join('')}</nav><div class="v5-context-note"><b>R${state.revisionNo||1} · cálculo ${safe(state.settings.calculationVersion)}</b><p>Las modificaciones de medidas, veta, materiales y servicios generan una nueva revisión al guardar.</p>${state.readOnlyRevision?'<strong>Historial · solo consulta</strong>':''}</div></aside>`:''}<main class="v5-main"><header class="v5-page-header"><p class="eyebrow">${quote?'COTIZACIÓN / '+title.toUpperCase():'ESPACIO DE TRABAJO'}</p><h1>${quote?(state.workType==='hardware'?(state.step===4?'Resumen':'Datos y productos'):steps[state.step][0]):title}</h1>${quote?`<span class="status-pill">${statusLabels[state.project.status]}</span>`:''}</header><div class="workspace">${auth.user?searchForm():''}${content}</div></main></div>${state.message?`<div class="toast ${state.message.type}">${safe(state.message.text)}</div>`:''}</div>`;
 }
 
 function pieceImportPreview() {
@@ -1033,7 +1037,7 @@ function projectStep() {
         </label>` : ""}
       </div>
     </section>
-    ${stepFooter(false, state.workType === "slabs" ? "Continuar a placas" : "Continuar a tableros")}
+    ${stepFooter(false, state.workType === "hardware" ? "Revisar cotización" : state.workType === "slabs" ? "Continuar a placas" : "Continuar a tableros")}
   `;
 }
 
@@ -1579,6 +1583,8 @@ function applyNeolithFinishes() {
 }
 
 function summaryRows(summary) {
+  const extras=`${summary.additionalNet?`<div class="summary-row"><span>Productos y servicios adicionales</span><b>${clp(summary.additionalNet)}</b></div>`:''}${summary.shippingNet?`<div class="summary-row"><span>Despacho</span><b>${clp(summary.shippingNet)}</b></div>`:''}`;
+  if(state.workType==='hardware') return `${extras}<div class="summary-row net"><span>Neto</span><b>${clp(summary.net)}</b></div><div class="summary-row"><span>IVA 19 %</span><b>${clp(summary.vat)}</b></div><div class="summary-row total"><span>Total</span><b>${clp(summary.total)}</b></div>`;
   if (isSlabQuote()) {
     const cutRate = summary.boardCount
       ? summary.cuttingSubtotal / summary.boardCount
@@ -1589,7 +1595,7 @@ function summaryRows(summary) {
       <div class="summary-row"><span>Biselado o Pulido <small>${Number(summary.finishMetersByType?.bevel || 0).toFixed(2)} ml</small></span><b>${clp(Number(summary.finishMetersByType?.bevel || 0) * Number(summary.finishRates?.bevel || state.settings.stoneBevelRate))}</b></div>
       <div class="summary-row"><span>Corte 45° <small>${Number(summary.finishMetersByType?.miter45 || 0).toFixed(2)} ml</small></span><b>${clp(Number(summary.finishMetersByType?.miter45 || 0) * Number(summary.finishRates?.miter45 || state.settings.stoneMiter45Rate))}</b></div>
       ${summary.servicesDiscount ? `<div class="summary-row discount"><span>Descuento servicios <small>${summary.servicesDiscount} %</small></span><b>− ${clp(summary.servicesDiscountAmount)}</b></div>` : ""}
-      <div class="summary-row net"><span>Neto</span><b>${clp(summary.net)}</b></div>
+      ${extras}<div class="summary-row net"><span>Neto</span><b>${clp(summary.net)}</b></div>
       <div class="summary-row"><span>IVA 19 %</span><b>${clp(summary.vat)}</b></div>
       <div class="summary-row total"><span>Total</span><b>${clp(summary.total)}</b></div>
     `;
@@ -1615,7 +1621,7 @@ function summaryRows(summary) {
         ? `<div class="summary-row discount"><span>Descuento servicios <small>${summary.servicesDiscount} %</small></span><b>− ${clp(summary.servicesDiscountAmount)}</b></div>`
         : ""
     }
-    <div class="summary-row net"><span>Neto</span><b>${clp(summary.net)}</b></div>
+    ${extras}<div class="summary-row net"><span>Neto</span><b>${clp(summary.net)}</b></div>
     <div class="summary-row"><span>IVA 19 %</span><b>${clp(summary.vat)}</b></div>
     <div class="summary-row total"><span>Total</span><b>${clp(summary.total)}</b></div>
   `;
@@ -1665,7 +1671,7 @@ function invoiceBreakdown(result) {
                 (item) => `<article class="invoice-item">
                   <header><b>${safe(item.sku)}</b><span>${safe(item.group)} · ${safe(item.name)}</span></header>
                   <div class="invoice-line">
-                    <span>Tapacanto<small>${meters(item.materialMeters??item.meters)} ml × ${clp(item.unitPrice)}/ml${item.wasteMeters?` · incluye ${meters(item.wasteMeters)} ml de merma (2%)`:""}</small></span>
+                    <span>Tapacanto<small>${meters(item.materialMeters??item.meters)} ml × ${clp(item.unitPrice)}/ml${item.wasteMeters?` · incluye ${meters(item.wasteMeters)} ml de merma (${state.settings.calculationVersion==='5.5'?5:2}%)`:""}</small></span>
                     <strong>${clp(item.materialSubtotal)}</strong>
                   </div>
                   <div class="invoice-line service">
@@ -1680,7 +1686,7 @@ function invoiceBreakdown(result) {
     </section>`}
     ${finishRows.length ? `<section class="invoice-group">
       <div class="invoice-group-title"><b>Acabados opcionales por lado</b><span>${finishRows.length} servicio(s)</span></div>
-      ${finishRows.map((item) => `<article class="invoice-item"><header><b>${safe(item.name)}</b></header><div class="invoice-line service"><span>Acabado<small>${meters(item.materialMeters??item.meters)} ml × ${clp(item.unitPrice)}/ml${item.wasteMeters?` · incluye ${meters(item.wasteMeters)} ml de merma (2%)`:""}</small></span><strong>${clp(item.serviceSubtotal)}</strong></div></article>`).join("")}
+      ${finishRows.map((item) => `<article class="invoice-item"><header><b>${safe(item.name)}</b></header><div class="invoice-line service"><span>Acabado<small>${meters(item.materialMeters??item.meters)} ml × ${clp(item.unitPrice)}/ml${item.wasteMeters?` · incluye ${meters(item.wasteMeters)} ml de merma (${state.settings.calculationVersion==='5.5'?5:2}%)`:""}</small></span><strong>${clp(item.serviceSubtotal)}</strong></div></article>`).join("")}
     </section>` : ""}
   </div>`;
 }
@@ -1797,6 +1803,14 @@ function optimizeStep() {
   latestResult = computeCurrentResult();
   const summary = latestResult.summary;
   const slabQuote = isSlabQuote();
+  if (state.workType === 'hardware') return `
+    <section class="intro-row"><div><p class="eyebrow">COTIZACIÓN</p><h2>Herrajes y servicios</h2><p>Revisa los productos, sus complementos y el despacho.</p></div><div class="actions">
+    ${auth.visitor?'':'<button class="secondary" data-action="pdf">↓ Descargar PDF</button>'}
+    ${canEditCurrent()?`<button class="primary" data-action="save">${auth.visitor?'Enviar cotización':'Guardar proyecto'}</button>`:''}</div></section>
+    ${latestResult.warnings.length?`<div class="alert">${latestResult.warnings.map(safe).join(' · ')}</div>`:''}
+    ${auth.visitor?`<div class="alert">${state.visitorSubmitted?'Cotización enviada a Administración.':'Puedes enviar la cotización. La descarga PDF requiere una cuenta Cliente.'}</div>`:''}
+    <section class="card summary-card"><p class="eyebrow">RESUMEN ECONÓMICO</p>${summaryRows(summary)}</section>
+    ${stepFooter(true,null)}`;
   return `
     <section class="intro-row">
       <div><p class="eyebrow">RESULTADO</p><h2>Planos agrupados por ${slabQuote ? "formato de placa" : "tablero"}</h2><p>Cada material se optimiza por separado y genera sus propias hojas de corte.</p></div>
@@ -1879,7 +1893,7 @@ function optimizeStep() {
         <section class="card settings-card">
           <p class="eyebrow">PARÁMETROS</p>
           <label>Consumo de disco por corte (mm)<input type="number" min="2" max="5" step="0.1" data-setting="kerf" value="${state.settings.kerf}" /></label>
-          <small>Predeterminado: 3 mm. Rango permitido: 2 a 5 mm. El despunte se configura en cada producto.</small>
+          <small>Predeterminado: ${v5.config.defaultKerf??3} mm. Rango permitido: 2 a 5 mm. El despunte se configura en cada producto.</small>
           ${slabQuote?`<label class="checkbox-row"><input type="checkbox" data-v51-stone-supply ${state.settings.includeStoneMaterial?'checked':''}>Incluir suministro de las placas</label><small>Desmarcado: se cotizan corte y terminaciones.</small>`:''}
           <label>Modo de optimización<select data-setting-text="optimizationMode">
             <option value="longitudinal" ${state.settings.optimizationMode === "longitudinal" ? "selected" : ""}>Priorizar primer corte longitudinal</option>
@@ -1895,9 +1909,9 @@ function optimizeStep() {
             <span>Melamina 15/18 mm <strong>${clp(
               state.settings.melamineCutRate,
             )}</strong></span>
-            <span>Acrílico / Petlite / Trunatur <strong>${clp(
+            <span>Láminas acrílicas <strong>${clp(
               state.settings.acrylicCutRate??state.settings.specialCutRate,
-            )}</strong></span><span>Stylelite <strong>${clp(state.settings.styleliteCutRate)}</strong></span>
+            )}</strong></span><span>Stylelite / Petlite / Trunatur <strong>${clp(state.settings.styleliteCutRate)}</strong></span>
           </div>
           <div class="rate-table">
             <b>Servicio tapacanto / ml</b>
@@ -2412,6 +2426,7 @@ function renderEnhancements() {
 }
 
 function render() {
+  if(auth.user&&userRoles().some(r=>['operador','instalador'].includes(r))&&!permitted(auth.user,'allProjects')&&['dashboard','catalog','v5-settings','v5-catalog'].includes(state.view))state.view='projects';
   if (auth.loading) {
     app.innerHTML = `<main class="access-page"><section class="access-brand"><img src="./logo-casa-diseno.png" alt="Casa Diseño Multiespacio" /><p>Preparando acceso seguro…</p></section></main>`;
     return;
@@ -2424,9 +2439,10 @@ function render() {
     app.innerHTML = passwordChangeView();
     return;
   }
-  if(state.view==='crm'){app.innerHTML=shell(crm51View(v5Context()));renderEnhancements();return;}
+  if(['v55-operations','v55-parameters','v55-costs'].includes(state.view)){app.innerHTML=shell({'v55-operations':operations55View,'v55-parameters':parameters55View,'v55-costs':costs55View}[state.view](v5Context()));renderEnhancements();return;}
+  if(state.view==='crm'){app.innerHTML=shell('<div class="v5-actions"><button class="secondary" data-v55="dispatch">Calendario de despachos</button><button class="secondary" data-v55="operations">Operadores y tareas</button></div>'+crm51View(v5Context()));renderEnhancements();return;}
   if (['dashboard','dispatch','v5-settings','v5-catalog'].includes(state.view)) {
-    const view={dashboard:dashboardView,dispatch:dispatchView,'v5-settings':configurationView,'v5-catalog':management51View}[state.view];
+    const view={dashboard:dashboardView,dispatch:dispatch55View,'v5-settings':configurationView,'v5-catalog':management51View}[state.view];
     app.innerHTML=shell(view(v5Context()));renderEnhancements();return;
   }
   if (state.view === "projects") {
@@ -2446,6 +2462,7 @@ function render() {
   }
   if (state.view === "users") {
     app.innerHTML = usersView();
+    app.querySelector('.workspace')?.insertAdjacentHTML('beforeend',permissions55View(v5Context()));
     renderEnhancements();
     return;
   }
@@ -2461,7 +2478,8 @@ function render() {
   }
   const views = [projectStep, materialStep, piecesStep, edgeStep, optimizeStep];
   const extra=state.step===0?`<section class="card v5-grid"><label>Nombre de esta cotización<input data-v5quote="quoteName" value="${safe(state.quoteName||'')}" placeholder="Ej. Cocina · melaminas"></label><label>Comentarios<textarea data-v5quote="comments">${safe(state.comments||'')}</textarea></label></section>`:'';
-  app.innerHTML = shell(extra+views[state.step]());
+  const hardware=state.workType==='hardware';
+  app.innerHTML = shell(extra+(hardware&&state.step!==4?projectStep():views[state.step]())+((state.step===3||hardware&&state.step!==4)?quoteExtras55(v5Context()):'')+(state.step===4&&latestResult?.saleLines?summaryExtras55(latestResult):''));
   renderEnhancements();
   if (state.step === 4 && latestResult) {
     requestAnimationFrame(() => {
@@ -3418,13 +3436,14 @@ function exportPdf() {
     notify("La descarga PDF requiere una cuenta Cliente.", "error");
     return;
   }
-  if (!latestResult?.plates.length) {
-    notify("No hay placas para exportar.", "error");
+  if (!latestResult || (!latestResult.plates.length && !latestResult.saleLines?.length)) {
+    notify("No hay productos o servicios para exportar.", "error");
     return;
   }
+  const saleOnly = !latestResult.plates.length;
   const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   pdf.setProperties({
-    title: `Plano de corte · ${state.project.projectName || state.project.clientName}`,
+    title: `${saleOnly?'Cotización':'Plano de corte'} · ${state.project.projectName || state.project.clientName}`,
     subject: `Plano, listado de piezas y controles de producción por ${isSlabQuote() ? "placa" : "tablero"}`,
     author: "Casa Diseño Multiespacio",
   });
@@ -3438,7 +3457,7 @@ function exportPdf() {
   pdf.setFontSize(9);
   pdf.text("CASA DISEÑO MULTIESPACIO", 12, 10);
   pdf.setFontSize(18);
-  pdf.text(`RESUMEN DE OPTIMIZACIÓN · ${isSlabQuote() ? "PLACAS" : "TABLEROS"}`, 12, 22);
+  pdf.text(saleOnly?'COTIZACIÓN · HERRAJES Y SERVICIOS':`RESUMEN DE OPTIMIZACIÓN · ${isSlabQuote() ? "PLACAS" : "TABLEROS"}`, 12, 22);
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(8);
   pdf.text(`Cotización ${projectCode()} · R${state.revisionNo||1} · Motor ${state.settings.calculationVersion} · ${new Date().toLocaleString("es-CL")}`, 12, 29);
@@ -3449,7 +3468,7 @@ function exportPdf() {
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(8.5);
   pdf.text(`Cliente: ${state.project.clientName || "Sin identificar"} · Estado: ${statusLabels[state.project.status]}`, 12, 51);
-  const metrics = [
+  const metrics = saleOnly ? [['LÍNEAS',latestResult.saleLines.length],['NETO',clp(summary.net)],['IVA 19%',clp(summary.vat)],['TOTAL',clp(summary.total)]] : [
     ["PLACAS", summary.boardCount],
     ["APROVECHAMIENTO", `${(100 - summary.waste).toFixed(1)} %`],
     ["PIEZAS", state.pieces.reduce((sum, piece) => sum + Number(piece.quantity || 0), 0)],
@@ -3481,6 +3500,8 @@ function exportPdf() {
     pdf.text(detailLines,124,summaryY);
     summaryY += height;
   });
+  for(const l of latestResult.saleLines||[]){const lines=pdf.splitTextToSize(`${l.sku} · ${l.name} · ${l.quantity} ${l.unit} × ${clp(l.unitPrice)} = ${clp(l.net)} neto`,270);summarySpace(lines.length*4+3);pdf.setFont('helvetica','normal');pdf.text(lines,12,summaryY);summaryY+=lines.length*4+3;}
+  if(latestResult.delivery?.required){summarySpace(14);pdf.text(`Despacho · ${latestResult.delivery.quote.commune} · ${latestResult.delivery.quote.weightKg.toFixed(2)} kg · ${clp(latestResult.delivery.quote.net)} neto`,12,summaryY);summaryY+=10;}
   const edgeEntries = Object.entries(state.edgeCodeMap || {}).sort(
     (a, b) => Number(a[1].slice(1)) - Number(b[1].slice(1)),
   );
@@ -3518,11 +3539,11 @@ function exportPdf() {
   pdf.setTextColor(70, 61, 42);
   pdf.setFont("helvetica", "bold");
   pdf.setFontSize(8);
-  pdf.text("Regla de veta:", 16, 190);
+  pdf.text(saleOnly?'Valores netos:':"Regla de veta:", 16, 190);
   pdf.setFont("helvetica", "normal");
-  pdf.text("Longitudinal sigue el Largo ingresado; Transversal sigue el Ancho ingresado. Los valores nunca se ordenan por tamaño.", 42, 190);
+  pdf.text(saleOnly?'Los valores unitarios y de cada línea se expresan sin IVA. El total incluye IVA del 19%.':"Longitudinal sigue el Largo ingresado; Transversal sigue el Ancho ingresado. Los valores nunca se ordenan por tamaño.", 42, 190);
   pdf.text(
-    isSlabQuote()
+    saleOnly ? 'Casa Diseño Multiespacio · Todos los derechos reservados.' : isSlabQuote()
       ? "Biselado/Pulido y 45° se indican individualmente en L1, L2, A1 y A2."
       : "La numeración T1, T2… es única y se mantiene en todas las hojas de este proyecto.",
     16,
@@ -3536,7 +3557,7 @@ function exportPdf() {
     }
     return state.edgeCodeMap?.[piece.edges?.[side]] || "—";
   };
-  addPdfTable(pdf, {
+  if (state.pieces.length) addPdfTable(pdf, {
     title: "LISTADO COMPLETO DE PIEZAS",
     subtitle: "Dimensiones semánticas ingresadas, sentido de veta y terminación de los cuatro lados.",
     columns: [
@@ -3586,7 +3607,7 @@ function exportPdf() {
     );
   });
   pdf.save(
-    `Plano_Corte_${state.project.projectName.replace(/[^a-z0-9]+/gi, "_") || "Proyecto"}.pdf`,
+    `${saleOnly?'Cotizacion':'Plano_Corte'}_${state.project.projectName.replace(/[^a-z0-9]+/gi, "_") || "Proyecto"}.pdf`,
   );
 }
 
@@ -3617,7 +3638,7 @@ app.addEventListener("submit", async (event) => {
     }
     return;
   }
-  if(form.dataset.v5Form||form.dataset.v51Form) return;
+  if(form.dataset.v5Form||form.dataset.v51Form||form.dataset.v55Form) return;
   if (form.id === "piece-form") {
     addPiece(form);
     return;
@@ -4485,6 +4506,7 @@ function computeCurrentResult() {
   let mappingWarning='';
   if(!unchanged&&!state.readOnlyRevision&&state.materialIds.length){try{const mapped=updateQuoteProducts(structuredClone(state),materials,edgeBands);for(const key of ['materialIds','materialId','pieces','edgeCodeMap','materialCustomizations'])state[key]=mapped[key];}catch(e){mappingWarning=e.message;}}
   const result=optimizeProject(selectedMaterials(),state.pieces,edgeBands,state.settings);
+  if(state.settings.calculationVersion==='5.5')pricePreview55(result,state,v5Context());
   if(mappingWarning)result.warnings.push(mappingWarning);
   if(unchanged && state.summary){result.summary=state.summary;result.historicalReconstruction=true;}
   return result;
@@ -4500,8 +4522,8 @@ function openV5Quote(item,readOnly=false) {
   state.loadedSignature=calculationSignature(state);v5.importer=null;latestResult=null;render();
 }
 function v5Context() {
-  return {state,user:auth.user,projects:projectsCache,materials,edges:edgeBands,accessories:accessoriesCatalog,services:servicesCatalog,api,render,notify,loadProjects,loadCatalog,selectedMaterials,canCreateQuote,
-    canEditRecord:p=>hasRole('admin')||(hasRole('produccion')&&['facturado_pagado','produccion','despacho','entregado'].includes(p.project.status))||(hasRole('comercial')&&['cotizacion','facturacion'].includes(p.project.status)&&(p.ownerId===auth.user?.id||p.assignedTo===auth.user?.id||p.collaboratorIds?.includes(auth.user?.id)))||(hasRole('logistica')&&p.project.status==='despacho'),
+  return {state,user:auth.user,canEditCurrent,users:usersCache,projects:projectsCache,materials,edges:edgeBands,accessories:accessoriesCatalog,services:servicesCatalog,api,render,notify,loadProjects,loadCatalog,selectedMaterials,canCreateQuote,
+    canEditRecord:p=>hasRole('admin')||(hasAnyRole(['produccion','instalacion','logistica'])&&['facturado_pagado','produccion','despacho','entregado'].includes(p.project.status))||(hasRole('comercial')&&['cotizacion','facturacion'].includes(p.project.status)&&(p.ownerId===auth.user?.id||p.assignedTo===auth.user?.id||p.collaboratorIds?.includes(auth.user?.id)))||(hasRole('logistica')&&p.project.status==='despacho'),
     statusEntries:status=>statusEntriesForRole(auth.user?.role,status),uploadImage:uploadProductImage,
     pieceError:p=>pieceProductionError(p,materials.find(m=>m.id===p.materialId),edgeBands,{...state.settings,calculationVersion:V5,kerf:kerfValue(state.settings.kerf),perimeterTrim:10,neolithTrim:30}),
     openQuote:openV5Quote,
@@ -4510,6 +4532,7 @@ function v5Context() {
 }
 attachV5(app,v5Context);
 attachV51(app,v5Context);
+attach55(app,v5Context);
 
 async function initialize() {
   render();

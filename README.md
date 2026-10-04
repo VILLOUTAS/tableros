@@ -1,160 +1,41 @@
-# Casa Diseño · Optimizador V5.1.0
+# Casa Diseño Multiespacio · Optimizador V5.5.0
 
-Actualización de V5.0.0 para el repositorio y servicio existentes.
-Para instalar, lee **ACTUALIZACION_V5.1.0.md**. Mantén la misma base PostgreSQL.
+Actualización para `VILLOUTAS/tableros` y su servicio existente. Mantiene la misma base PostgreSQL. Comienza por [ACTUALIZACION_V5.5.0.md](ACTUALIZACION_V5.5.0.md).
 
-## CRM, proyectos y agendas
+## Cambios incluidos
 
-- **CRM de Producción** en la barra principal para todos los perfiles internos.
-  Clientes y visitas no tienen acceso, ni desde la interfaz ni desde la API.
-- Vistas **Por estados** y **Calendario**. El calendario ubica cada trabajo en
-  su fecha de inicio; permite cambiar el mes y consultar trabajos sin programar.
-- Tres agendas independientes: **Tableros**, **Placas** e **Instalaciones**.
-  Tableros y Placas admiten trabajos de dimensionado y servicios asociados a
-  sus cotizaciones. Instalaciones admite cotizaciones de ambas familias.
-- Cada trabajo guarda proyecto, cotizaciones, inicio, término, responsable,
-  observaciones y estado: Programado, En ejecución, Terminado o Anulado.
-- La programación está separada de la nota de venta. Cambiar una fecha o el
-  estado del trabajo no cambia facturación, importes ni estado comercial.
-- Administración programa las tres agendas; Producción programa Tableros y
-  Placas; Instalación programa Instalaciones. Los demás internos consultan.
-- El buscador general encuentra cliente, comercial, nombre de proyecto,
-  cotización y código. Ignora diferencias de mayúsculas y tildes.
-- Un proyecto puede contener varias cotizaciones de Tableros y Placas.
-  Los permisos de edición de cada cotización se mantienen por rol/asignación.
+- Catálogo activo de **868 referencias**: 158 tableros, 176 placas, 150 tapacantos, 356 herrajes y 28 servicios. Categorías y dimensiones editables individualmente o por selección de productos.
+- CRM de Producción interno, vista por estados y calendario según fecha de inicio. Agendas independientes de Tableros, Placas, Instalaciones y Despachos. Buscador por cliente, comercial, proyecto o código.
+- Despacho opcional calculado con el peso de productos completos utilizados, incluidos sobrantes. Tarifas originales por kg, factor 1,20, descuento máximo 50% y mínimos netos. Comercial propone; Logística o Producción confirma o reasigna.
+- Disco de 3 mm por defecto, configurable entre 2 y 5 mm. Tapacanto material al 105% y servicio al 100% en cálculos V5.5.
+- Cotización de herrajes y servicios sin necesidad de agregar tableros. Adicionales y despacho incluidos en totales y PDF.
+- Relaciones Salice: acabado, exclusividad de la serie 800, placa metálica obligatoria, cubrecazoleta opcional y acoplamientos de guías. Los mecanismos especiales sin relación confirmada se configuran antes de cotizar.
+- Operadores, tareas por persona, jornada de 42 horas, metas por servicio, avance validado y reportes de productividad y pago. Tarifas por operador/tarea, vigencia y conservación de la tarifa usada en cada registro.
+- Insumos, uso de activos y gastos por cotización; plantillas por servicio y costos consolidados del proyecto. La mano de obra validada se incorpora una sola vez.
+- Matriz de 12 perfiles y permisos específicos de usuarios/costos para Administradores. Los controles también se aplican en el servidor.
+- Aviso de autoría al pie: **© 2026 Casa Diseño Multiespacio®**. Aplicación de autoría de Casa Diseño Multiespacio, marca registrada. Todos los derechos reservados.
 
-## Catálogo nuevo
+## Datos anteriores
 
-El Excel del 30-09-2026 reemplaza los productos anteriores del catálogo activo:
-**471 referencias únicas: 299 tableros/placas, 149 tapacantos y 23 servicios**.
-Los 299 incluyen 135 productos Neolith. El archivo recibido se conserva intacto
-como `catalog/PRODUCTOS_20260930.xlsx`; el importador aplica las correcciones.
+La migración no recalcula las cotizaciones existentes. Conserva usuarios, contraseñas, códigos, importes, documentos, imágenes, estados y revisiones guardadas. Los productos anteriores siguen disponibles para interpretar el historial y dejan de ofrecerse en cotizaciones nuevas. Una modificación técnica archiva la revisión anterior y calcula la siguiente con V5.5. Las equivalencias se basan en la identidad del producto, no solo en su código.
 
-| Columna Excel | Campo |
-|---|---|
-| Referencia | Código CDChile / SKU |
-| Nombre | Nombre del producto o servicio |
-| Descripción | Información adicional |
-| Precio base de venta | Precio base neto |
-| Precio mínimo | Mínimo de venta, restringido por rol |
-| Código de barras | Código de origen, exclusivo del equipo interno |
-| Familia de productos | Categoría |
+Las versiones antiguas sin plano completo almacenado se reconstruyen con su motor histórico; el resumen monetario guardado se conserva. Actualizar el código no sustituye un respaldo de la base.
 
-| Grupo | Subcategorías |
-|---|---|
-| TABLEROS | Tableros de Melamina; Tableros Egr Decor; Tableros Chinos; Otros Tableros |
-| TAPACANTOS | Tapacantos; Tapacantos EGR; Tapacantos Chinos |
-| PLACAS | Neolith de 06mm; Neolith de 12mm; Cuarzo 18mm (próximamente); Granito 20mm (próximamente) |
-| SERVICIOS PARA TABLEROS | Dimensionados de Tableros; Servicios para Tableros |
-| SERVICIOS PARA PLACAS | Dimensionados de Placas; Servicios de Placas |
-| OTROS SERVICIOS | Despachos; Armado de Muebles; Servicios de Instalacion de Muebles; Servicios de Instalacion de Placas |
+## Documentación
 
-La fila 275, Carbon Trumatte, usa **73-STYLE-CRTM**. Cinnabar conserva
-73-STYLE-CBTM. Lamitech Noce tiene **1200 × 1125 mm**; no es Neolith.
-Las fichas Neolith usan el código, color y espesor del Excel: no necesitan
-escribir nuevamente un color libre. Se corrigen sus errores de formato.
+- [Actualización y respaldo](ACTUALIZACION_V5.5.0.md).
+- [Carga en GitHub y Render](SUBIR_A_GITHUB_Y_RENDER.txt).
+- [Reglas comerciales, producción, roles y costos](docs/REGLAS_V5.5.md).
+- [Catálogo y datos pendientes](docs/CATALOGO_V5.5.md).
+- [Pendientes por SKU, en CSV](docs/PENDIENTES_CATALOGO_V5.5.csv).
+- [Pruebas realizadas](docs/VALIDACION_V5.5.md).
+- [Aviso de autoría y dependencias](COPYRIGHT.txt).
 
-Los servicios nuevos quedan registrados en su categoría. La agenda de
-instalaciones está disponible; los módulos completos de armado, instalación,
-herrajes y otros productos/fotografías siguen pendientes de la próxima entrega.
-Los servicios con precio cero figuran como **Por cotizar**.
+Hay 12 productos con medidas/espesor por completar, tres servicios con precio cero y relaciones especiales de Salice por confirmar. Los pesos faltantes se identifican por SKU y bloquean la valorización automática del despacho correspondiente. No se asignan valores ficticios para ocultar estos pendientes.
 
-Las fotografías antiguas solo se reutilizan cuando coinciden código, producto
-y espesor. Las referencias cambiadas tienen una clave de foto independiente,
-para evitar mostrar la imagen de otro producto que antes usaba el mismo código.
+## Ejecución
 
-## Configuración de dimensiones
-
-En Configuración → **Catálogo y dimensiones**, o Administración:
-
-1. Selecciona **Tableros y placas** y filtra por categoría o producto.
-2. Usa **Editar** para cambiar una ficha: categoría, largo/ancho de fábrica,
-   espesor, despunte por lado, servicio de corte y otros datos autorizados.
-3. Para varios productos, selecciónalos y abre **Editar dimensiones**.
-   Completa solo los campos que quieras modificar. La operación se valida
-   completa antes de guardar; las casillas vacías conservan sus valores.
-
-Se muestran dimensiones de fábrica y útiles. Cada cambio crea una revisión
-del producto; no modifica el resultado de cotizaciones guardadas.
-Hay siete fichas con espesor por completar: consulta `docs/CATALOGO_V5.1.md`.
-
-## Optimización y precios
-
-| Concepto | Regla V5.1 |
-|---|---|
-| Consumo de disco | Un único valor por corte, 3 mm iniciales; editable de 2 a 5 mm |
-| Predeterminado | Configuración → Parámetros de optimización; se aplica a nuevas cotizaciones |
-| Tableros | Despunte inicial de 10 mm por lado, editable por producto |
-| Neolith 6 mm | Fábrica 3260 × 1560; útil 3200 × 1500 mm |
-| Neolith 12 mm | Fábrica 3260 × 1660; útil 3200 × 1600 mm |
-| Tapacanto material | Metros instalados × 1,02, por tipo |
-| Servicio de tapacanto | Metros instalados × 1,00 |
-| Despacho | Un recorrido de ida; en cargas mixtas se cobra el mayor flete |
-
-Por ejemplo, 100 ml instalados generan 102 ml de material y 100 ml de servicio.
-El resumen y el PDF indican los metros instalados, la merma y el total de material.
-El indicador de producción cuenta únicamente los metros efectivamente instalados.
-
-Los servicios de corte y tapacanto usan los precios del catálogo vigente.
-Valores iniciales netos: melamina $7.500/placa, acrílico $10.000/placa,
-Stylelite $15.000/placa, Neolith $75.000/placa, biselado/pulido y corte 45°
-$12.500/ml. Tapacanto: 0,4 y 1,0 mm a $600/ml; 1,5 mm a $750/ml;
-2,0 mm a $800/ml. Se editan en Administración → Servicios.
-
-En Placas, **Incluir suministro de las placas** agrega el valor del material.
-Está desmarcado inicialmente para conservar el flujo de cotización de servicios
-de V5.0. Las cotizaciones históricas mantienen su valorización original.
-
-IVA: 19%. Los descuentos se validan en el servidor, con máximo de 50% y
-respetando el mayor entre costo y mínimo de venta. Cliente y visita no aplican
-descuentos. Compra y mínimos solo se envían a Finanzas/Superadministrador;
-códigos de origen se excluyen de toda respuesta a clientes y visitas.
-
-## Cotizaciones históricas
-
-La actualización no borra proyectos, usuarios, documentos ni fotografías y no
-recalcula cotizaciones en bloque. Conserva códigos, precios, parámetros, planos
-y resultados de cada revisión guardada. Cambiar datos descriptivos conserva
-el cálculo. Cambiar piezas, materiales o condiciones de cálculo crea una nueva
-revisión V5.1 y archiva la anterior.
-
-Las referencias se relacionan por identidad de producto y espesor. No se usa
-solo el código: el catálogo anterior tenía códigos repetidos. Si no existe
-una equivalencia inequívoca, se solicita elegir el producto vigente al editar.
-Las versiones antiguas sin plano almacenado se reconstruyen con su motor
-histórico, conservando el resumen monetario guardado.
-
-## Despachos
-
-Origen: Casa Diseño · Bodega, Concepción. Se conservan origen, comunas y
-kilómetros previamente configurados. La primera actualización carga:
-
-| Familia | Tarifa neta de ida |
-|---|---|
-| Melamina / otros tableros | $10.000 + $200 × km |
-| Acrílico / EGR Decor | $10.000 + $120 × km |
-| Placas Neolith | $20.000 + $150 × km |
-| Salice | $7.500 + $50 × km |
-| Otros | $200 × km |
-
-Se mantienen las bases fijas de V5.0 y se actualiza el valor por km con el Excel.
-No se duplica la distancia por el regreso. En mezclas se toma el mayor valor.
-Una comuna sin kilómetros viales verificados queda Por cotizar. No se consulta
-un servicio externo para calcular automáticamente rutas. Los despachos ya
-valorizados conservan su tarifa; un despacho facturado no admite recálculo.
-
-## Importación de piezas
-
-Se conserva la carga XLS/XLSX/CSV y el pegado desde Excel: selección de hoja,
-filas y columnas; conversión cm/mm; transposición; mapeo de materiales, veta,
-tapacantos y terminaciones; vista previa editable. Largo y Ancho conservan sus
-ejes aunque Largo sea menor. Longitudinal sigue Largo y Transversal sigue Ancho.
-L1/L2 son los lados paralelos a Largo; A1/A2, los paralelos a Ancho.
-Los símbolos de cada cliente deben definirse y revisarse antes de incorporar.
-
-## Desarrollo y comprobación
-
-Node.js 24, Express, PostgreSQL y Vite. SheetJS se incluye en `vendor/`.
+Node.js 24, Express, PostgreSQL y Vite. Las dependencias están fijadas en `package-lock.json`; SheetJS está incluido en `vendor/`.
 
 ```bash
 npm ci --include=dev
@@ -163,10 +44,8 @@ npm run build
 npm start
 ```
 
-Sin DATABASE_URL, el entorno local usa memoria temporal. Producción requiere
-PostgreSQL. `npm run catalog:import:v51` regenera el catálogo desde el Excel
-incluido. El importador y catálogo anteriores se conservan por compatibilidad;
-no se deben regenerar al actualizar referencias de V5.1.
+Configura las variables del servicio existente. `.env.example` es una referencia sin credenciales. Sin `DATABASE_URL`, el desarrollo local usa memoria temporal; producción requiere PostgreSQL. `/api/health` identifica la versión `5.5.0`.
 
-Consulta `docs/VALIDACION_V5.1.md`: 58 pruebas, compilación y revisión del PDF
-de ensayo. No se ha desplegado ni probado sobre la base productiva.
+Las fuentes recibidas se conservan en `catalog/PRODUCTOS_V5.5.xlsx`, `catalog/RUTAS_V5.5.xlsx` y `catalog/PESOS_V5.5.xlsx`. El catálogo puede regenerarse con `npm run catalog:import:v55`; las rutas, con `node scripts/import-routes-v55.mjs`. Son semillas del código; las ediciones administrativas persistidas se guardan en la base. No regeneres catálogos históricos para actualizar V5.5.
+
+El paquete está preparado y probado localmente. No se ha subido a GitHub ni desplegado en producción desde esta sesión.

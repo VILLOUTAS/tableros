@@ -6,10 +6,11 @@ import {createApplication,PostgresStore} from '../server.mjs';
 import {PGlite} from '@electric-sql/pglite';
 import {initializeV51} from '../v51-server.mjs';
 import catalog from '../src/catalog.v51.generated.js';
+import currentCatalog from '../src/catalog.v55.generated.js';
 import {optimizeProject} from '../src/logic.js';
 import {effectiveConfig,FREIGHT51,TAXONOMY51,projectMatches} from '../src/v51-domain.js';
 import {mergeConfig,calculateFreight} from '../src/v5-domain.js';
-const m=catalog.materials.find(m=>m.sku==='62-EGGER-1503'),edge=catalog.edgeBands.find(e=>e.sku==='67-D-0015'),slab=catalog.materials.find(m=>m.thickness===12&&m.materialType==='neolith');
+const m=currentCatalog.materials.find(m=>m.sku==='62-EGGER-1503'),edge=currentCatalog.edgeBands.find(e=>e.sku==='67-D-0015'),slab=currentCatalog.materials.find(m=>m.thickness===12&&m.materialType==='neolith');
 const sample=()=>({workType:'boards',materialId:m.id,materialIds:[m.id],project:{projectName:'Cocina de prueba',clientName:'Cliente QA'},pieces:[{id:'p1',name:'Puerta',length:1000,width:300,quantity:2,grain:'sin-veta',edges:{top:edge.id}}],settings:{kerf:4.2}});
 async function fixture(database){
   const {app,store}=await createApplication({useMemory:true,store:database}),server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));const base=`http://127.0.0.1:${server.address().port}`;
@@ -28,7 +29,7 @@ test('V5.1 catálogo: 471 referencias únicas, agrupación exacta, correcciones 
   assert.equal(catalog.edgeBands.find(e=>e.sku==='66-R-0012').thickness,1.5);
   for(const stone of catalog.materials.filter(m=>m.materialType==='neolith')){assert.equal(stone.plateLength,3260);assert.equal(stone.plateWidth,stone.thickness===6?1560:1660);}
   // The old code referred to both white and Pietra: identity, not SKU alone, resolves it.
-  assert.equal(catalog.aliases['62-egger-1502-1'],m.id);
+  assert.equal(catalog.aliases['62-egger-1502-1'],catalog.materials.find(x=>x.sku===m.sku).id);
 });
 test('V5.1 PostgreSQL: dimensiones atómicas, servicios y fechas históricas en calendarios',async()=>{
   const pg=await PGlite.create(),database=new PostgresStore('');await database.pool.end();
@@ -44,9 +45,9 @@ test('V5.1 PostgreSQL: dimensiones atómicas, servicios y fechas históricas en 
     r=await f.request('/api/v51/catalog/dimensions','POST',{ids:[m.id,slab.id],changes:{plateLength:3000}},f.headers);assert.equal(r.status,200,JSON.stringify(r.body));assert.equal(r.body.updated,2);
     assert.deepEqual((await database.getProject(p.id)).calculationSnapshot,p.calculationSnapshot);
     const rev=await database.listCatalogRevisions();assert.equal(rev.length,2);
-    const untouched=catalog.materials.find(x=>x.id!==m.id&&x.id!==slab.id&&!x.dimensionsPending);
+    const untouched=currentCatalog.materials.find(x=>x.id!==m.id&&x.id!==slab.id&&!x.dimensionsPending);
     r=await f.request('/api/v51/catalog/dimensions','POST',{ids:[untouched.id,m.id],changes:{plateWidth:1200}},f.headers);assert.equal(r.status,409);assert.equal((await database.listCatalogRevisions()).length,2);
-    const svc=catalog.services.find(s=>s.sku==='SER-0038');
+    const svc=currentCatalog.services.find(s=>s.sku==='SER-0038');
     r=await f.request('/api/admin/catalog/service/'+svc.id,'PATCH',{product:{netPrice:650}},f.headers);assert.equal(r.status,200,JSON.stringify(r.body));
     r=await f.request('/api/v5/config','GET',undefined,f.headers);assert.equal(r.body.services.edge04.price,650);
     await initializeV51(database);assert.equal((await database.listCatalogRevisions()).length,3);

@@ -1,3 +1,4 @@
+import {prepareSale55} from './v55-server.mjs';
 import { randomUUID } from 'node:crypto';
 import { optimizeProject, isStoneMaterial, createEdgeCodeMap } from './src/logic.js';
 import { V5, mergeConfig, permitted, stripCosts, publicCatalogItem, calculateFreight, monthlyDashboard, calculationSignature } from './src/v5-domain.js';
@@ -12,7 +13,7 @@ export async function initializeV5(db) {
   if(db.pool) {
     await db.pool.query(`
       ALTER TABLE app_users DROP CONSTRAINT IF EXISTS app_users_role_check;
-      ALTER TABLE app_users ADD CONSTRAINT app_users_role_check CHECK(role IN ('superadmin','admin','comercial','produccion','instalacion','logistica','supervisor','finanzas','cliente'));
+      ALTER TABLE app_users ADD CONSTRAINT app_users_role_check CHECK(role IN ('superadmin','admin','comercial','produccion','instalacion','logistica','supervisor','finanzas','operador','instalador','cliente'));
       ALTER TABLE catalog_product_revisions DROP CONSTRAINT IF EXISTS catalog_product_revisions_product_type_check;
       ALTER TABLE catalog_product_revisions ADD CONSTRAINT catalog_product_revisions_product_type_check CHECK(product_type IN ('board','edge','accessory','service'));
       ALTER TABLE projects ADD COLUMN IF NOT EXISTS row_version BIGINT NOT NULL DEFAULT 0;
@@ -38,7 +39,7 @@ export function visibleCatalog(catalog,user) {
 export function settingsV5(settings, config, user) {
   const c=mergeConfig(config);
   const kerf=kerfValue(settings?.kerf,c.defaultKerf??3);
-  const clean={calculationVersion:V5,kerf,edgeWastePercent:2,includeStoneMaterial:settings?.includeStoneMaterial===true,perimeterTrim:10,neolithTrim:30,
+  const clean={calculationVersion:V5,kerf,edgeWastePercent:5,includeStoneMaterial:settings?.includeStoneMaterial===true,perimeterTrim:10,neolithTrim:30,
     optimizationMode:['longitudinal','free'].includes(settings?.optimizationMode)?settings.optimizationMode:'longitudinal'};
   for(const [key,policy] of Object.entries(c.services)) clean[key]=Number(policy.price)||0;
   clean.servicePolicies=structuredClone(c.services);
@@ -79,7 +80,7 @@ export async function prepareProjectV5(record,current,user,catalog,config,db,bod
   p.revisionNo=current?.revisionNo||1;
   p.milestones=structuredClone(current?.milestones||{});
   if(changed) {
-    if(!p.pieces.length || !p.materialIds.length) throw fail('Agrega un material y al menos una pieza.');
+    if((!p.pieces.length || !p.materialIds.length)&&!p.saleLines?.length) throw fail('Agrega piezas o productos/servicios a la cotización.');
     if(p.pieces.length>3000||p.pieces.reduce((s,x)=>s+Number(x.quantity),0)>10000) throw fail('Divide esta importación: máximo 3.000 filas y 10.000 piezas por cotización.');
     if(current) {
       const {history,...archive}=current;
@@ -104,9 +105,11 @@ export async function prepareProjectV5(record,current,user,catalog,config,db,bod
     p.calculationSnapshot=optimizeProject(p.priceSnapshot.materials,p.pieces,p.priceSnapshot.edgeBands,p.settings);
     if(p.calculationSnapshot.warnings?.length) throw fail(p.calculationSnapshot.warnings.join(' '));
     p.edgeCodeMap=createEdgeCodeMap(p.pieces,current?.edgeCodeMap||p.edgeCodeMap);
+    await prepareSale55(p,catalog,await db.getV5('v55:settings'),user);
     record.summary=p.calculationSnapshot.summary;
     p.calculatedAt=new Date().toISOString();p.calculatedBy=user?.id||null;
   } else {
+    p.saleLines=current.saleLines||[];p.delivery=current.delivery||{required:false};
     p.settings=current.settings;
     p.priceSnapshot=current.priceSnapshot;
     p.calculationSnapshot=current.calculationSnapshot;
@@ -166,6 +169,7 @@ export function registerV5Routes(app,{db,authenticate,csrf,canReadProject,loadCo
     res.json({dispatches:(await db.listV5('dispatch:')).filter(d=>permitted(req.auth.user,'allProjects')||groups.has(d.groupId))});
   });
   app.post('/api/v5/dispatches',authenticate,csrf,allowed('dispatch'),async(req,res)=>{
+    throw fail('Utiliza el módulo de Despachos V5.5.',410);
     const b=req.body,config=mergeConfig(await db.getV5('config'));
     const projects=(await db.listProjects(req.auth.user)).filter(p=>(p.groupId||p.id)===b.groupId);
     if(!projects.length)throw fail('Selecciona un proyecto al que tengas acceso.');

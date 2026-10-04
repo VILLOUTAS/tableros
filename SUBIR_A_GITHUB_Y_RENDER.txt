@@ -1,14 +1,32 @@
-V5.1.0 - ACTUALIZACIÓN DEL SERVICIO EXISTENTE
+CASA DISEÑO MULTIESPACIO - ACTUALIZACIÓN V5.5.0
 
-Lee ACTUALIZACION_V5.1.0.md.
-Descomprime el ZIP y carga su contenido en la raíz del repositorio actual.
-Conserva el servicio de Render y la misma DATABASE_URL.
-Incluye los catálogos anterior y nuevo; no elimines tablas ni registros.
+Repositorio: https://github.com/VILLOUTAS/tableros
 
-Build: npm ci --include=dev && npm test && npm run build
-Start: npm start
-Node: 24
-Health: /api/health -> version 5.1.0, database postgresql
+1. Lee ACTUALIZACION_V5.5.0.md y respalda la base PostgreSQL actual.
+2. En GitHub Desktop abre o clona VILLOUTAS/tableros con tu cuenta autorizada.
+3. Actualiza tu copia local con los últimos cambios del repositorio.
+4. Descomprime el paquete y copia su CONTENIDO a la carpeta del repositorio, reemplazando archivos coincidentes.
+   package.json, server.mjs y render.yaml deben quedar en la raíz.
+   Conserva .git, tu configuración privada y los archivos ajenos al paquete.
+   No subas solamente el ZIP ni agregues una carpeta contenedora V5.5.
+5. Revisa los cambios. No incluyas .env, secretos, respaldos, node_modules ni dist.
+6. En una terminal de esa carpeta, con Node 24:
+   npm ci --include=dev
+   npm test
+   npm run build
+7. Crea el commit: Actualizar optimizador Casa Diseño a V5.5.0
+8. Usa Push origin con tu cuenta autorizada.
+9. En Render usa el servicio EXISTENTE y conserva DATABASE_URL.
+   Build: npm ci --include=dev && npm test && npm run build
+   Start: npm start
+   Health check: /api/health
+   Si el despliegue automático por commit está habilitado, comienza al subir.
+10. Comprueba /api/health (5.5.0 y PostgreSQL) y las cotizaciones históricas.
 
-El paquete incluye código, Excel fuente, pruebas y documentación.
-No contiene pedidos productivos ni despliega el servicio automáticamente.
+No crear otra base, servicio ni Blueprint. No eliminar los catálogos históricos.
+No cargar datos de prueba en producción.
+
+El paquete fue probado localmente. No se ha subido ni desplegado desde esta sesión: la conexión disponible al repositorio permite lectura, sin permiso de escritura.
+
+Pendientes: docs/CATALOGO_V5.5.md
+Pruebas: docs/VALIDACION_V5.5.md

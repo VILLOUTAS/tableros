@@ -1,0 +1,11 @@
+© 2026 Casa Diseño Multiespacio®.
+Aplicación de autoría de Casa Diseño Multiespacio, marca registrada.
+Todos los derechos reservados.
+
+Este aviso se incorpora a petición del titular y se muestra al pie de la aplicación. La indicación de marca registrada reproduce la declaración del titular.
+
+El aviso deja constancia de la autoría declarada. Entregar el código o publicarlo en GitHub no constituye una inscripción de software ni una concesión de patente.
+
+Esta distribución no concede una licencia de código abierto sobre el código propio de la aplicación. El titular puede definir por separado las autorizaciones de uso, reproducción y distribución.
+
+Las dependencias y recursos de terceros conservan sus respectivas licencias y avisos. Este texto no atribuye su autoría a Casa Diseño ni modifica esas licencias. Las versiones están registradas en package-lock.json; su instalación conserva los archivos de licencia correspondientes. SheetJS se distribuye en vendor/, con su documentación.
