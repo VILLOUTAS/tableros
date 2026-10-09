@@ -1,6 +1,6 @@
 import {SERVICE_KEYS55} from './v55-domain.js';
-export const RELEASE = '5.5';
-export const isV51 = settings => ['5.1','5.5'].includes(settings?.calculationVersion);
+export const RELEASE = '6.0';
+export const isV51 = settings => ['5.1','5.5','6.0'].includes(settings?.calculationVersion);
 export const normalizeSearch = value => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
 export const internalUser = user => (user?.roles || [user?.role]).some(r => ['superadmin','admin','comercial','produccion','instalacion','logistica','supervisor','finanzas','operador','instalador'].includes(r));
 export const canSchedule = (user, kind) => (user?.roles || [user?.role]).some(r => ['superadmin','admin',kind === 'installations' ? 'instalacion' : 'produccion'].includes(r));
@@ -47,23 +47,25 @@ export function successor(item, collection) {
   let current=item; const visited=new Set();
   while(current && !visited.has(current.id)) {
     visited.add(current.id);
-    const next=collection.find(x=>x.replacesId===current.id) || collection.find(x=>x.id===current.successorId);
+    const replacements=collection.filter(x=>x.replacesId===current.id);
+    const next=replacements.find(x=>x.active!==false)||collection.find(x=>x.id===current.successorId)||replacements[0];
     if(!next) break;
     current=next;
   }
+  if(current?.active===false){const matches=collection.filter(x=>x.active!==false&&!x.legacyCatalog&&x.sku===current.sku&&normalizeSearch(x.name)===normalizeSearch(current.name));if(matches.length===1)return matches[0];}
   return current;
 }
 export function updateQuoteProducts(quote, materials, edges) {
   const map={};
   for(const id of quote.materialIds||[quote.materialId]) {
     const old=materials.find(m=>m.id===id), next=successor(old,materials);
-    if(!next||next.active===false) throw Object.assign(new Error(`Selecciona el producto vigente para ${old?.sku||id} · ${old?.name||''}. Su referencia histórica se conserva.`),{status:400});
+    if(!next||next.active===false) throw Object.assign(new Error('Selecciona un producto para esta pieza.'),{status:400,materialId:id});
     map[id]=next.id;
   }
   const edgeMap={};
   for(const p of quote.pieces||[]) for(const id of Object.values(p.edges||{}).filter(Boolean)) {
     const next=successor(edges.find(e=>e.id===id),edges);
-    if(!next||next.active===false) throw Object.assign(new Error(`Selecciona el tapacanto vigente para ${edges.find(e=>e.id===id)?.sku||id}.`),{status:400});
+    if(!next||next.active===false) throw Object.assign(new Error('Selecciona un tapacanto para esta pieza.'),{status:400,edgeId:id});
     edgeMap[id]=next.id;
   }
   quote.materialIds=[...new Set(Object.values(map))]; quote.materialId=map[quote.materialId]||quote.materialIds[0];

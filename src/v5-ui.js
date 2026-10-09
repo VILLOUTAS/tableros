@@ -1,3 +1,4 @@
+import {load60,payables60View} from './v60-ui.js';
 import {load55,v55} from './v55-ui.js';
 import {FREIGHT_NAMES,freightFamilies} from './v51-domain.js';
 import {filteredProjects,v51} from './v51-ui.js';
@@ -59,7 +60,7 @@ export function dashboardView(ctx) {
   return `<div class="v5-welcome"><div><p class="eyebrow">CASA DISEÑO · MULTIESPACIO</p><h2>Panel general</h2><p>Hola, ${h(ctx.user?.fullName||'Visitante')}. Tus proyectos y áreas de trabajo en un solo lugar.</p></div>${report?`<label>Mes del informe<input type="month" data-v5-month value="${v5.month}"></label>`:''}</div>
   <div class="v5-module-grid">${[['boards','Tableros','Maderas, piezas y tapacantos','▤'],['slabs','Placas','Piedras y terminaciones','◆'],['dispatch','Despachos','Direcciones, fletes y entregas','↗']].map(([key,title,desc,icon])=>`<button class="v5-module" data-v5="module" data-module="${key}"><span>${icon}</span><h3>${title}</h3><p>${desc}</p><b>Ingresar →</b></button>`).join('')}</div>
   ${report?`<div class="v5-report-heading"><h3>Resumen mensual</h3><p>Venta neta al estado <b>${v5.config.salesBasis==='facturacion'?'Facturación':'Facturado y pagado'}</b>. Producción al primer ingreso a Despacho.</p></div><div class="v5-kpis">${[['Venta neta',money(d.netSales)],['Tableros cortados',qty(d.boards)],['Placas cortadas',qty(d.slabs)],['Tapacanto instalado',qty(d.edgeMeters)+' ml'],['Biselados / pulidos',qty(d.bevelMeters)+' ml'],['Corte 45°',qty(d.miter45Meters)+' ml']].map(([label,value])=>`<article><span>${label}</span><strong>${value}</strong></article>`).join('')}</div><div class="v5-chart-grid"><section class="card"><h3>Venta neta por comercial</h3>${bars(d.sales)}</section><section class="card"><h3>Venta neta por familia</h3>${bars(d.families)}</section></div>${d.undatedProduction||d.undatedSales?`<div class="alert">Historial anterior sin fecha de hito: ${d.undatedSales} ventas y ${d.undatedProduction} pedidos de producción. Se conservan y se excluyen de este informe mensual para no inventar fechas.</div>`:''}`:'<section class="card"><h3>Mis proyectos</h3><p>Consulta tus cotizaciones, sus planos y su estado.</p>'+btn('projects','Ver proyectos')+'</section>'}
-  <section class="v5-coming"><h3>Próximamente</h3><div>${['Amoblamiento','Remodelación','Otros'].map(n=>`<span>${n}<small>Próximamente</small></span>`).join('')}</div></section>`;
+  ${payables60View(ctx)}<section class="v5-coming"><h3>Próximamente</h3><div>${['Amoblamiento','Remodelación','Otros'].map(n=>`<span>${n}<small>Próximamente</small></span>`).join('')}</div></section>`;
 }
 export function groupedProjectsView(ctx) {
   const groups=new Map();for(const p of filteredProjects(ctx.projects)){const id=p.groupId||p.id;if(!groups.has(id))groups.set(id,[]);groups.get(id).push(p);}
@@ -102,6 +103,7 @@ export async function loadV5(ctx) {
  v5.config=mergeConfig(await ctx.api(ctx.user?'/api/v5/config':'/api/v5/public-config'));
  if(ctx.user){v5.dispatches=(await ctx.api('/api/v5/dispatches')).dispatches||[];if(permitted(ctx.user,'reports'))v5.dashboard=await ctx.api(`/api/v5/dashboard?month=${v5.month}`);}
  else {v5.dispatches=[];v5.dashboard=null;}
+ await load60(ctx);
 }
 export function attachV5(app,getContext) {
  const run=fn=>async event=>{try{await fn(event,getContext());}catch(error){getContext().notify(error.message,'error');}};
@@ -123,13 +125,13 @@ export function attachV5(app,getContext) {
    const button=event.target.closest('[data-v5]');if(!button)return;event.preventDefault();const action=button.dataset.v5,I=v5.importer;
    if(action==='home'){await loadV5(ctx);ctx.state.view='dashboard';ctx.render();}
    if(action==='module'){const module=button.dataset.module;if(module==='dispatch'){await loadV5(ctx);ctx.state.view='dispatch';}else {if(!ctx.canCreateQuote()){ctx.state.view='projects';}else {ctx.newQuote(module);v5.importer=null;}}ctx.render();}
-   if(action==='projects'){await ctx.loadProjects();ctx.state.view='projects';ctx.render();}
+   if(action==='projects'){if(ctx.user){await ctx.loadProjects();ctx.state.view='projects';}else ctx.state.view='quote';ctx.render();}
    if(action==='new-group'){ctx.newQuote('');v5.importer=null;ctx.render();}
    if(action==='add-quote'){const group=ctx.projects.find(p=>(p.groupId||p.id)===button.dataset.id);ctx.newQuote('',group);v5.importer=null;ctx.render();}
    if(action==='open-quote'){ctx.openQuote(ctx.projects.find(p=>p.id===button.dataset.id));}
    if(action==='revisions'){v5.revisions=(await ctx.api(`/api/projects/${button.dataset.id}/revisions`)).revisions;ctx.render();}
    if(action==='open-revision'){ctx.openQuote(v5.revisions[Number(button.dataset.index)],true);}
-   if(action==='new-revision'){ctx.state.readOnlyRevision=false;ctx.state.settings={...ctx.state.settings,calculationVersion:'5.5',perimeterTrim:10,neolithTrim:30,kerf:v5.config.defaultKerf??3};ctx.state.calculationSnapshot=null;ctx.state.loadedSignature=null;ctx.state.step=1;ctx.notify('Los cambios se guardarán como una revisión nueva; el cálculo anterior quedará en Historial.');}
+   if(action==='new-revision'){ctx.state.readOnlyRevision=false;ctx.state.settings={...ctx.state.settings,calculationVersion:'6.0',perimeterTrim:10,neolithTrim:30,kerf:v5.config.defaultKerf??3};ctx.state.calculationSnapshot=null;ctx.state.loadedSignature=null;ctx.state.step=1;ctx.notify('Los cambios se guardarán como una revisión nueva; el cálculo anterior quedará en Historial.');}
    if(action==='settings'){await loadV5(ctx);ctx.state.view='v5-settings';ctx.render();}
    if(action==='catalog-manage'){await ctx.loadCatalog();ctx.state.view='v5-catalog';ctx.render();}
    if(action==='group-dispatch'){v55.dispatch={groupId:button.dataset.id};v5.dispatchEdit={groupId:button.dataset.id,families:freightFamilies(ctx.projects.filter(p=>(p.groupId||p.id)===button.dataset.id),ctx.materials)};await loadV5(ctx);ctx.state.view='dispatch';ctx.render();}

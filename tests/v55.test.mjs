@@ -58,7 +58,7 @@ test('V5.5 Salice exige base por acabado/serie, cubierta metálica y acoplamient
 test('V5.5 API recalcula material/peso con sobrantes y mantiene toda cotización histórica',async()=>{
  const f=await fixture();try{
   const p=(await f.ok('/api/projects','POST',{...sample(),delivery:{required:true,communeId:'concepcion',street:'Calle 123',discount:50}},f.headers,201)).project;
-  assert.equal(p.settings.calculationVersion,'5.5');assert.equal(p.delivery.quote.weightKg,p.summary.boardCount*60+2.1*.01);assert.equal(p.summary.shippingNet,5000);
+  assert.equal(p.settings.calculationVersion,'6.0');assert.equal(p.delivery.quote.weightKg,p.summary.boardCount*60+2.1*.01);assert.equal(p.summary.shippingNet,5000);
   const original=structuredClone(p),revised=(await f.ok('/api/projects/'+p.id,'PATCH',{pieces:p.pieces.map(p=>({...p,width:450}))})).project;
   assert.deepEqual(revised.history[0].summary,original.summary);assert.deepEqual(revised.history[0].calculationSnapshot,original.calculationSnapshot);
   const metadata=(await f.ok('/api/projects/'+p.id,'PATCH',{comments:'Solo metadatos'})).project;assert.deepEqual(metadata.summary,revised.summary);assert.equal(metadata.revisionNo,2);

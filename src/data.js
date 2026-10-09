@@ -6,6 +6,7 @@ import {
 } from "./catalog.generated.js";
 
 import catalog51 from './catalog.v51.generated.js';
+import {newServices60} from './v60-domain.js';
 export { catalogMeta, catalog51 };
 export const edgeBands = [...generatedEdgeBands.map(e=>({...e,legacyCatalog:true,active:false,successorId:catalog51.aliases[e.id]||''})),...structuredClone(catalog51.edgeBands)];
 export const services = structuredClone(catalog51.services);
@@ -127,3 +128,5 @@ export {catalog55};
 export const accessories=catalog55.accessories;
 for(const list of [materials,edgeBands,services])for(const p of list){p.active=false;p.legacyCatalog=true;if(catalog55.aliases[p.id])p.successorId=catalog55.aliases[p.id];}
 materials.push(...catalog55.materials);edgeBands.push(...catalog55.edgeBands);services.push(...catalog55.services);categories.push(...catalog55.categories);
+
+services.push(...newServices60(catalog55.services));

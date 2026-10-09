@@ -1,3 +1,4 @@
+import {attach60,catalog60View} from './v60-ui.js';
 import './v55.css';
 import {attach55,load55,v55,dispatch55View,operations55View,parameters55View,costs55View,quoteExtras55,summaryExtras55,pricePreview55,permissions55View} from './v55-ui.js';
 import './v51.css';
@@ -5,6 +6,7 @@ import {v51,attachV51,crm51View,management51View,catalog51View,searchForm,filter
 import {internalUser,kerfValue,updateQuoteProducts,serviceKeyFor} from './v51-domain.js';
 import "./style.css";
 import "./v5.css";
+import "./v60.css";
 import { V5, ROLE_LABELS, permitted, calculationSignature, taxonomyPaths } from './v5-domain.js';
 import { v5, attachV5, loadV5, importerView, dashboardView, groupedProjectsView, dispatchView, configurationView, catalogManagementView } from './v5-ui.js';
 import { jsPDF } from "jspdf";
@@ -178,7 +180,7 @@ const projectMaterial = (material) => {
     colorName: color,
     netPrice: preservesV40Pricing
       ? Math.max(0, Number(customization.netPrice ?? material.netPrice) || 0)
-      : ['5.1','5.5'].includes(state.settings.calculationVersion)&&state.settings.includeStoneMaterial?material.netPrice:0,
+      : ['5.1','5.5','6.0'].includes(state.settings.calculationVersion)&&state.settings.includeStoneMaterial?material.netPrice:0,
   };
 };
 
@@ -725,8 +727,8 @@ function passwordChangeView() {
 function shell(content) {
   const limited=userRoles().some(r=>["operador","instalador"].includes(r))&&!permitted(auth.user,"allProjects");
   const quote=state.view==='quote';
-  const title=quote?(state.workType==='hardware'?'Herrajes y servicios':state.workType==='slabs'?'Placas':'Tableros'):({dashboard:'Panel general',projects:'Proyectos',dispatch:'Despachos','v5-settings':'Configuración','v5-catalog':'Catálogo',users:'Usuarios',catalog:'Catálogo',production:'Agenda de pedidos',crm:'CRM de Producción',notifications:'Notificaciones'}[state.view]||'Casa Diseño');
-  return `<div class="v5-shell"><header class="v5-topbar"><button class="v5-brand" data-v5="home"><img class="brand-logo" src="/logo-casa-diseno.png" alt="Casa Diseño"><span>GESTIÓN & PROYECTOS <b>V5.5</b></span></button><nav aria-label="Navegación general">${!limited?'<button data-v5="home">Panel</button>':''}${auth.user?'<button data-v5="projects">Proyectos</button>':''}${internalUser(auth.user)?'<button data-v51="crm">CRM de Producción</button>':''}${!limited?'<button data-v5="module" data-module="boards">Tableros</button><button data-v5="module" data-module="slabs">Placas</button><button data-v55="dispatch">Despachos</button><button data-action="catalog">Catálogo</button>':''}${canCreateQuote()?'<button data-v55="new-sale">Herrajes y servicios</button>':''}${permitted(auth.user,'catalog')?'<button data-v5="catalog-manage">Administración</button>':''}</nav><details class="v5-account"><summary>${safe(auth.user?.fullName||'Visitante')} ▾</summary><div><small>${userRoles().map(r=>roleLabels[r]).join(' · ')||'Venta sin descuento'}</small>${permitted(auth.user,'users')?'<button data-action="users">Usuarios y roles</button>':''}${permitted(auth.user,'settings')||permitted(auth.user,'catalog')?'<button data-v5="settings">Configuración</button>':''}${auth.user?'<button data-action="notifications">Notificaciones</button>':''}<button data-action="${auth.visitor?'visitor-exit':'logout'}">Cerrar sesión</button></div></details></header>
+  const title=quote?(state.workType==='hardware'?'Herrajes y servicios':state.workType==='slabs'?'Placas':'Tableros'):({'catalog-products':'Catálogo de Productos','catalog-services':'Catálogo de Servicios',dashboard:'Panel general',projects:'Proyectos',dispatch:'Despachos','v5-settings':'Configuración','v5-catalog':'Catálogo',users:'Usuarios',catalog:'Catálogo',production:'Agenda de pedidos',crm:'CRM de Producción',notifications:'Notificaciones'}[state.view]||'Casa Diseño');
+  return `<div class="v5-shell"><header class="v5-topbar"><button class="v5-brand" data-v5="home"><img class="brand-logo" src="/logo-casa-diseno.png" alt="Casa Diseño"><span>GESTIÓN & PROYECTOS <b>V6.0</b></span></button><nav aria-label="Navegación general">${!limited?'<button data-v5="home">Panel</button>':''}<button data-v5="projects">Proyectos</button>${internalUser(auth.user)?'<button data-v51="crm">CRM Producción</button>':''}${!limited?'<button data-v60="products">Catálogo de Productos</button><button data-v60="services">Catálogo de Servicios</button><button data-v55="dispatch">Despachos</button>':''}${permitted(auth.user,'catalog')?'<button data-v5="catalog-manage">Administración</button>':''}</nav><details class="v5-account"><summary>${safe(auth.user?.fullName||'Visitante')} ▾</summary><div><small>${userRoles().map(r=>roleLabels[r]).join(' · ')||'Venta sin descuento'}</small>${permitted(auth.user,'users')?'<button data-action="users">Usuarios y roles</button>':''}${permitted(auth.user,'settings')||permitted(auth.user,'catalog')?'<button data-v5="settings">Configuración</button>':''}${auth.user?'<button data-action="notifications">Notificaciones</button>':''}<button data-action="${auth.visitor?'visitor-exit':'logout'}">Cerrar sesión</button></div></details></header>
   <div class="v5-layout ${quote?'has-context':''}">${quote?`<aside class="v5-context"><p class="eyebrow">${title.toUpperCase()}</p><h3>${safe(state.project.projectName||'Nuevo proyecto')}</h3><p>${safe(state.quoteName||'Cotización')}</p><nav aria-label="Etapas de cotización">${steps.map(([label,subtitle],i)=>({label,subtitle,i})).filter(({i})=>state.workType!=='hardware'||i>=3).map(({label,subtitle,i})=>`<button class="step-link ${state.step===i?'active':''}" data-action="step" data-step="${i}"><span>${state.workType==='hardware'?i-2:i+1}</span><b>${state.workType==='hardware'?(i===3?'Datos y productos':'Resumen'):label}<small>${state.workType==='hardware'?(i===3?'Cliente, servicios y despacho':'Revisión y descarga'):subtitle}</small></b></button>`).join('')}</nav><div class="v5-context-note"><b>R${state.revisionNo||1} · cálculo ${safe(state.settings.calculationVersion)}</b><p>Las modificaciones de medidas, veta, materiales y servicios generan una nueva revisión al guardar.</p>${state.readOnlyRevision?'<strong>Historial · solo consulta</strong>':''}</div></aside>`:''}<main class="v5-main"><header class="v5-page-header"><p class="eyebrow">${quote?'COTIZACIÓN / '+title.toUpperCase():'ESPACIO DE TRABAJO'}</p><h1>${quote?(state.workType==='hardware'?(state.step===4?'Resumen':'Datos y productos'):steps[state.step][0]):title}</h1>${quote?`<span class="status-pill">${statusLabels[state.project.status]}</span>`:''}</header><div class="workspace">${auth.user?searchForm():''}${content}</div></main></div>${state.message?`<div class="toast ${state.message.type}">${safe(state.message.text)}</div>`:''}</div>`;
 }
 
@@ -1138,7 +1140,7 @@ function materialStep() {
   `;
 }
 
-function catalogView(){return shell(catalog51View(v5Context()));}
+function catalogView(){return shell(catalog60View(v5Context(),'products'));}
 
 function legacyCatalogView() {
   const edgeGroups = [...new Set(activeEdgeBands().map((item) => item.group))];
@@ -1352,7 +1354,7 @@ function piecesTable() {
             <td><b>${safe(piece.code || "Pendiente")}</b><span>${safe(
               piece.name || "Sin nombre",
             )}</span></td>
-            <td><b>${safe(material?.sku || "Sin asignar")}</b><span>${safe(material?.name || "")}</span></td>
+            <td><b>${safe(material?.sku || "Sin asignar")}</b><span>${safe(material?.name || "")}</span>${state.referenceIssue&&(state.referenceIssue.materialId===piece.materialId||Object.values(piece.edges||{}).includes(state.referenceIssue.edgeId))?`<small class="v60-inline-issue">${safe(state.referenceIssue.message)}</small><button class="secondary small" data-action="step" data-step="1">Seleccionar producto</button>`:""}</td>
             <td>${
               editable
                 ? `<div class="inline-dimensions">
@@ -1671,7 +1673,7 @@ function invoiceBreakdown(result) {
                 (item) => `<article class="invoice-item">
                   <header><b>${safe(item.sku)}</b><span>${safe(item.group)} · ${safe(item.name)}</span></header>
                   <div class="invoice-line">
-                    <span>Tapacanto<small>${meters(item.materialMeters??item.meters)} ml × ${clp(item.unitPrice)}/ml${item.wasteMeters?` · incluye ${meters(item.wasteMeters)} ml de merma (${state.settings.calculationVersion==='5.5'?5:2}%)`:""}</small></span>
+                    <span>Tapacanto<small>${meters(item.materialMeters??item.meters)} ml × ${clp(item.unitPrice)}/ml${item.wasteMeters?` · incluye ${meters(item.wasteMeters)} ml de merma (${['5.5','6.0'].includes(state.settings.calculationVersion)?5:2}%)`:""}</small></span>
                     <strong>${clp(item.materialSubtotal)}</strong>
                   </div>
                   <div class="invoice-line service">
@@ -1686,7 +1688,7 @@ function invoiceBreakdown(result) {
     </section>`}
     ${finishRows.length ? `<section class="invoice-group">
       <div class="invoice-group-title"><b>Acabados opcionales por lado</b><span>${finishRows.length} servicio(s)</span></div>
-      ${finishRows.map((item) => `<article class="invoice-item"><header><b>${safe(item.name)}</b></header><div class="invoice-line service"><span>Acabado<small>${meters(item.materialMeters??item.meters)} ml × ${clp(item.unitPrice)}/ml${item.wasteMeters?` · incluye ${meters(item.wasteMeters)} ml de merma (${state.settings.calculationVersion==='5.5'?5:2}%)`:""}</small></span><strong>${clp(item.serviceSubtotal)}</strong></div></article>`).join("")}
+      ${finishRows.map((item) => `<article class="invoice-item"><header><b>${safe(item.name)}</b></header><div class="invoice-line service"><span>Acabado<small>${meters(item.materialMeters??item.meters)} ml × ${clp(item.unitPrice)}/ml${item.wasteMeters?` · incluye ${meters(item.wasteMeters)} ml de merma (${['5.5','6.0'].includes(state.settings.calculationVersion)?5:2}%)`:""}</small></span><strong>${clp(item.serviceSubtotal)}</strong></div></article>`).join("")}
     </section>` : ""}
   </div>`;
 }
@@ -1735,7 +1737,7 @@ function optimizedPiecesTable() {
           const incomplete = row.optimizedQuantity !== row.requestedQuantity;
           return `<tr class="${incomplete ? "row-warning" : ""}">
             <td><b>${safe(row.code)}</b><span>${safe(row.name || "Sin nombre")}</span></td>
-            <td><b>${safe(material?.sku || "Sin asignar")}</b><span>${safe(material?.name || "")}</span></td>
+            <td><b>${safe(material?.sku || "Sin asignar")}</b><span>${safe(material?.name || "")}</span>${state.referenceIssue&&(state.referenceIssue.materialId===piece.materialId||Object.values(piece.edges||{}).includes(state.referenceIssue.edgeId))?`<small class="v60-inline-issue">${safe(state.referenceIssue.message)}</small><button class="secondary small" data-action="step" data-step="1">Seleccionar producto</button>`:""}</td>
             <td>${millimeters(row.finishedLength)} × ${millimeters(row.finishedWidth)} mm</td>
             <td>${millimeters(row.cutLength)} × ${millimeters(row.cutWidth)} mm</td>
             <td>${row.requestedQuantity}</td>
@@ -1856,10 +1858,10 @@ function optimizeStep() {
     }
     ${
       latestResult.warnings.length
-        ? `<div class="alert"><b>Revisar piezas:</b> ${latestResult.warnings.map(safe).join(" · ")}</div>`
+        ? `<div class="alert"><b>Revisar piezas:</b> ${latestResult.warnings.filter(w=>!w.includes("Su referencia histórica se conserva")).map(safe).join(" · ")}</div>`
         : ""
     }
-    ${state.settings.calculationVersion !== V5 ? `<div class="alert"><b>Cálculo histórico ${safe(state.settings.calculationVersion)}:</b> los valores guardados se conservan. Al modificar medidas, materiales o servicios se creará una revisión V5. ${latestResult.historicalReconstruction?'Los planos se reconstruyen con las reglas históricas porque esta versión no guardaba una imagen del resultado.':''}</div>` : ''}
+    ${state.settings.calculationVersion !== V5 ? `<div class="alert"><b>Cálculo histórico ${safe(state.settings.calculationVersion)}:</b> los valores guardados se conservan. Al modificar medidas, materiales o servicios se creará una revisión V6.0. ${latestResult.historicalReconstruction?'Los planos se reconstruyen con las reglas históricas porque esta versión no guardaba una imagen del resultado.':''}</div>` : ''}
     ${state.readOnlyRevision?'<div class="alert">Revisión de consulta. Para editar, abre la cotización vigente desde Proyectos.</div>':''}
     ${optimizedPiecesTable()}
     <nav class="plate-quick-nav" aria-label="Navegación rápida entre hojas de corte">
@@ -2426,7 +2428,7 @@ function renderEnhancements() {
 }
 
 function render() {
-  if(auth.user&&userRoles().some(r=>['operador','instalador'].includes(r))&&!permitted(auth.user,'allProjects')&&['dashboard','catalog','v5-settings','v5-catalog'].includes(state.view))state.view='projects';
+  if(auth.user&&userRoles().some(r=>['operador','instalador'].includes(r))&&!permitted(auth.user,'allProjects')&&['dashboard','catalog','catalog-products','catalog-services','v5-settings','v5-catalog'].includes(state.view))state.view='projects';
   if (auth.loading) {
     app.innerHTML = `<main class="access-page"><section class="access-brand"><img src="./logo-casa-diseno.png" alt="Casa Diseño Multiespacio" /><p>Preparando acceso seguro…</p></section></main>`;
     return;
@@ -2442,7 +2444,7 @@ function render() {
   if(['v55-operations','v55-parameters','v55-costs'].includes(state.view)){app.innerHTML=shell({'v55-operations':operations55View,'v55-parameters':parameters55View,'v55-costs':costs55View}[state.view](v5Context()));renderEnhancements();return;}
   if(state.view==='crm'){app.innerHTML=shell('<div class="v5-actions"><button class="secondary" data-v55="dispatch">Calendario de despachos</button><button class="secondary" data-v55="operations">Operadores y tareas</button></div>'+crm51View(v5Context()));renderEnhancements();return;}
   if (['dashboard','dispatch','v5-settings','v5-catalog'].includes(state.view)) {
-    const view={dashboard:dashboardView,dispatch:dispatch55View,'v5-settings':configurationView,'v5-catalog':management51View}[state.view];
+    const view={dashboard:dashboardView,dispatch:dispatch55View,'v5-settings':configurationView,'v5-catalog':ctx=>'<div class="v5-actions"><button class="secondary" data-v5="settings">Parámetros y categorías</button>'+(permitted(ctx.user,'users')?'<button class="secondary" data-action="users">Usuarios y roles</button>':'')+'</div>'+management51View(ctx)}[state.view];
     app.innerHTML=shell(view(v5Context()));renderEnhancements();return;
   }
   if (state.view === "projects") {
@@ -2450,6 +2452,7 @@ function render() {
     renderEnhancements();
     return;
   }
+  if (state.view === 'catalog-products'||state.view === 'catalog-services'){app.innerHTML=shell(catalog60View(v5Context(),state.view==='catalog-services'?'services':'products'));renderEnhancements();return;}
   if (state.view === "catalog") {
     app.innerHTML = catalogView();
     renderEnhancements();
@@ -4503,11 +4506,11 @@ function computeCurrentResult() {
     state.settings.servicePolicies=v5.config.services;
     if(!permitted(auth.user,'discount'))for(const field of ['boardDiscount','edgeDiscount','servicesDiscount'])state.settings[field]=0;
   }
-  let mappingWarning='';
-  if(!unchanged&&!state.readOnlyRevision&&state.materialIds.length){try{const mapped=updateQuoteProducts(structuredClone(state),materials,edgeBands);for(const key of ['materialIds','materialId','pieces','edgeCodeMap','materialCustomizations'])state[key]=mapped[key];}catch(e){mappingWarning=e.message;}}
+  state.referenceIssue=null;
+  if(!unchanged&&!state.readOnlyRevision&&state.materialIds.length){try{const mapped=updateQuoteProducts(structuredClone(state),materials,edgeBands);for(const key of ['materialIds','materialId','pieces','edgeCodeMap','materialCustomizations'])state[key]=mapped[key];}catch(e){state.referenceIssue={message:e.message,materialId:e.materialId,edgeId:e.edgeId};}}
   const result=optimizeProject(selectedMaterials(),state.pieces,edgeBands,state.settings);
-  if(state.settings.calculationVersion==='5.5')pricePreview55(result,state,v5Context());
-  if(mappingWarning)result.warnings.push(mappingWarning);
+  if(['5.5','6.0'].includes(state.settings.calculationVersion))pricePreview55(result,state,v5Context());
+
   if(unchanged && state.summary){result.summary=state.summary;result.historicalReconstruction=true;}
   return result;
 }
@@ -4533,6 +4536,7 @@ function v5Context() {
 attachV5(app,v5Context);
 attachV51(app,v5Context);
 attach55(app,v5Context);
+attach60(app,v5Context);
 
 async function initialize() {
   render();

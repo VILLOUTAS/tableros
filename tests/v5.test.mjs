@@ -80,7 +80,7 @@ test('V5 preserva un proyecto V3 al editar metadatos y archiva su precio al revi
   const id=randomUUID(),legacy={id,ownerId:f.user.id,project:{projectName:'Antiguo',clientName:'Cliente',status:'cotizacion'},payload:{workType:'boards',materialId:'62-egger-1502-1',materialIds:['62-egger-1502-1'],pieces:[{name:'Pieza',length:500,width:400,quantity:2,grain:'sin-veta'}],settings:{}},summary:{net:32123,vat:6103,total:38226}};
   const saved=await f.store.saveProject(legacy);
   let response=await f.request(`/api/projects/${id}`,'PATCH',{project:{clientName:'Cliente corregido'}},f.headers);assert.equal(response.status,200);assert.deepEqual(response.body.project.summary,legacy.summary);assert.deepEqual(response.body.project.settings,{});assert.equal(response.body.project.revisionNo,1);
-  response=await f.request(`/api/projects/${id}`,'PATCH',{pieces:legacy.payload.pieces.map(p=>({...p,length:600}))},f.headers);assert.equal(response.status,200,JSON.stringify(response.body));assert.equal(response.body.project.settings.calculationVersion,'5.5');assert.deepEqual(response.body.project.history[0].summary,legacy.summary);assert.deepEqual(response.body.project.history[0].settings,{});
+  response=await f.request(`/api/projects/${id}`,'PATCH',{pieces:legacy.payload.pieces.map(p=>({...p,length:600}))},f.headers);assert.equal(response.status,200,JSON.stringify(response.body));assert.equal(response.body.project.settings.calculationVersion,'6.0');assert.deepEqual(response.body.project.history[0].summary,legacy.summary);assert.deepEqual(response.body.project.history[0].settings,{});
  }finally{await f.close();}
 });
 test('V5 agrupa tableros y placas, protege flete facturado y no revela costos públicos',async()=>{

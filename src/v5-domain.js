@@ -19,7 +19,7 @@ export function permitted(user, action) {
   if (roles.includes('superadmin')) return true;
   if(['users','costs'].includes(action)&&roles.includes('admin')&&user?.permissions?.includes(action))return true;
   const grants = {
-    users: [], settings: ['admin'], shippingSettings:['admin'], costs: ['finanzas'], payRates:['admin','produccion','finanzas'],
+    laborPayables:['admin','logistica','finanzas'], laborPayments:['admin','finanzas'], users: [], settings: ['admin'], shippingSettings:['admin'], costs: ['finanzas'], payRates:['admin','produccion','finanzas'],
     reports: ['admin','finanzas','supervisor','comercial','produccion','instalacion','logistica'],
     catalog: ['admin'], categories: ['admin'], salesPrices: ['admin'], products: ['admin'],
     quote: ['admin','comercial','cliente'], discount: ['admin','comercial'],
@@ -120,13 +120,15 @@ export function publicCatalogItem(item,user) {
   const copy={...item};
   copy.discountLimit=permitted(user,'discount')?discountLimit(Number(item.netPrice??item.price)||0,item):0;
   copy.serviceDiscountLimit=permitted(user,'discount')?discountLimit(Number(item.serviceRate)||0,{minPrice:item.serviceMinPrice,purchasePrice:item.servicePurchasePrice}):0;
-  if(!permitted(user,'costs')) for(const key of ['purchasePrice','minPrice','servicePurchasePrice','serviceMinPrice']) delete copy[key];
+  if(!permitted(user,'costs'))for(const key of ['purchasePrice','servicePurchasePrice'])delete copy[key];
+  if(!permitted(user,'costs')&&!permitted(user,'salesPrices'))for(const key of ['minPrice','serviceMinPrice'])delete copy[key];
   if(!internalUser(user)) for(const key of ['supplierCode','sourceId','originCode','barcode']) delete copy[key];
   return copy;
 }
 export function stripCosts(value,user) {
   const hidden=new Set();
-  if(!permitted(user,'costs'))for(const k of ['purchasePrice','minPrice','servicePurchasePrice','serviceMinPrice','costSnapshot','unitCost','plannedCost','actualCost','laborCost','margin'])hidden.add(k);
+  if(!permitted(user,'costs'))for(const k of ['purchasePrice','servicePurchasePrice','costSnapshot','unitCost','plannedCost','actualCost','laborCost','margin'])hidden.add(k);
+  if(!permitted(user,'costs')&&!permitted(user,'salesPrices'))for(const k of ['minPrice','serviceMinPrice'])hidden.add(k);
   if(!permitted(user,'payRates')&&!permitted(user,'costs'))for(const k of ['payAmount','payRateSnapshot','payTotal','unitRate','hourRate'])hidden.add(k);
   if(!internalUser(user))for(const k of ['supplierCode','sourceId','originCode','barcode','assignedOperatorIds'])hidden.add(k);
   const walk=v=>v instanceof Date?v:Array.isArray(v)?v.map(walk):v&&typeof v==='object'?Object.fromEntries(Object.entries(v).filter(([k])=>!hidden.has(k)).map(([k,x])=>[k,walk(x)])):v;

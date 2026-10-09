@@ -113,7 +113,7 @@ export function materialCostLines(project){
  return lines;
 }
 export function productionReady(projects,tasks){
- const required=tasks.filter(t=>t.required&&['boards','slabs'].includes(t.area));
+ const required=tasks.filter(t=>t.required&&['boards','slabs','installations'].includes(t.area));
  if(!required.length||required.some(t=>t.status!=='completed'))return false;
- return projects.filter(p=>p.pieces?.length).every(p=>Object.entries(serviceDemand(p)).filter(([sku])=>/^SER-(DIM|NEO|PLA)-|^SER-003[5-8]$/.test(sku)).every(([sku,quantity])=>required.filter(t=>t.quoteId===p.id&&t.serviceSku===sku).reduce((s,t)=>s+t.quantity,0)+1e-8>=quantity));
+ return projects.every(p=>Object.entries(serviceDemand(p)).every(([sku,quantity])=>required.filter(t=>t.quoteId===p.id&&t.serviceSku===sku).reduce((s,t)=>s+t.quantity,0)+1e-8>=quantity));
 }
