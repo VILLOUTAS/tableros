@@ -2,6 +2,7 @@ import {randomUUID} from 'node:crypto';
 import {mergeConfig,permitted} from './src/v5-domain.js';
 import {TAXONOMY51,FREIGHT51,internalUser,canSchedule,validDate,CALENDARS,SCHEDULE_STATES} from './src/v51-domain.js';
 import {fail} from './v5-server.mjs';
+import {quoteWorkAreas60} from './src/v60-domain.js';
 
 export async function initializeV51(db) {
   if(!await db.getV5('v51:catalog-migration')) {
@@ -44,7 +45,7 @@ export function registerV51Routes(app,{db,authenticate,csrf,buildCatalog,normali
     if(selected.some(p=>!p))throw fail('Cotización no encontrada.',404);
     const groupId=selected[0].groupId||selected[0].id;
     if(selected.some(p=>(p.groupId||p.id)!==groupId))throw fail('Las cotizaciones deben pertenecer al mismo proyecto.');
-    if(b.kind!=='installations'&&selected.some(p=>(p.workType||'boards')!==b.kind))throw fail('Selecciona cotizaciones de la agenda indicada.');
+    if(b.kind!=='installations'&&selected.some(p=>!quoteWorkAreas60(p).includes(b.kind)))throw fail('Selecciona cotizaciones de la agenda indicada.');
     if(!validDate(b.startDate)||!validDate(b.endDate||b.startDate)||(b.endDate&&b.endDate<b.startDate))throw fail('Revisa las fechas de inicio y término.');
     if(!SCHEDULE_STATES[b.status||'scheduled'])throw fail('Estado de programación inválido.');
     const legacyId=String(b.id||'').startsWith('legacy:')?String(b.id).slice(7):null;

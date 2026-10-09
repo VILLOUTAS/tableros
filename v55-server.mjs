@@ -1,9 +1,10 @@
 import {randomUUID} from 'node:crypto';
 import {permitted,rolesOf,discountedLine,mergeConfig,stripCosts} from './src/v5-domain.js';
-import {internalUser,validDate} from './src/v51-domain.js';
+import {internalUser,validDate,successor} from './src/v51-domain.js';
 import {TAXONOMY55,WEIGHTS55,PRODUCTIVITY55,freight55,shippingLines,validateComponents,payAmount,productionReport,minuteRate,planWork,serviceDemand,materialCostLines,workingMinutes,productionReady} from './src/v55-domain.js';
 import routes from './src/routes.v55.generated.js';
 import catalog55 from './src/catalog.v55.generated.js';
+import {quoteWorkAreas60} from './src/v60-domain.js';
 import {fail} from './v5-server.mjs';
 const now=()=>new Date().toISOString(),txt=(v,n=250)=>String(v??'').trim().slice(0,n);
 const numeric=(v,label,min=0,max=1e10)=>{if(v===''||v==null||!Number.isFinite(Number(v))||Number(v)<min||Number(v)>max)throw fail('Revisa '+label+'.');return Number(v);};
@@ -14,7 +15,7 @@ export const isAssigned=(user,p)=>p?.assignedOperatorIds?.includes(user?.id);
 const locks=new WeakMap();
 // Un único cierre, registro de avance o tarifa por vez. PostgreSQL usa un bloqueo
 // transaccional para que esta garantía también se mantenga con varios procesos.
-async function atomic(db,key,action){
+export async function atomic(db,key,action){
  if(db.pool){const client=await db.pool.connect();try{
   await client.query('BEGIN');await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[key]);
   const tx=Object.create(db);tx.pool=client;
@@ -58,7 +59,8 @@ export async function prepareSale55(p,catalog,config,user){
  if(!Array.isArray(p.saleLines))p.saleLines=[];
  if(p.saleLines.length>500)throw fail('Máximo 500 líneas adicionales.');
  const lines=p.saleLines.map(l=>{
-  const item=all.find(x=>x.id===l.productId&&x.active!==false);if(!item)throw fail('Producto no vigente en la venta adicional.');
+  const item=successor(all.find(x=>x.id===l.productId),all);if(!item||item.active===false)throw fail('Producto no vigente en la venta adicional.');
+  if(item.productType==='service'&&item.pricingPending)throw fail('Configura la unidad, venta y venta mínima de '+item.sku+' antes de cotizar.');
   const quantity=numeric(l.quantity,'cantidad',.001,100000),price=Number(item.netPrice??item.price);
   if(!(price>0))throw fail('Configura el precio de '+item.sku+' antes de cotizar.');
   const discount=permitted(user,'discount')?numeric(l.discount||0,'descuento',0,50):0;
@@ -168,9 +170,10 @@ export function registerV55Routes(app,{db,authenticate,csrf,buildCatalog,canRead
  app.post('/api/v55/tasks',authenticate,csrf,guard('tasks'),async(req,res)=>{
   const b=req.body,p=await project(req,b.quoteId);if(!canOperateArea(req.auth.user,b.area))throw fail('Área fuera de tus atribuciones.',403);
   if(!['facturado_pagado','produccion','despacho'].includes(p.project.status))throw fail('Primero debe estar facturado y pagado.');
-  const o=await db.getV5('operator:'+b.operatorId),catalog=await buildCatalog(),service=catalog.services.find(s=>s.sku===b.serviceSku&&s.active!==false),c=await config();
+  const o=await db.getV5('operator:'+b.operatorId),catalog=await buildCatalog(),service=p.saleLines?.find(l=>l.sku===b.serviceSku&&l.productSnapshot?.productType==='service')?.productSnapshot||catalog.services.find(s=>s.sku===b.serviceSku&&s.active!==false),c=await config();
   if(!o?.active||!o.areas.includes(b.area)||!service)throw fail('Selecciona un operador y un servicio del área.');
-  if(b.area==='boards'&&p.workType!=='boards'||b.area==='slabs'&&p.workType!=='slabs')throw fail('El área no corresponde a esta cotización.');
+  if(service.taskArea&&service.taskArea!==b.area)throw fail('El servicio corresponde al área '+service.taskArea+'.');
+  if(!quoteWorkAreas60(p).includes(b.area)&&b.area!=='dispatch')throw fail('El área no corresponde a los servicios de esta cotización.');
   const quantity=numeric(b.quantity,'objetivo',.001,100000);if(!validDate(b.startDate)||!/^([01]\d|2[0-3]):[0-5]\d$/.test(b.startTime||'08:00'))throw fail('Fecha/hora inválida.');
   const rate=minuteRate(c.productivity[service.sku]),minutes=rate?quantity/rate:numeric(b.plannedMinutes,'minutos planificados',1,540000),end=planWork(b.startDate,b.startTime||'08:00',minutes),id=b.id||randomUUID();
   const result=await atomic(db,'production:'+p.groupId,async tx=>{
@@ -204,8 +207,8 @@ export function registerV55Routes(app,{db,authenticate,csrf,buildCatalog,canRead
    if(Number(req.body.version)!==task.version)throw fail('La tarea cambió. Actualiza.',409);
    const entries=(await tx.listV5('entry:')).filter(e=>e.taskId===task.id&&e.validated);if(entries.reduce((s,e)=>s+e.quantity,0)+1e-8<task.quantity)throw fail('Producción debe validar la cantidad terminada antes del cierre.');
    const closed={...task,status:'completed',actualEnd:now(),closedBy:req.auth.user.id,version:task.version+1,history:history(task,req.auth.user)};await tx.putV5('task:'+task.id,closed);
-   const tasks=(await tx.listV5('task:')).filter(t=>t.groupId===task.groupId&&t.required&&['boards','slabs'].includes(t.area));
-   const siblings=(await tx.listProjects({role:'superadmin'})).filter(p=>(p.groupId||p.id)===task.groupId&&['boards','slabs'].includes(p.workType)&&p.pieces?.length);
+   const tasks=(await tx.listV5('task:')).filter(t=>t.groupId===task.groupId&&t.required&&['boards','slabs','installations'].includes(t.area));
+   const siblings=(await tx.listProjects({role:'superadmin'})).filter(p=>(p.groupId||p.id)===task.groupId&&quoteWorkAreas60(p).length);
    const complete=productionReady(siblings,tasks);
    const areaDone=(await tx.listV5('task:')).filter(t=>t.quoteId===task.quoteId&&t.area===task.area&&t.required).every(t=>t.status==='completed');
    if(areaDone)for(const schedule of (await tx.listV5('schedule:')).filter(s=>s.kind===task.area&&s.quoteIds.includes(task.quoteId))){const covered=(await tx.listV5('task:')).filter(t=>schedule.quoteIds.includes(t.quoteId)&&t.area===task.area&&t.required);if(covered.length&&covered.every(t=>t.status==='completed'))await tx.putV5('schedule:'+schedule.id,{...schedule,plannedEndDate:schedule.plannedEndDate||schedule.endDate,actualEnd:now(),status:'completed',version:schedule.version+1,history:history(schedule,req.auth.user)});}

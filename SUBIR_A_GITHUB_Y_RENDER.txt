@@ -1,32 +1,36 @@
-CASA DISEÑO MULTIESPACIO - ACTUALIZACIÓN V5.5.0
+CASA DISEÑO MULTIESPACIO - ACTUALIZACIÓN V6.0.0
 
 Repositorio: https://github.com/VILLOUTAS/tableros
 
-1. Lee ACTUALIZACION_V5.5.0.md y respalda la base PostgreSQL actual.
-2. En GitHub Desktop abre o clona VILLOUTAS/tableros con tu cuenta autorizada.
-3. Actualiza tu copia local con los últimos cambios del repositorio.
-4. Descomprime el paquete y copia su CONTENIDO a la carpeta del repositorio, reemplazando archivos coincidentes.
-   package.json, server.mjs y render.yaml deben quedar en la raíz.
-   Conserva .git, tu configuración privada y los archivos ajenos al paquete.
-   No subas solamente el ZIP ni agregues una carpeta contenedora V5.5.
-5. Revisa los cambios. No incluyas .env, secretos, respaldos, node_modules ni dist.
-6. En una terminal de esa carpeta, con Node 24:
+1. Lee ACTUALIZACION_V6.0.0.md y respalda la base actual.
+2. Abre VILLOUTAS/tableros en GitHub Desktop con tu cuenta autorizada.
+3. Usa Fetch/Pull origin para actualizar tu copia local.
+4. Descomprime y copia el CONTENIDO del ZIP a la carpeta del repositorio.
+   Reemplaza archivos coincidentes y conserva las carpetas.
+   package.json, server.mjs, v60-server.mjs y render.yaml van en la raíz.
+   Conserva .git, .env, fotos propias y archivos ajenos al paquete.
+   No subas solo el ZIP ni una carpeta contenedora V6.
+5. No incluyas secretos, respaldos, node_modules ni dist.
+6. Con Node 24, desde la carpeta del repositorio:
    npm ci --include=dev
    npm test
    npm run build
-7. Crea el commit: Actualizar optimizador Casa Diseño a V5.5.0
-8. Usa Push origin con tu cuenta autorizada.
-9. En Render usa el servicio EXISTENTE y conserva DATABASE_URL.
+7. Commit: Actualizar optimizador Casa Diseño a V6.0.0
+8. Push origin con tu cuenta autorizada.
+9. Render: servicio EXISTENTE y misma DATABASE_URL.
    Build: npm ci --include=dev && npm test && npm run build
    Start: npm start
    Health check: /api/health
-   Si el despliegue automático por commit está habilitado, comienza al subir.
-10. Comprueba /api/health (5.5.0 y PostgreSQL) y las cotizaciones históricas.
+   El despliegue automático, si está habilitado, comienza con el commit.
+10. Comprueba /api/health: 6.0.0 y PostgreSQL. Abre cotizaciones antiguas.
+11. Configura las nuevas fichas de servicios y tarifas individuales.
+    Revisa movimientos ya pagados antes de preparar liquidaciones.
 
-No crear otra base, servicio ni Blueprint. No eliminar los catálogos históricos.
+No crear otra base ni servicio. No eliminar catálogos históricos.
 No cargar datos de prueba en producción.
 
-El paquete fue probado localmente. No se ha subido ni desplegado desde esta sesión: la conexión disponible al repositorio permite lectura, sin permiso de escritura.
+Paquete probado localmente, sin carga ni despliegue desde esta sesión.
+La conexión actual de GitHub permite leer, pero no escribir.
 
-Pendientes: docs/CATALOGO_V5.5.md
-Pruebas: docs/VALIDACION_V5.5.md
+Detalles: docs/CATALOGO_V6.md, docs/PAGOS_OPERADORES_V6.md,
+docs/VALIDACION_V6.md.

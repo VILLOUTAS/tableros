@@ -1,3 +1,4 @@
+import {initializeV60,enrichCatalog60,registerV60Routes} from './v60-server.mjs';
 import {productionReady} from './src/v55-domain.js';
 import {initializeV55,registerV55Routes,enrichCatalog55,isAssigned} from './v55-server.mjs';
 import {initializeV51,registerV51Routes} from './v51-server.mjs';
@@ -240,7 +241,7 @@ function catalogNumber(value, fallback = 0) {
 }
 
 function catalogExtra(source) {
-  return {productType:source.productType,hardwareType:source.hardwareType,finish:source.finish,series:source.series,weightKey:source.weightKey,componentRule:source.componentRule,compatibilityPending:source.compatibilityPending,completeKit:source.completeKit,includesMaterial:source.includesMaterial,catalogRelease:'5.5',imageKey:String(source.imageKey||('foto-v55-'+source.sku)),unit:String(source.unit||'unidad'),cutServiceKey:String(source.cutServiceKey||''),serviceSku:String(source.serviceSku||''),customColor:!!source.customColor,active:source.active!==false,supplier:String(source.supplier||''),stock:source.stock===''||source.stock==null?null:catalogNumber(source.stock),
+  return {productType:source.productType,hardwareType:source.hardwareType,finish:source.finish,series:source.series,weightKey:source.weightKey,componentRule:source.componentRule,compatibilityPending:source.compatibilityPending,completeKit:source.completeKit,includesMaterial:source.includesMaterial,catalogPath:source.catalogPath,catalogPaths:source.catalogPaths,provisionalCode:source.provisionalCode,unitPending:source.unitPending,taskArea:source.taskArea,catalogRelease:source.catalogRelease||'6.0',imageKey:String(source.imageKey||('foto-v55-'+source.sku)),unit:String(source.unit||'unidad'),cutServiceKey:String(source.cutServiceKey||''),serviceSku:String(source.serviceSku||''),customColor:!!source.customColor,active:source.active!==false,supplier:String(source.supplier||''),stock:source.stock===''||source.stock==null?null:catalogNumber(source.stock),
     colorName:String(source.colorName||''),format:String(source.format||''),taxonomyId:String(source.taxonomyId||''),materialType:String(source.materialType||'board'),
     serviceMinPrice:catalogNumber(source.serviceMinPrice),servicePurchasePrice:catalogNumber(source.servicePurchasePrice),
     perimeterTrim:Math.max(0,catalogNumber(source.perimeterTrim,source.materialType==='stone'||source.materialType==='neolith'?30:10))};
@@ -249,7 +250,11 @@ function normalizeCatalogProduct(productType, body = {}, current = {}) {
   const source = { ...current, ...body,productType };
   const sku = String(source.sku || "").trim();
   const name = String(source.name || "").trim();
-  if(['accessory','service'].includes(productType))return {...catalogExtra(source),sku,name,description:String(source.description||''),categoryId:String(source.categoryId||'bisagras'),categoryName:String(source.categoryName||'Herrajes'),plateLength:catalogNumber(source.plateLength),plateWidth:catalogNumber(source.plateWidth),thickness:catalogNumber(source.thickness),netPrice:catalogNumber(source.netPrice),minPrice:catalogNumber(source.minPrice),purchasePrice:source.purchasePrice==null||source.purchasePrice===''?null:catalogNumber(source.purchasePrice),image:String(source.image||''),supplierCode:String(source.supplierCode||'')};
+  if(productType==='service'){
+    for(const key of ['netPrice','minPrice','purchasePrice'])if(source[key]!=null&&source[key]!==''&&(!Number.isFinite(Number(source[key]))||Number(source[key])<0))throw fail('Revisa el valor de '+key+'.');
+    if(source.taskArea&&!['boards','slabs','installations'].includes(source.taskArea))throw fail('Área de servicio inválida.');
+  }
+  if(['accessory','service'].includes(productType))return {...catalogExtra(source),sku,name,description:String(source.description||''),categoryId:String(source.categoryId||'bisagras'),categoryName:String(source.categoryName||'Herrajes'),plateLength:catalogNumber(source.plateLength),plateWidth:catalogNumber(source.plateWidth),thickness:catalogNumber(source.thickness),netPrice:source.netPrice==null||source.netPrice===''?null:catalogNumber(source.netPrice),minPrice:source.minPrice==null||source.minPrice===''?null:catalogNumber(source.minPrice),purchasePrice:source.purchasePrice==null||source.purchasePrice===''?null:catalogNumber(source.purchasePrice),image:String(source.image||''),supplierCode:String(source.supplierCode||'')};
   if (productType === "board") {
     const categoryName = String(
       source.categoryName || source.sourceCategory || "",
@@ -312,7 +317,11 @@ function normalizeCatalogProduct(productType, body = {}, current = {}) {
 function catalogProductError(productType, product) {
   if (!product.sku) return "El código SKU es obligatorio.";
   if (!product.name) return "El nombre del producto es obligatorio.";
-  if(['accessory','service'].includes(productType))return product.netPrice<0||product.minPrice<0||product.purchasePrice<0?'Los precios no pueden ser negativos.':'';
+  if(['accessory','service'].includes(productType)){
+    if(product.netPrice<0||product.minPrice<0||product.purchasePrice<0)return 'Los precios no pueden ser negativos.';
+    if(product.netPrice!=null&&product.minPrice!=null&&product.minPrice>product.netPrice)return 'La venta mínima no puede superar la venta habitual.';
+    return '';
+  }
   if (productType === "board") {
     if (!product.categoryId || !product.categoryName) {
       return "La categoría del tablero es obligatoria.";
@@ -422,7 +431,7 @@ async function buildRuntimeCatalog(database) {
     const service=serviceItems.find(s=>s.sku===edge.serviceSku&&s.active!==false);
     if(service){edge.serviceRate=service.netPrice;edge.serviceMinPrice=service.minPrice;edge.servicePurchasePrice=service.purchasePrice;}
   }
-  return enrichCatalog55({ categories, materials: allMaterials, edgeBands: allEdgeBands, accessories, services:serviceItems },database); 
+  return enrichCatalog60(await enrichCatalog55({ categories, materials: allMaterials, edgeBands: allEdgeBands, accessories, services:serviceItems },database),database); 
 }
 
 function normalizeImageKey(value = "") {
@@ -1522,7 +1531,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
   await database.init();
   await initializeV5(database);
   await initializeV51(database);
-  await initializeV55(database);
+  await initializeV60(database);
 
   const app = express();
   app.set("trust proxy", 1);
@@ -1628,6 +1637,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
     res.set('Cache-Control','no-store');
     next();
   });
+  registerV60Routes(app,{db:database,authenticate,csrf});
   registerV55Routes(app,{db:database,authenticate,csrf,buildCatalog:()=>buildRuntimeCatalog(database),canReadProject});
   registerV5Routes(app,{db:database,authenticate,csrf,canReadProject,loadConfig:async()=>effectiveConfig(mergeConfig(await database.getV5('config')),(await buildRuntimeCatalog(database)).services)});
   registerV51Routes(app,{db:database,authenticate,csrf,buildCatalog:()=>buildRuntimeCatalog(database),normalizeCatalogProduct,catalogProductError});
@@ -1735,7 +1745,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
   };
 
   app.get("/api/health", (_request, response) => {
-    response.json({ ok: true, version:'5.5.0', database: databaseUrl ? "postgresql" : "memoria-local" });
+    response.json({ ok: true, version:'6.0.0', database: databaseUrl ? "postgresql" : "memoria-local" });
   });
 
   app.get("/api/catalog", async (_request, response) => {
@@ -1760,7 +1770,8 @@ export async function createApplication({ store, useMemory = false } = {}) {
       const productType = ["board","edge","accessory","service"].includes(request.body.productType) ? request.body.productType : "board";
       if(!permitted(request.auth.user,'products')) throw fail('No tienes permiso para crear productos.',403);
       const product = normalizeCatalogProduct(productType, request.body.product);
-      if(!permitted(request.auth.user,'costs')) {product.purchasePrice=0;product.minPrice=0;product.servicePurchasePrice=0;product.serviceMinPrice=0;}
+      if(!permitted(request.auth.user,'costs')) {product.purchasePrice=null;product.servicePurchasePrice=null;}
+      if(!permitted(request.auth.user,'salesPrices')) {product.minPrice=null;product.serviceMinPrice=null;}
       if(!permitted(request.auth.user,'salesPrices')) {product.netPrice=0;product.price=0;product.serviceRate=0;product.active=false;}
       const validationError = catalogProductError(productType, product);
       if (validationError) {
@@ -1817,7 +1828,8 @@ export async function createApplication({ store, useMemory = false } = {}) {
         request.body.product,
         current,
       );
-      for(const key of ['purchasePrice','minPrice','servicePurchasePrice','serviceMinPrice']) if(!permitted(request.auth.user,'costs')) product[key]=current[key]||0;
+      for(const key of ['purchasePrice','servicePurchasePrice']) if(!permitted(request.auth.user,'costs')) product[key]=current[key]??null;
+      for(const key of ['minPrice','serviceMinPrice']) if(!permitted(request.auth.user,'salesPrices')) product[key]=current[key]??null;
       for(const key of ['netPrice','price','serviceRate']) if(!permitted(request.auth.user,'salesPrices')) product[key]=current[key]||0;
       if(!permitted(request.auth.user,'products')) for(const key of Object.keys(product)) if(!['purchasePrice','minPrice','servicePurchasePrice','serviceMinPrice'].includes(key)) product[key]=current[key];
       const validationError = catalogProductError(productType, product);
@@ -2533,7 +2545,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
       projectProductionSignature(record.payload) !==
       projectProductionSignature(current);
     if(calculationSignature(record.payload)!==calculationSignature(current) && !permitted(request.auth.user,'quote')) throw fail('Tu perfil puede gestionar el trabajo, pero no cambiar su valorización.',403);
-    if(current.settings?.calculationVersion==='5.5'&&requestedStatus==='despacho'&&current.project.status!=='despacho'){const tasks=(await database.listV5('task:')).filter(t=>t.groupId===(current.groupId||current.id)&&t.required&&['boards','slabs'].includes(t.area));const siblings=(await database.listProjects({role:'superadmin'})).filter(p=>(p.groupId||p.id)===(current.groupId||current.id));if(!productionReady(siblings,tasks))throw fail('Completa las tareas de producción requeridas antes de pasar a despacho.');}
+    if(['5.5','6.0'].includes(current.settings?.calculationVersion)&&requestedStatus==='despacho'&&current.project.status!=='despacho'){const tasks=(await database.listV5('task:')).filter(t=>t.groupId===(current.groupId||current.id)&&t.required&&['boards','slabs','installations'].includes(t.area));const siblings=(await database.listProjects({role:'superadmin'})).filter(p=>(p.groupId||p.id)===(current.groupId||current.id));if(!productionReady(siblings,tasks))throw fail('Completa las tareas de producción requeridas antes de pasar a despacho.');}
     const dimensionError = productionChanged
       ? projectDimensionError(record, catalog.materials, catalog.edgeBands)
       : "";
