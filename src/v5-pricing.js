@@ -21,7 +21,7 @@ export function priceV5(result, materials, edges, settings) {
       {purchasePrice:edge.servicePurchasePrice,minPrice:edge.serviceMinPrice,discountLimit:edge.serviceDiscountLimit});
   }
   for (const row of result.finishSummaries) {
-    const key = row.finishId === 'bevel' ? 'stoneBevelRate' : 'stoneMiter45Rate';
+    const key = row.serviceKey || (row.finishId === 'bevel' ? 'stoneBevelRate' : 'stoneMiter45Rate');
     add('service', key, row.name, row.unitPrice, row.meters, settings.servicesDiscount, policies[key]);
   }
   const s = result.summary;

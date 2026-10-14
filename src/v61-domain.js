@@ -1,0 +1,20 @@
+import taxonomy from './matrix.v61.generated.js';
+export const TAXONOMY61=taxonomy;
+export const SERVICE_KEYS61={acrylicCutRate:'SER-TAB-DIM-01',melamineCutRate:'SER-TAB-DIM-02',specialCutRate:'SER-TAB-DIM-03',styleliteCutRate:'SER-TAB-DIM-04',edge04:'SER-TAB-DIM-05',edge10:'SER-TAB-DIM-06',edge15:'SER-TAB-DIM-07',edge20:'SER-TAB-DIM-08',neolith6CutRate:'SER-PLC-DIM-01',stoneCutPerPlateRate:'SER-PLC-DIM-02',otherSlabCutRate:'SER-PLC-DIM-03',graniteCutRate:'SER-PLC-DIM-04',stoneBevelRate:'SER-PLC-NEO-02',stoneMiter45Rate:'SER-PLC-NEO-03',otherSlabBevelRate:'SER-PLA-OTRA-02',otherSlabMiter45Rate:'SER-PLA-OTRA-03'};
+// Only equivalent physical services get an automatic successor. Ranurado
+// changes from plate to ml and requires an explicit new line when revising.
+export const OLD_SERVICE_ALIASES61={'SER-DIM-01':'SER-TAB-DIM-02','SER-DIM-02':'SER-TAB-DIM-01','SER-DIM-03':'SER-TAB-DIM-04','SER-DIM-04':'SER-TAB-DIM-03','SER-0038':'SER-TAB-DIM-05','SER-0037':'SER-TAB-DIM-06','SER-0035':'SER-TAB-DIM-07','SER-0036':'SER-TAB-DIM-08','SER-NEO-01':'SER-PLC-DIM-02','SER-NEO-02':'SER-PLC-DIM-01','SER-NEO-21':'SER-PLC-NEO-03','SER-NEO-22':'SER-PLC-NEO-02','SER-PLA-21':'SER-PLA-OTRA-02','SER-0043':'SER-TAB-DIM-02','SER-0042':'SER-TAB-DIM-01','SER-0032':'SER-TAB-DIM-04','SER-0041':'SER-PLC-DIM-02','SER-0039':'SER-PLC-NEO-02','SER-0040':'SER-PLC-NEO-03'};
+export const compactCategory61=p=>{const parts=(p.catalogPath||String(p.categoryName||p.name||'').split(' / ')).filter(Boolean);return parts.slice(-(/\d.*MM/i.test(parts.at(-1)||'')?2:1)).join(' ').replace(/\s*MM/gi,' mm');};
+export function serviceDemand61(p,catalog){
+ const result=[],policies=p.settings?.servicePolicies||{},snap=p.calculationSnapshot||{},add=(sku,quantity,unit,source,service)=>{
+  if(!sku||!(Number(quantity)>0))return;
+  sku=OLD_SERVICE_ALIASES61[sku]||sku;const candidate=service||catalog?.services?.find(s=>s.sku===sku&&s.active!==false)||catalog?.services?.find(s=>s.sku===sku);
+  let line=result.find(l=>l.sku===sku&&l.unit===unit);if(!line){line={sku,quantity:0,unit,name:candidate?.name||sku,area:candidate?.taskArea||p.workType||'installations',payUnitRate:candidate?.payUnitRate??null,serviceSnapshot:candidate?structuredClone(candidate):null,sources:[]};result.push(line);}line.quantity+=Number(quantity);line.sources.push(source);
+ };
+ for(const r of snap.materialSummaries||[]){const material=p.priceSnapshot?.materials?.find(m=>m.id===r.materialId)||catalog?.materials?.find(m=>m.id===r.materialId);const key=material?.cutServiceKey|| (material?.materialType==='stone'?(/granito/i.test(material.name)?'graniteCutRate':'otherSlabCutRate'):material?.materialType==='neolith'&&Number(material.thickness)===6?'neolith6CutRate':'melamineCutRate');const policy=policies[key];const sku=policy?.sku||SERVICE_KEYS61[key];add(sku,r.boardCount,r.isStone?'placa':'tablero','optimization',{...catalog?.services?.find(s=>s.sku===(OLD_SERVICE_ALIASES61[sku]||sku)),...policy,payUnitRate:policy?.payUnitRate??catalog?.services?.find(s=>s.sku===(OLD_SERVICE_ALIASES61[sku]||sku))?.payUnitRate});}
+ for(const r of snap.edgeSummaries||[]){const edge=p.priceSnapshot?.edgeBands?.find(e=>e.id===r.edgeId)||catalog?.edgeBands?.find(e=>e.id===r.edgeId);const sku=OLD_SERVICE_ALIASES61[edge?.serviceSku]||edge?.serviceSku;add(sku,r.meters,'ml','edge');}
+ for(const r of snap.finishSummaries||[]){const stone=p.priceSnapshot?.materials?.every(m=>m.materialType==='stone');const key=r.serviceKey || (r.finishId==='miter45'?(stone?'otherSlabMiter45Rate':'stoneMiter45Rate'):(stone?'otherSlabBevelRate':'stoneBevelRate'));const sku=policies[key]?.sku||SERVICE_KEYS61[key];add(sku,r.meters,'ml','finish',{...catalog?.services?.find(s=>s.sku===sku),...policies[key]});}
+ for(const l of p.saleLines||[])if(l.productSnapshot?.productType==='service')add(l.sku,l.quantity,l.unit||l.productSnapshot.unit,'sale',l.productSnapshot);
+ return result.map(l=>({...l,quantity:Number(l.quantity.toFixed(6))}));
+}
+export const gridHeaders61=['Material','Nombre','Cantidad','Largo','Ancho','Tipo tapacanto','L1','L2','L3','L4'];

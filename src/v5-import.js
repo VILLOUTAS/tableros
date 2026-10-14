@@ -21,7 +21,7 @@ export function readImportWorkbook(buffer) {
   return book.SheetNames.map(name=>({name,rows:sheetRows(book.Sheets[name])}));
 }
 export function suggestMapping(rows,headerRow=1) {
-  const aliases={name:['nombre','nombre pieza','pieza','descripcion'],quantity:['cantidad','unid','unid.','qty','cant'],length:['largo','medida a','longitud'],width:['ancho','medida b'],grain:['veta','sentido veta','sentido de veta'],material:['material','melamina','tablero'],edgeType:['tapacanto','tipo canto','tipo de tapacanto','servicio'],top:['l1','superior'],bottom:['l2','inferior'],left:['a1','izquierdo'],right:['a2','derecho'],notes:['observacion','observaciones','notas']};
+  const aliases={name:['nombre','nombre pieza','pieza','descripcion'],quantity:['cantidad','unid','unid.','qty','cant'],length:['largo','medida a','longitud'],width:['ancho','medida b'],grain:['veta','sentido veta','sentido de veta'],material:['material','melamina','tablero'],edgeType:['tapacanto','tipo canto','tipo de tapacanto','tipo tapacanto','servicio'],top:['l1','superior'],bottom:['l2','inferior'],left:['a1','l3','izquierdo'],right:['a2','l4','derecho'],notes:['observacion','observaciones','notas']};
   const row=rows[headerRow-1]||[];return Object.fromEntries(Object.entries(aliases).flatMap(([field,names])=>{const i=row.findIndex(x=>names.includes(normalized(x)));return i<0?[]:[[field,i]];}));
 }
 export function numberCell(value) {

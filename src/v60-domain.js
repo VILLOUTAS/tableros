@@ -58,10 +58,10 @@ export function laborPayables60(tasks,entries,operators,settlements=[],month='')
  for(const e of entries){const t=taskMap.get(e.taskId);if(!e.validated||!t)continue;
   const inPeriod=!month||e.date?.slice(0,7)===month,unpriced=e.payAmount==null,settled=paid.has(e.id),pending=!settled&&(unpriced||Number(e.payAmount)>0);
   if(!inPeriod&&!pending)continue;
-  let r=rows.get(t.operatorId);if(!r){r={operatorId:t.operatorId,operator:operators.find(o=>o.id===t.operatorId)?.name||t.operator||t.operatorId,producedAmount:0,paidAmount:0,pendingAmount:0,missingRates:0,services:[],entries:[]};rows.set(t.operatorId,r);}
-  const amount=Number(e.payAmount)||0;if(inPeriod)r.producedAmount+=amount;if(inPeriod&&settled)r.paidAmount+=amount;if(pending){r.pendingAmount+=amount;if(unpriced)r.missingRates++;}
-  let service=r.services.find(s=>s.serviceSku===t.serviceSku);if(!service){service={serviceSku:t.serviceSku,name:t.name,unit:t.unit,quantity:0,pendingQuantity:0,pendingAmount:0,missingRates:0};r.services.push(service);}if(inPeriod)service.quantity+=Number(e.quantity)||0;if(pending){service.pendingQuantity+=Number(e.quantity)||0;service.pendingAmount+=amount;if(unpriced)service.missingRates++;}
-  r.entries.push({id:e.id,quoteId:e.quoteId,date:e.date,serviceSku:t.serviceSku,name:t.name,unit:t.unit,quantity:e.quantity,amount:e.payAmount,status:unpriced?'unpriced':settled?'paid':amount===0?'zero':'pending'});
+  let r=rows.get(t.operatorId);if(!r){r={operatorId:t.operatorId,operator:operators.find(o=>o.id===t.operatorId)?.name||t.operator||'Sin asignar',producedAmount:0,paidAmount:0,pendingAmount:0,missingRates:0,pendingResponsible:0,services:[],entries:[]};rows.set(t.operatorId,r);}
+  const responsible=e.operatorId??t.operatorId,amount=Number(e.payAmount)||0;if(inPeriod)r.producedAmount+=amount;if(inPeriod&&settled)r.paidAmount+=amount;if(pending){r.pendingAmount+=amount;if(unpriced&&!responsible)r.pendingResponsible++;else if(unpriced)r.missingRates++;}
+  let service=r.services.find(s=>s.serviceSku===t.serviceSku);if(!service){service={serviceSku:t.serviceSku,name:t.name,unit:t.unit,quantity:0,pendingQuantity:0,pendingAmount:0,missingRates:0,pendingResponsible:0};r.services.push(service);}if(inPeriod)service.quantity+=Number(e.quantity)||0;if(pending){service.pendingQuantity+=Number(e.quantity)||0;service.pendingAmount+=amount;if(unpriced&&!responsible)service.pendingResponsible++;else if(unpriced)service.missingRates++;}
+  r.entries.push({id:e.id,quoteId:e.quoteId,date:e.date,serviceSku:t.serviceSku,name:t.name,unit:t.unit,quantity:e.quantity,amount:e.payAmount,status:!responsible?'unassigned':unpriced?'unpriced':settled?'paid':amount===0?'zero':'pending'});
  }
  return [...rows.values()].sort((a,b)=>a.operator.localeCompare(b.operator,'es'));
 }

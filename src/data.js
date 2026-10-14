@@ -130,3 +130,6 @@ for(const list of [materials,edgeBands,services])for(const p of list){p.active=f
 materials.push(...catalog55.materials);edgeBands.push(...catalog55.edgeBands);services.push(...catalog55.services);categories.push(...catalog55.categories);
 
 services.push(...newServices60(catalog55.services));
+
+import services61 from './services.v61.generated.js';
+services.push(...structuredClone(services61.services));

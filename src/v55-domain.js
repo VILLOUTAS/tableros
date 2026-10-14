@@ -1,3 +1,4 @@
+import {serviceDemand61,OLD_SERVICE_ALIASES61} from './v61-domain.js';
 // Reglas compartidas V5.5. Los cálculos anteriores conservan sus motores.
 export const VERSION55='5.5';
 export const normalize=v=>String(v??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
@@ -97,6 +98,7 @@ export function productionReport(tasks,entries,operators,policies,from,to){
   }return rows.map(r=>({...r,performancePercent:r.minutes?100*r.expectedMinutes/r.minutes:null}));
 }
 export function serviceDemand(project){
+  if(project.settings?.calculationVersion==='6.1')return Object.fromEntries(serviceDemand61(project).map(d=>[d.sku,d.quantity]));
   const demand={},add=(sku,n)=>{if(sku)demand[sku]=(demand[sku]||0)+Number(n||0);},snap=project.calculationSnapshot||{};
   for(const r of snap.materialSummaries||[]){const m=project.priceSnapshot?.materials?.find(m=>m.id===r.materialId);add(SERVICE_KEYS55[m?.cutServiceKey]||(r.isStone?'SER-NEO-01':'SER-DIM-01'),r.boardCount);}
   for(const r of snap.edgeSummaries||[]){const e=project.priceSnapshot?.edgeBands?.find(e=>e.id===r.edgeId);add(e?.serviceSku,r.meters);}
@@ -113,7 +115,8 @@ export function materialCostLines(project){
  return lines;
 }
 export function productionReady(projects,tasks){
- const required=tasks.filter(t=>t.required&&['boards','slabs','installations'].includes(t.area));
- if(!required.length||required.some(t=>t.status!=='completed'))return false;
- return projects.every(p=>Object.entries(serviceDemand(p)).every(([sku,quantity])=>required.filter(t=>t.quoteId===p.id&&t.serviceSku===sku).reduce((s,t)=>s+t.quantity,0)+1e-8>=quantity));
+ const required=tasks.filter(t=>t.required&&t.status!=='cancelled'&&['boards','slabs','installations'].includes(t.area));
+ if(!required.length)return projects.length>0&&projects.every(p=>!Object.values(serviceDemand(p)).some(n=>n>0));
+ if(required.some(t=>t.status!=='completed'))return false;
+ return projects.every(p=>Object.entries(serviceDemand(p)).every(([sku,quantity])=>required.filter(t=>t.quoteId===p.id&&(p.settings?.calculationVersion==='6.1'?(OLD_SERVICE_ALIASES61[t.serviceSku]||t.serviceSku):t.serviceSku)===sku).reduce((s,t)=>s+t.quantity,0)+1e-8>=quantity));
 }

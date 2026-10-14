@@ -1155,7 +1155,7 @@ export function optimize(material, pieces, edgeBands, settings = {}) {
   const boardSubtotal = plates.length * materialUnitPrice;
   const edgeSubtotal = Object.entries(metersByEdge).reduce((total, [id, meters]) => {
     const price = edgeBands.find((item) => item.id === id)?.price ?? 0;
-    return total + meters * (['5.5','6.0'].includes(settings.calculationVersion)?1.05:isV51(settings)?1.02:1) * price;
+    return total + meters * (['5.5','6.0','6.1'].includes(settings.calculationVersion)?1.05:isV51(settings)?1.02:1) * price;
   }, 0);
   const cutCount = plates.reduce(
     (total, plate) =>
@@ -1442,10 +1442,10 @@ export function optimizeProject(
           material: edge.material || "",
           thickness: Number(edge.thickness) || 0,
           meters: Number(meters) || 0,
-          materialMeters: (Number(meters)||0)*(['5.5','6.0'].includes(settings.calculationVersion)?1.05:isV51(settings)?1.02:1),
-          wasteMeters: (Number(meters)||0)*(['5.5','6.0'].includes(settings.calculationVersion)?.05:isV51(settings)?.02:0),
+          materialMeters: (Number(meters)||0)*(['5.5','6.0','6.1'].includes(settings.calculationVersion)?1.05:isV51(settings)?1.02:1),
+          wasteMeters: (Number(meters)||0)*(['5.5','6.0','6.1'].includes(settings.calculationVersion)?.05:isV51(settings)?.02:0),
           unitPrice,
-          materialSubtotal: (Number(meters) || 0) * (['5.5','6.0'].includes(settings.calculationVersion)?1.05:isV51(settings)?1.02:1) * unitPrice,
+          materialSubtotal: (Number(meters) || 0) * (['5.5','6.0','6.1'].includes(settings.calculationVersion)?1.05:isV51(settings)?1.02:1) * unitPrice,
           serviceRate,
           serviceSubtotal: (Number(meters) || 0) * serviceRate,
         };
@@ -1494,7 +1494,18 @@ export function optimizeProject(
         serviceSubtotal: item.meters * item.unitPrice,
       })),
   };
-  return ['5.0','5.1','5.5','6.0'].includes(settings.calculationVersion) ? priceV5(projectResult,activeMaterials,edgeBands,settings) : projectResult;
+  if(settings.calculationVersion==='6.1') {
+    projectResult.finishSummaries=materialResults.flatMap(({material,result})=>['bevel','miter45'].map(finishId=>{
+      const meters=Number(result.summary.finishMetersByType?.[finishId])||0;
+      const serviceKey=(material.materialType==='stone'?'otherSlab':'stone')+(finishId==='bevel'?'BevelRate':'Miter45Rate');
+      const unitPrice=Math.max(0,Number(settings[serviceKey]??settings.servicePolicies?.[serviceKey]?.price??0));
+      return {materialId:material.id,finishId,serviceKey,name:(finishId==='bevel'?'Biselado / pulido':'45°')+' · '+material.name,meters,unitPrice,serviceSubtotal:meters*unitPrice};
+    }).filter(r=>r.meters>0));
+    summary.finishSubtotal=projectResult.finishSummaries.reduce((n,r)=>n+r.serviceSubtotal,0);
+    summary.servicesSubtotal=summary.cuttingSubtotal+summary.bandingSubtotal+summary.finishSubtotal;
+    for(const r of projectResult.materialSummaries)r.finishSubtotal=projectResult.finishSummaries.filter(f=>f.materialId===r.materialId).reduce((n,f)=>n+f.serviceSubtotal,0);
+  }
+  return ['5.0','5.1','5.5','6.0','6.1'].includes(settings.calculationVersion) ? priceV5(projectResult,activeMaterials,edgeBands,settings) : projectResult;
 }
 
 export function summarizePlateLeftovers(plate) {
@@ -2052,7 +2063,7 @@ export function drawCutPlan(
   ctx.fillText("TOTAL ML DE CORTE", metricLabelX, 52);
   ctx.fillText(neolith ? "TOTAL ML DE ACABADOS" : "TOTAL ML DE ENCHAPE", metricLabelX, 76);
   ctx.fillText("PASADAS / PÉRDIDA TOTAL", metricLabelX, 100);
-  ctx.fillText(['5.1','5.5','6.0'].includes(context.calculationVersion)?"CONSUMO DE DISCO POR CORTE":"DISCO NOMINAL / POR PASADA", metricLabelX, 124);
+  ctx.fillText(['5.1','5.5','6.0','6.1'].includes(context.calculationVersion)?"CONSUMO DE DISCO POR CORTE":"DISCO NOMINAL / POR PASADA", metricLabelX, 124);
   ctx.textAlign = "right";
   ctx.fillText(
     productionMetrics.cutMeters.toLocaleString("es-CL", {
@@ -2078,7 +2089,7 @@ export function drawCutPlan(
     100,
   );
   ctx.fillText(
-    `${['5.1','5.5','6.0'].includes(context.calculationVersion)?'':bladeThickness.toLocaleString("es-CL")+' / '}${effectiveKerf.toLocaleString(
+    `${['5.1','5.5','6.0','6.1'].includes(context.calculationVersion)?'':bladeThickness.toLocaleString("es-CL")+' / '}${effectiveKerf.toLocaleString(
       "es-CL",
     )} mm`,
     metricValueX,

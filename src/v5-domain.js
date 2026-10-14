@@ -122,6 +122,7 @@ export function publicCatalogItem(item,user) {
   copy.serviceDiscountLimit=permitted(user,'discount')?discountLimit(Number(item.serviceRate)||0,{minPrice:item.serviceMinPrice,purchasePrice:item.servicePurchasePrice}):0;
   if(!permitted(user,'costs'))for(const key of ['purchasePrice','servicePurchasePrice'])delete copy[key];
   if(!permitted(user,'costs')&&!permitted(user,'salesPrices'))for(const key of ['minPrice','serviceMinPrice'])delete copy[key];
+  if(!permitted(user,'payRates')&&!permitted(user,'costs'))delete copy.payUnitRate;
   if(!internalUser(user)) for(const key of ['supplierCode','sourceId','originCode','barcode']) delete copy[key];
   return copy;
 }
@@ -129,7 +130,7 @@ export function stripCosts(value,user) {
   const hidden=new Set();
   if(!permitted(user,'costs'))for(const k of ['purchasePrice','servicePurchasePrice','costSnapshot','unitCost','plannedCost','actualCost','laborCost','margin'])hidden.add(k);
   if(!permitted(user,'costs')&&!permitted(user,'salesPrices'))for(const k of ['minPrice','serviceMinPrice'])hidden.add(k);
-  if(!permitted(user,'payRates')&&!permitted(user,'costs'))for(const k of ['payAmount','payRateSnapshot','payTotal','unitRate','hourRate'])hidden.add(k);
+  if(!permitted(user,'payRates')&&!permitted(user,'costs'))for(const k of ['payAmount','payRateSnapshot','payTotal','unitRate','hourRate','payUnitRate','pendingUnitRate'])hidden.add(k);
   if(!internalUser(user))for(const k of ['supplierCode','sourceId','originCode','barcode','assignedOperatorIds'])hidden.add(k);
   const walk=v=>v instanceof Date?v:Array.isArray(v)?v.map(walk):v&&typeof v==='object'?Object.fromEntries(Object.entries(v).filter(([k])=>!hidden.has(k)).map(([k,x])=>[k,walk(x)])):v;
   return walk(value);

@@ -10,11 +10,11 @@ Chromium real, sin errores JavaScript: siete entradas del menú, Panel y pago, c
 
 Capturas con datos exclusivamente de prueba:
 
-- [Panel](VISTA_PANEL_V6.png).
-- [Productos](VISTA_PRODUCTOS_V6.png).
-- [Servicios](VISTA_SERVICIOS_V6.png).
-- [CRM](VISTA_CRM_V6.png).
-- [PDF de servicio](EJEMPLO_SERVICIOS_V6.pdf).
+- Panel (ejemplo histórico; no incluido en este paquete).
+- Productos (ejemplo histórico; no incluido en este paquete).
+- Servicios (ejemplo histórico; no incluido en este paquete).
+- CRM (ejemplo histórico; no incluido en este paquete).
+- PDF de servicio (ejemplo histórico; no incluido en este paquete).
 
 Vite compila correctamente; mantiene advertencia de tamaño del JavaScript. No se incluye el catálogo privado en los datos vacíos del cliente. Base local 5.5 comparada con GitHub: 86 coincidencias de hashes Git y ninguna divergencia en archivos comunes.
 
