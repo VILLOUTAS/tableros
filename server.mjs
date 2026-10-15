@@ -1,3 +1,4 @@
+import {initializeV61,enrichCatalog61,registerV61Routes,syncOrder61,validateOrderChange61} from './v61-server.mjs';
 import {initializeV60,enrichCatalog60,registerV60Routes} from './v60-server.mjs';
 import {productionReady} from './src/v55-domain.js';
 import {initializeV55,registerV55Routes,enrichCatalog55,isAssigned} from './v55-server.mjs';
@@ -241,7 +242,7 @@ function catalogNumber(value, fallback = 0) {
 }
 
 function catalogExtra(source) {
-  return {productType:source.productType,hardwareType:source.hardwareType,finish:source.finish,series:source.series,weightKey:source.weightKey,componentRule:source.componentRule,compatibilityPending:source.compatibilityPending,completeKit:source.completeKit,includesMaterial:source.includesMaterial,catalogPath:source.catalogPath,catalogPaths:source.catalogPaths,provisionalCode:source.provisionalCode,unitPending:source.unitPending,taskArea:source.taskArea,catalogRelease:source.catalogRelease||'6.0',imageKey:String(source.imageKey||('foto-v55-'+source.sku)),unit:String(source.unit||'unidad'),cutServiceKey:String(source.cutServiceKey||''),serviceSku:String(source.serviceSku||''),customColor:!!source.customColor,active:source.active!==false,supplier:String(source.supplier||''),stock:source.stock===''||source.stock==null?null:catalogNumber(source.stock),
+  return {productType:source.productType,hardwareType:source.hardwareType,finish:source.finish,series:source.series,weightKey:source.weightKey,componentRule:source.componentRule,compatibilityPending:source.compatibilityPending,completeKit:source.completeKit,includesMaterial:source.includesMaterial,catalogPath:source.catalogPath,catalogPaths:source.catalogPaths,provisionalCode:source.provisionalCode,unitPending:source.unitPending,taskArea:source.taskArea,payUnitRate:source.payUnitRate==null?null:catalogNumber(source.payUnitRate),catalogRelease:source.catalogRelease||'6.0',imageKey:String(source.imageKey||('foto-v55-'+source.sku)),unit:String(source.unit||'unidad'),cutServiceKey:String(source.cutServiceKey||''),serviceSku:String(source.serviceSku||''),customColor:!!source.customColor,active:source.active!==false,supplier:String(source.supplier||''),stock:source.stock===''||source.stock==null?null:catalogNumber(source.stock),
     colorName:String(source.colorName||''),format:String(source.format||''),taxonomyId:String(source.taxonomyId||''),materialType:String(source.materialType||'board'),
     serviceMinPrice:catalogNumber(source.serviceMinPrice),servicePurchasePrice:catalogNumber(source.servicePurchasePrice),
     perimeterTrim:Math.max(0,catalogNumber(source.perimeterTrim,source.materialType==='stone'||source.materialType==='neolith'?30:10))};
@@ -431,7 +432,7 @@ async function buildRuntimeCatalog(database) {
     const service=serviceItems.find(s=>s.sku===edge.serviceSku&&s.active!==false);
     if(service){edge.serviceRate=service.netPrice;edge.serviceMinPrice=service.minPrice;edge.servicePurchasePrice=service.purchasePrice;}
   }
-  return enrichCatalog60(await enrichCatalog55({ categories, materials: allMaterials, edgeBands: allEdgeBands, accessories, services:serviceItems },database),database); 
+  return enrichCatalog61(await enrichCatalog60(await enrichCatalog55({ categories, materials: allMaterials, edgeBands: allEdgeBands, accessories, services:serviceItems },database),database),database); 
 }
 
 function normalizeImageKey(value = "") {
@@ -1343,6 +1344,7 @@ function projectRecord(body, ownerId, current = null) {
       ).trim(),
     },
     payload: {
+      quoteKind:['products','services'].includes(body.quoteKind)?body.quoteKind:current?.quoteKind||null,
       assignedOperatorIds:current?.assignedOperatorIds||[],
       actualProductionEnd:current?.actualProductionEnd||null,
       saleLines:Array.isArray(body.saleLines)?body.saleLines:current?.saleLines||[],
@@ -1531,7 +1533,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
   await database.init();
   await initializeV5(database);
   await initializeV51(database);
-  await initializeV60(database);
+  await initializeV61(database);
 
   const app = express();
   app.set("trust proxy", 1);
@@ -1637,6 +1639,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
     res.set('Cache-Control','no-store');
     next();
   });
+  registerV61Routes(app,{db:database,authenticate,csrf,buildCatalog:()=>buildRuntimeCatalog(database),canReadProject});
   registerV60Routes(app,{db:database,authenticate,csrf});
   registerV55Routes(app,{db:database,authenticate,csrf,buildCatalog:()=>buildRuntimeCatalog(database),canReadProject});
   registerV5Routes(app,{db:database,authenticate,csrf,canReadProject,loadConfig:async()=>effectiveConfig(mergeConfig(await database.getV5('config')),(await buildRuntimeCatalog(database)).services)});
@@ -1745,7 +1748,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
   };
 
   app.get("/api/health", (_request, response) => {
-    response.json({ ok: true, version:'6.0.0', database: databaseUrl ? "postgresql" : "memoria-local" });
+    response.json({ ok: true, version:'6.1.0', database: databaseUrl ? "postgresql" : "memoria-local" });
   });
 
   app.get("/api/catalog", async (_request, response) => {
@@ -2434,7 +2437,9 @@ export async function createApplication({ store, useMemory = false } = {}) {
       );
       record.summary = result.summary;
       await prepareProjectV5(record, typeof current !== 'undefined' ? current : null, request.auth?.user||null, catalog, mergeConfig(await database.getV5('config')), database, request.body);
+      await validateOrderChange61(database,typeof current!=='undefined'?current:null,record.payload,catalog);
       const saved = await database.saveProject(record);
+      await syncOrder61(database,saved,catalog);
       await announceNewQuote(saved, {
         fullName: `${contact.name} (Visitante)`,
         email: contact.email,
@@ -2507,7 +2512,9 @@ export async function createApplication({ store, useMemory = false } = {}) {
     }
     record.project.status = "cotizacion";
     await prepareProjectV5(record, typeof current !== 'undefined' ? current : null, request.auth?.user||null, catalog, mergeConfig(await database.getV5('config')), database, request.body);
+      await validateOrderChange61(database,typeof current!=='undefined'?current:null,record.payload,catalog);
       const saved = await database.saveProject(record);
+      await syncOrder61(database,saved,catalog);
     await announceNewQuote(saved, request.auth.user);
     return response.status(201).json({ project: saved });
   });
@@ -2545,7 +2552,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
       projectProductionSignature(record.payload) !==
       projectProductionSignature(current);
     if(calculationSignature(record.payload)!==calculationSignature(current) && !permitted(request.auth.user,'quote')) throw fail('Tu perfil puede gestionar el trabajo, pero no cambiar su valorización.',403);
-    if(['5.5','6.0'].includes(current.settings?.calculationVersion)&&requestedStatus==='despacho'&&current.project.status!=='despacho'){const tasks=(await database.listV5('task:')).filter(t=>t.groupId===(current.groupId||current.id)&&t.required&&['boards','slabs','installations'].includes(t.area));const siblings=(await database.listProjects({role:'superadmin'})).filter(p=>(p.groupId||p.id)===(current.groupId||current.id));if(!productionReady(siblings,tasks))throw fail('Completa las tareas de producción requeridas antes de pasar a despacho.');}
+    if(['5.5','6.0','6.1'].includes(current.settings?.calculationVersion)&&requestedStatus==='despacho'&&current.project.status!=='despacho'){const tasks=(await database.listV5('task:')).filter(t=>t.groupId===(current.groupId||current.id)&&t.required&&['boards','slabs','installations'].includes(t.area));const siblings=(await database.listProjects({role:'superadmin'})).filter(p=>(p.groupId||p.id)===(current.groupId||current.id));if(!productionReady(siblings,tasks))throw fail('Completa las tareas de producción requeridas antes de pasar a despacho.');}
     const dimensionError = productionChanged
       ? projectDimensionError(record, catalog.materials, catalog.edgeBands)
       : "";
@@ -2602,7 +2609,9 @@ export async function createApplication({ store, useMemory = false } = {}) {
       current.project.status !== "facturado_pagado" &&
       record.project.status === "facturado_pagado";
     await prepareProjectV5(record, typeof current !== 'undefined' ? current : null, request.auth?.user||null, catalog, mergeConfig(await database.getV5('config')), database, request.body);
+      await validateOrderChange61(database,typeof current!=='undefined'?current:null,record.payload,catalog);
       const saved = await database.saveProject(record);
+      await syncOrder61(database,saved,catalog);
     for (const collaboratorId of addedCollaborators) {
       await database.createNotification({
         id: randomUUID(),

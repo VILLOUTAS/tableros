@@ -1,36 +1,28 @@
-CASA DISEÑO MULTIESPACIO - ACTUALIZACIÓN V6.0.0
+CASA DISEÑO MULTIESPACIO - ACTUALIZACIÓN V6.1.0
 
 Repositorio: https://github.com/VILLOUTAS/tableros
 
-1. Lee ACTUALIZACION_V6.0.0.md y respalda la base actual.
-2. Abre VILLOUTAS/tableros en GitHub Desktop con tu cuenta autorizada.
-3. Usa Fetch/Pull origin para actualizar tu copia local.
-4. Descomprime y copia el CONTENIDO del ZIP a la carpeta del repositorio.
-   Reemplaza archivos coincidentes y conserva las carpetas.
-   package.json, server.mjs, v60-server.mjs y render.yaml van en la raíz.
-   Conserva .git, .env, fotos propias y archivos ajenos al paquete.
-   No subas solo el ZIP ni una carpeta contenedora V6.
-5. No incluyas secretos, respaldos, node_modules ni dist.
-6. Con Node 24, desde la carpeta del repositorio:
+1. Lee ACTUALIZACION_V6.1.0.md y respalda la base y el código actuales.
+2. Abre tu repositorio existente en GitHub Desktop. Fetch/Pull origin.
+3. Descomprime el ZIP. Copia su CONTENIDO en la raíz del repositorio.
+   Reemplaza archivos coincidentes; conserva carpetas, .git, .env y fotos propias.
+   package.json, server.mjs, v61-server.mjs y render.yaml quedan en la raíz.
+4. No subas solo el ZIP ni una carpeta contenedora. No incluyas secretos,
+   respaldos, node_modules ni dist.
+5. Con Node 24:
    npm ci --include=dev
    npm test
    npm run build
-7. Commit: Actualizar optimizador Casa Diseño a V6.0.0
-8. Push origin con tu cuenta autorizada.
-9. Render: servicio EXISTENTE y misma DATABASE_URL.
+6. Commit: Actualizar Casa Diseño a V6.1.0
+7. Push origin con tu cuenta autorizada.
+8. Render: servicio EXISTENTE, misma DATABASE_URL.
    Build: npm ci --include=dev && npm test && npm run build
    Start: npm start
-   Health check: /api/health
-   El despliegue automático, si está habilitado, comienza con el commit.
-10. Comprueba /api/health: 6.0.0 y PostgreSQL. Abre cotizaciones antiguas.
-11. Configura las nuevas fichas de servicios y tarifas individuales.
-    Revisa movimientos ya pagados antes de preparar liquidaciones.
+   Health: /api/health
+9. Comprueba /api/health: 6.1.0 y PostgreSQL. Abre cotizaciones anteriores.
+10. Revisa costos de servicios, tareas ya realizadas y responsables pendientes.
 
-No crear otra base ni servicio. No eliminar catálogos históricos.
-No cargar datos de prueba en producción.
+El paquete conserva catálogos históricos y utiliza la nueva matriz de 104 servicios.
+No crear otra base ni servicio. No cargar datos de prueba en producción.
 
-Paquete probado localmente, sin carga ni despliegue desde esta sesión.
-La conexión actual de GitHub permite leer, pero no escribir.
-
-Detalles: docs/CATALOGO_V6.md, docs/PAGOS_OPERADORES_V6.md,
-docs/VALIDACION_V6.md.
+Paquete validado localmente. No publicado ni desplegado desde esta sesión.

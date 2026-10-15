@@ -168,7 +168,7 @@ export function registerV55Routes(app,{db,authenticate,csrf,buildCatalog,canRead
   await db.putV5('pay-rate:'+rate.id,rate);res.status(201).json({rate});
  });
  app.post('/api/v55/tasks',authenticate,csrf,guard('tasks'),async(req,res)=>{
-  const b=req.body,p=await project(req,b.quoteId);if(!canOperateArea(req.auth.user,b.area))throw fail('Área fuera de tus atribuciones.',403);
+  const b=req.body,p=await project(req,b.quoteId);if(p.settings?.calculationVersion==='6.1')throw fail('Asigna los servicios generados por el pedido desde Servicios y tareas.',409);if(!canOperateArea(req.auth.user,b.area))throw fail('Área fuera de tus atribuciones.',403);
   if(!['facturado_pagado','produccion','despacho'].includes(p.project.status))throw fail('Primero debe estar facturado y pagado.');
   const o=await db.getV5('operator:'+b.operatorId),catalog=await buildCatalog(),service=p.saleLines?.find(l=>l.sku===b.serviceSku&&l.productSnapshot?.productType==='service')?.productSnapshot||catalog.services.find(s=>s.sku===b.serviceSku&&s.active!==false),c=await config();
   if(!o?.active||!o.areas.includes(b.area)||!service)throw fail('Selecciona un operador y un servicio del área.');
@@ -186,7 +186,7 @@ export function registerV55Routes(app,{db,authenticate,csrf,buildCatalog,canRead
   });res.json({task:result});
  });
  app.post('/api/v55/entries',authenticate,csrf,guard('tasks'),async(req,res)=>{
-  const b=req.body,t=await db.getV5('task:'+b.taskId);if(!t)throw fail('Tarea no encontrada.',404);await project(req,t.quoteId);if(!canOperateArea(req.auth.user,t.area))throw fail('Área fuera de tus atribuciones.',403);
+  const b=req.body,t=await db.getV5('task:'+b.taskId);if(t?.release==='6.1')throw fail('Registra la cantidad producida en Servicios y tareas.',409);if(!t)throw fail('Tarea no encontrada.',404);await project(req,t.quoteId);if(!canOperateArea(req.auth.user,t.area))throw fail('Área fuera de tus atribuciones.',403);
   const result=await atomic(db,'production:'+t.groupId,async tx=>{
    const task=await tx.getV5('task:'+t.id);if(task.status==='completed')throw fail('La tarea ya está cerrada.');
    if(!validDate(b.date))throw fail('Fecha inválida.');const quantity=numeric(b.quantity,'cantidad producida',.001),minutes=numeric(b.minutes,'minutos trabajados',0,540);

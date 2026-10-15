@@ -58,7 +58,7 @@ test('V5.5 Salice exige base por acabado/serie, cubierta metálica y acoplamient
 test('V5.5 API recalcula material/peso con sobrantes y mantiene toda cotización histórica',async()=>{
  const f=await fixture();try{
   const p=(await f.ok('/api/projects','POST',{...sample(),delivery:{required:true,communeId:'concepcion',street:'Calle 123',discount:50}},f.headers,201)).project;
-  assert.equal(p.settings.calculationVersion,'6.0');assert.equal(p.delivery.quote.weightKg,p.summary.boardCount*60+2.1*.01);assert.equal(p.summary.shippingNet,5000);
+  assert.equal(p.settings.calculationVersion,'6.1');assert.equal(p.delivery.quote.weightKg,p.summary.boardCount*60+2.1*.01);assert.equal(p.summary.shippingNet,5000);
   const original=structuredClone(p),revised=(await f.ok('/api/projects/'+p.id,'PATCH',{pieces:p.pieces.map(p=>({...p,width:450}))})).project;
   assert.deepEqual(revised.history[0].summary,original.summary);assert.deepEqual(revised.history[0].calculationSnapshot,original.calculationSnapshot);
   const metadata=(await f.ok('/api/projects/'+p.id,'PATCH',{comments:'Solo metadatos'})).project;assert.deepEqual(metadata.summary,revised.summary);assert.equal(metadata.revisionNo,2);
@@ -68,7 +68,7 @@ test('V5.5 API recalcula material/peso con sobrantes y mantiene toda cotización
 });
 test('V5.5 catálogo adicional vende servicios por placa y valida complementos en el servidor',async()=>{
  const f=await fixture();try{
-  const s=catalog.services.find(s=>s.sku==='SER-NEO-23');const p=(await f.ok('/api/projects','POST',{project:{projectName:'Ranurado',clientName:'Prueba'},workType:'hardware',saleLines:[{productId:s.id,quantity:2}]},f.headers,201)).project;assert.equal(p.summary.net,s.netPrice*2);assert.equal(p.saleLines[0].unit,'placa');
+  const s=(await f.ok('/api/catalog','GET',undefined)).services.find(s=>s.sku==='SER-PLC-NEO-04'&&s.active);const p=(await f.ok('/api/projects','POST',{project:{projectName:'Ranurado',clientName:'Prueba'},workType:'hardware',saleLines:[{productId:s.id,quantity:2}]},f.headers,201)).project;assert.equal(p.summary.net,s.netPrice*2);assert.equal(p.saleLines[0].unit,'ml');
   const h=catalog.accessories.find(p=>p.sku==='18-BI-8STRN');const bad=await f.request('/api/projects','POST',{project:{clientName:'Prueba'},workType:'hardware',saleLines:[{productId:h.id,quantity:2}]},f.headers);assert.equal(bad.status,400);assert.match(bad.body.error,/base/);
  }finally{await f.close();}
 });
@@ -93,26 +93,27 @@ test('V5.5 despacho: comercial propone, logística confirma, versiones y factura
   const discount=await f.request('/api/v55/dispatches','POST',{...d,discount:50},f.headers);assert.equal(discount.status,400);
  }finally{await f.close();}
 });
-test('V5.5 producción distribuida, pagos congelados y cierre limitado a tarea asignada',async()=>{
+test('V6.1 producción distribuida, pagos congelados y cierre limitado a tarea asignada',async()=>{
  const f=await fixture();try{
   const operator=await f.login('operador'),other=await f.login('operador'),finance=await f.login('finanzas');let p=(await f.ok('/api/projects','POST',sample(),f.headers,201)).project;
   p=(await f.ok('/api/projects/'+p.id,'PATCH',{project:{status:'facturado_pagado'},invoiceNumber:'10'})).project;p=(await f.ok('/api/projects/'+p.id,'PATCH',{project:{status:'produccion'}})).project;
-  const o=(await f.ok('/api/v55/operators','POST',{name:'Operador 1',userId:operator.id,areas:['boards']})).operator;
-  await f.ok('/api/v55/pay-rates','POST',{operatorId:o.id,serviceSku:'SER-0038',mode:'unit',unitRate:200,hourRate:0,effectiveDate:'2026-10-01'},finance.headers,201);
-  const common={quoteId:p.id,area:'boards',operatorId:o.id,startDate:'2026-10-05',startTime:'08:00'};
-  const t=(await f.ok('/api/v55/tasks','POST',{...common,serviceSku:'SER-0038',quantity:2})).task;
-  const cut=(await f.ok('/api/v55/tasks','POST',{...common,serviceSku:'SER-DIM-01',quantity:p.summary.boardCount})).task;
+  const o=(await f.ok('/api/v61/operators','POST',{name:'Operador 1',kind:'operator',userId:operator.id,areas:['boards']})).operator;
+  const tasks=(await f.ok('/api/v61/operations')).tasks;assert.equal(tasks.length,2);
+  const edgeTask=tasks.find(t=>t.serviceSku==='SER-TAB-DIM-05'),cutTask=tasks.find(t=>t.serviceSku==='SER-TAB-DIM-02');
+  const t=(await f.ok('/api/v61/tasks/'+edgeTask.id+'/assign','POST',{operatorId:o.id,quantity:edgeTask.quantity,version:edgeTask.version})).task;
+  const cut=(await f.ok('/api/v61/tasks/'+cutTask.id+'/assign','POST',{operatorId:o.id,quantity:cutTask.quantity,version:cutTask.version})).task;
   assert.equal((await f.ok('/api/projects','GET',undefined,operator.headers)).projects.length,1);assert.equal((await f.ok('/api/projects','GET',undefined,other.headers)).projects.length,0);
-  assert.equal((await f.request('/api/v55/tasks','POST',{...common,serviceSku:'SER-0038',quantity:1},f.headers)).status,400);
-  assert.equal((await f.request('/api/v55/tasks/'+t.id+'/complete','POST',{version:t.version},operator.headers)).status,400);
-  const e=(await f.ok('/api/v55/entries','POST',{taskId:t.id,date:'2026-10-05',quantity:2,minutes:2},f.headers,201)).entry;assert.equal(e.payAmount,400);
-  const ownOperations=await f.ok('/api/v55/operations','GET',undefined,operator.headers);assert.equal(ownOperations.entries.length,1);assert.equal('payAmount' in ownOperations.entries[0],false);assert.equal('payRateSnapshot' in ownOperations.entries[0],false);
-  await f.ok('/api/v55/pay-rates','POST',{operatorId:o.id,serviceSku:'SER-0038',mode:'unit',unitRate:999,hourRate:0,effectiveDate:'2026-10-01'},finance.headers,201);assert.equal((await f.store.getV5('entry:'+e.id)).payAmount,400);
-  await f.ok('/api/v55/tasks/'+t.id+'/complete','POST',{version:t.version+1},operator.headers);assert.equal((await f.store.getProject(p.id)).project.status,'produccion');
-  await f.ok('/api/v55/entries','POST',{taskId:cut.id,date:'2026-10-05',quantity:cut.quantity,minutes:18},f.headers,201);
-  await f.ok('/api/v55/tasks/'+cut.id+'/complete','POST',{version:cut.version+1},operator.headers);assert.equal((await f.store.getProject(p.id)).project.status,'despacho');assert.ok((await f.store.getProject(p.id)).actualProductionEnd);
+  assert.equal((await f.request('/api/v61/tasks/'+t.id+'/assign','POST',{operatorId:o.id,quantity:3,version:t.version},f.headers)).status,400);
+  assert.equal((await f.request('/api/v61/tasks/'+t.id+'/complete','POST',{version:t.version},operator.headers)).status,400);
+  const e=(await f.ok('/api/v61/entries','POST',{taskId:t.id,date:'2026-10-05',quantity:2},f.headers,201)).entry;assert.equal(e.payAmount,200);
+  const ownOperations=await f.ok('/api/v61/operations','GET',undefined,operator.headers);assert.equal(ownOperations.entries.length,1);assert.equal('payAmount' in ownOperations.entries[0],false);assert.equal('payRateSnapshot' in ownOperations.entries[0],false);assert.equal('pendingUnitRate' in ownOperations.entries[0],false);
+  const svc=(await f.ok('/api/catalog','GET',undefined,f.headers)).services.find(s=>s.sku===t.serviceSku&&s.active);
+  await f.ok('/api/v61/services/'+svc.id+'/pay-rate','PATCH',{payUnitRate:999},finance.headers);assert.equal((await f.store.getV5('entry:'+e.id)).payAmount,200);
+  await f.ok('/api/v61/tasks/'+t.id+'/complete','POST',{version:t.version+1},operator.headers);assert.equal((await f.store.getProject(p.id)).project.status,'produccion');
+  await f.ok('/api/v61/entries','POST',{taskId:cut.id,date:'2026-10-05',quantity:cut.quantity},f.headers,201);
+  await f.ok('/api/v61/tasks/'+cut.id+'/complete','POST',{version:cut.version+1},operator.headers);assert.equal((await f.store.getProject(p.id)).project.status,'despacho');assert.ok((await f.store.getProject(p.id)).actualProductionEnd);
   assert.equal((await f.request('/api/projects/'+p.id,'PATCH',{invoiceNumber:'HACK'},operator.headers)).status,403);
-  const costs=await f.ok('/api/v55/projects/'+p.id+'/costs');assert.equal(costs.laborCost,400);assert.ok(costs.missingCosts.some(n=>n.includes('SER-DIM-01')));
+  const costs=await f.ok('/api/v55/projects/'+p.id+'/costs');assert.equal(costs.laborCost,200+1500*cut.quantity);
  }finally{await f.close();}
 });
 test('V5.5 PostgreSQL migra sin duplicar ni borrar datos, con configuración concurrente protegida',async()=>{
@@ -124,7 +125,7 @@ test('V5.5 aplica el disco configurado y consolida costos sin revelarlos a produ
  const f=await fixture();try{
   const cfg=await f.ok('/api/v5/config');await f.ok('/api/v5/config','PATCH',{version:cfg.version,defaultKerf:3.5});
   const a=sample();delete a.settings.kerf;const p=(await f.ok('/api/projects','POST',a,f.headers,201)).project;assert.equal(p.settings.kerf,3.5);
-  const s=catalog.services.find(s=>s.sku==='SER-NEO-23'),q=(await f.ok('/api/projects','POST',{project:{projectName:'Servicios asociados',clientName:'Prueba'},groupId:p.groupId,workType:'hardware',saleLines:[{productId:s.id,quantity:2}]},f.headers,201)).project;
+  const s=(await f.ok('/api/catalog','GET',undefined)).services.find(s=>s.sku==='SER-PLC-NEO-04'&&s.active),q=(await f.ok('/api/projects','POST',{project:{projectName:'Servicios asociados',clientName:'Prueba'},groupId:p.groupId,workType:'hardware',saleLines:[{productId:s.id,quantity:2}]},f.headers,201)).project;
   const lines=[{id:'insumo1',name:'Adhesivo',kind:'input',unit:'kg',plannedQuantity:2,actualQuantity:3,unitCost:1000,serviceSku:s.sku}];await f.ok('/api/v55/projects/'+q.id+'/costs','POST',{version:0,lines});
   const consolidated=await f.ok('/api/v55/groups/'+p.groupId+'/costs');assert.equal(consolidated.quoteIds.length,2);assert.equal(consolidated.netRevenue,p.summary.net+q.summary.net);assert.ok(consolidated.actualCost>=3000);
   const settings=await f.ok('/api/v55/settings');await f.ok('/api/v55/settings','PATCH',{version:settings.version,resourceTemplates:{[s.sku]:lines}});

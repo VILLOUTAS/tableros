@@ -73,6 +73,7 @@ export async function prepareProjectV5(record,current,user,catalog,config,db,bod
   if(!current && body.groupId && body.groupId!==record.id) {
     const siblings=(await db.listProjects(user)).filter(q=>(q.groupId||q.id)===body.groupId);
     if(!siblings.length) throw fail('No tienes acceso al proyecto seleccionado.',403);
+    if(siblings[0].project.clientName.trim().toLowerCase()!==record.project.clientName.trim().toLowerCase())throw fail('El proyecto pertenece a otro cliente.');
   }
   p.quoteName=String(body.quoteName??current?.quoteName??(p.workType==='slabs'?'Placas':'Tableros')).slice(0,160);
   p.comments=String(body.comments??current?.comments??'').slice(0,10000);

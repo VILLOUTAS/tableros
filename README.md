@@ -1,35 +1,31 @@
-# Casa Diseño Multiespacio · Optimizador V6.0.0
+# Casa Diseño Multiespacio · Plataforma V6.1.0
 
-Actualización para `VILLOUTAS/tableros`, su servicio y la misma base PostgreSQL. Comienza por [ACTUALIZACION_V6.0.0.md](ACTUALIZACION_V6.0.0.md).
+Actualización sobre `VILLOUTAS/tableros`, el servicio existente y la misma base PostgreSQL. Comienza por [ACTUALIZACION_V6.1.0.md](ACTUALIZACION_V6.1.0.md).
 
 ## Cambios incluidos
 
-- Menú: **Panel, Proyectos, CRM Producción, Catálogo de Productos, Catálogo de Servicios, Despachos, Administración**, con visibilidad según perfil.
-- Catálogos separados y desplegables por grupo, familia, línea/marca y variante. Matriz corregida: 43 rutas de Productos y 80 de Servicios. Tapacantos dentro de Tableros; Despachos fuera del catálogo de servicios.
-- Conserva las 868 referencias de la V5.5. Agrega 60 fichas de servicios pendientes de configurar, con códigos provisionales `V6-SRV-…`, unidad, costo, venta y venta mínima editables. No se inventan precios ni códigos oficiales.
-- Panel de servicios por pagar para **Super Administrador, Administración, Logística y Finanzas**: producción validada del mes, pagado, saldo total pendiente y registros sin tarifa. Detalle por persona/servicio/proyecto y descarga CSV.
-- Registro de pagos realizados por Super Administrador, Administración y Finanzas; Logística solo consulta. Fecha y comprobante obligatorios, por líneas completas. Bloquea pagos duplicados. No ejecuta transferencias ni admite abonos parciales.
-- Tareas por persona vinculadas a los servicios cotizados; incluye fabricación e instalación. Tarifa de mano de obra independiente del costo del servicio y del precio al cliente. Conserva la tarifa usada en cada avance.
-- Elimina el aviso general de referencia histórica. Asocia automáticamente sucesores conocidos; una referencia sin correspondencia segura se señala en la pieza afectada y requiere corregirla antes de guardar.
-- Mantiene las reglas anteriores de disco, 105% de material de tapacanto / 100% de instalación, despachos, Salice, jornada, metas y autoría al pie.
+- Panel con cinco accesos: Optimizador de Tableros, Optimizador de Placas, Cotizador de Productos, Cotizador de Servicios y Despachos. Proyectos y pedidos siguen accesibles desde el panel y CRM.
+- Cotizaciones de productos y servicios con formulario propio de cliente y proyecto, sin pasos de optimización. Pueden vincularse a un proyecto existente del mismo cliente antes de facturar, conservando sus importes e historial.
+- Categorías de selección abreviadas; tabla compacta de piezas con terminaciones L1–L4, asignación masiva, dibujo opcional y medidas redondeadas. Corrige el error de interfaz con referencias pendientes; muestra la pieza que requiere corrección antes de calcular.
+- Cuadrícula visible antes de pegar, con Material, Nombre, Cantidad, Largo, Ancho, Tipo tapacanto, L1, L2, L3 y L4. Reconoce códigos exactos de materiales seleccionados y tapacantos; las asociaciones ambiguas requieren elección. Conserva la importación avanzada.
+- Matriz nueva: **104 servicios** con código, unidad, venta neta, venta mínima neta y pago por unidad. Mantiene los 840 productos anteriores. Los servicios sustituidos quedan como referencias históricas inactivas.
+- Cada pedido facturado y pagado genera sus tareas por los servicios vendidos. Producción, Logística, Instalación y Administración asignan operadores o subcontratistas, distribuyendo cantidades sin exceder lo cotizado. La excepción manual se identifica como servicio no codificado y exige motivo.
+- Permite iniciar producción y registrar cantidades validadas sin responsable; la asignación posterior conserva fecha, cantidad y tarifa. Un registro sin responsable no puede pagarse.
+- Pago por cantidad validada y tarifa del servicio, sin exigir horas o minutos. Informe por persona/servicio/período y CSV. Conserva importes y tarifas de los registros anteriores, incluidos los que utilizaban modalidades antiguas.
+- En placas, el corte base se cobra por placa completa. El corte bruto por ml se vende únicamente como servicio adicional o para saldos/retazos; no se agrega automáticamente sobre el corte base. Biselado y 45° usan la tarifa correspondiente a Neolith o Cuarzo/Granito.
+- Mantiene disco único editable de 2 a 5 mm, 3 mm predeterminados; material de tapacanto al 105% e instalación al 100%; despachos, calendarios, Salice, permisos, pagos y autoría al pie.
 
 ## Datos anteriores
 
-La migración no recalcula cotizaciones ni cambia estados. Conserva usuarios, contraseñas, revisiones, códigos, importes, tarifas y fotografías. Una modificación técnica genera R+1 con motor 6.0 y archiva la anterior; solo consultar o cambiar comentarios mantiene el cálculo guardado. La configuración de categorías anterior queda respaldada internamente.
+Conserva usuarios, contraseñas, fotografías, proyectos, cotizaciones, códigos, revisiones, importes y pagos. Consultar o editar solo comentarios mantiene el cálculo guardado; cambiar medidas, materiales o servicios crea R+1 con motor 6.1 y archiva la anterior. Las dimensiones y precios personalizados mantienen sus revisiones.
 
-Ranurado conserva sus referencias y cobro por placa. Al no aparecer en la nueva matriz, queda en el bloque de servicios anteriores conservados y Administración puede asignarle categoría.
+La matriz actual expresa ranurado por **ml**. Las ventas anteriores por placa conservan su unidad e importe. Una revisión técnica de una línea antigua sin sucesor equivalente requiere elegir el nuevo servicio y su cantidad; no convierte placas a metros automáticamente.
 
-## Configuración inicial
-
-Configura códigos definitivos, unidades, venta y venta mínima de las nuevas fichas en Administración → Servicios. Los costos requieren Super Administrador o Administrador con permiso específico. Configura las tarifas por persona y tarea antes de validar producción. Cambiar tarifas posteriormente no modifica registros validados.
-
-Revisa movimientos anteriores ya pagados o sin tarifa antes de preparar liquidaciones: no se presumen comprobantes inexistentes ni se aplican tarifas retroactivamente.
-
-Persisten los pendientes de catálogo 5.5, incluidas 12 referencias sin medidas/espesor completos. Ver [catálogos y pendientes](docs/CATALOGO_V6.md).
+Los costos de ejecución siguen separados del pago de mano de obra: la matriz no incluye una columna de costo total, por lo que no se inventan valores. Administración con permiso de costos o Super Administrador los configura; se complementan con insumos y activos del proyecto.
 
 ## Ejecución
 
-Node.js 24, Express, PostgreSQL y Vite. Dependencias fijadas; SheetJS incluido en `vendor/`.
+Node.js 24, Express, PostgreSQL y Vite. Dependencias fijadas en `package-lock.json`; SheetJS incluido en `vendor/`.
 
 ```bash
 npm ci --include=dev
@@ -38,8 +34,8 @@ npm run build
 npm start
 ```
 
-`/api/health` informa `6.0.0`. Conserva `DATABASE_URL`: desarrollo sin base usa memoria temporal. Matriz fuente en `catalog/MATRIZ_PRODUCTOS_SERVICIOS_V6.xlsx`; regeneración con `npm run matrix:import:v60`. No elimines ni regeneres catálogos históricos para actualizar esta versión.
+`/api/health` informa `6.1.0`. Conserva `DATABASE_URL`: sin base, desarrollo utiliza memoria temporal. Matriz original en `catalog/MATRIZ_PRODUCTOS_SERVICIOS_V6.1.xlsx`; regeneración del código semilla mediante `npm run matrix:import:v61`. Conserva los catálogos y motores históricos.
 
-Documentación: [carga GitHub/Render](SUBIR_A_GITHUB_Y_RENDER.txt), [pagos y permisos](docs/PAGOS_OPERADORES_V6.md), [validación](docs/VALIDACION_V6.md), [autoría](COPYRIGHT.txt).
+Documentación: [carga GitHub/Render](SUBIR_A_GITHUB_Y_RENDER.txt), [servicios y pagos](docs/SERVICIOS_Y_PAGOS_V6.1.md), [validación](docs/VALIDACION_V6.1.md), [autoría](COPYRIGHT.txt).
 
-El paquete se probó localmente. No se ha subido ni desplegado desde esta sesión.
+Paquete validado localmente. No se ha publicado en GitHub ni desplegado en Render desde esta sesión.

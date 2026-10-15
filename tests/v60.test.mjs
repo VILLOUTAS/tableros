@@ -52,24 +52,25 @@ test('V6 servicios configurables, tareas de instalador, costos y tarifas indepen
   const c=(await f.request('/api/catalog')).body.services,placeholder=c.find(s=>s.id==='v60-service-62');assert.ok(placeholder);assert.equal(placeholder.pricingPending,true);assert.equal('minPrice' in placeholder,false);
   assert.equal((await f.request('/api/projects','POST',{project:{projectName:'Instalación',clientName:'Cliente'},workType:'hardware',saleLines:[{productId:placeholder.id,quantity:2}]},f.headers)).status,400);
   const admin=await f.login('admin'),logistics=await f.login('logistica'),finance=await f.login('finanzas'),installer=await f.login('instalador');
-  const configured=await f.ok('/api/admin/catalog/service/'+placeholder.id,'PATCH',{product:{sku:'SER-INST-BASE',netPrice:25000,minPrice:15000,purchasePrice:8000,unit:'unidad',unitPending:false}},f.headers);
-  const svc=configured.catalog.services.find(s=>s.sku==='SER-INST-BASE');assert.equal(svc.pricingPending,false);assert.equal(svc.purchasePrice,8000);assert.equal(svc.taskArea,'installations');
-  const updated=await f.ok('/api/admin/catalog/service/'+svc.id,'PATCH',{product:{netPrice:26000,minPrice:16000,purchasePrice:123}},admin.headers);const s=updated.catalog.services.find(s=>s.sku==='SER-INST-BASE'&&s.active);assert.equal(s.minPrice,16000);assert.equal('purchasePrice' in s,false);assert.equal((await f.store.listCatalogRevisions()).find(r=>r.id===s.id).payload.purchasePrice,8000);
+  const active=c.find(s=>s.sku==='SER-TAB-INS-02'&&s.active);assert.ok(active);
+  const configured=await f.ok('/api/admin/catalog/service/'+active.id,'PATCH',{product:{netPrice:25000,minPrice:15000,purchasePrice:8000}},f.headers);
+  const svc=configured.catalog.services.find(s=>s.sku==='SER-TAB-INS-02'&&s.active);assert.equal(svc.pricingPending,false);assert.equal(svc.purchasePrice,8000);assert.equal(svc.taskArea,'installations');
+  const updated=await f.ok('/api/admin/catalog/service/'+svc.id,'PATCH',{product:{netPrice:26000,minPrice:16000,purchasePrice:123}},admin.headers);const s=updated.catalog.services.find(s=>s.sku==='SER-TAB-INS-02'&&s.active);assert.equal(s.minPrice,16000);assert.equal('purchasePrice' in s,false);assert.equal((await f.store.listCatalogRevisions()).find(r=>r.id===s.id).payload.purchasePrice,8000);
   let p=(await f.ok('/api/projects','POST',{project:{projectName:'Instalación',clientName:'Cliente'},workType:'hardware',saleLines:[{productId:s.id,quantity:2}]},f.headers,201)).project;assert.equal(p.summary.net,52000);assert.deepEqual(quoteWorkAreas60(p),['installations']);
   p=(await f.ok('/api/projects/'+p.id,'PATCH',{project:{status:'facturado_pagado'},invoiceNumber:'1'})).project;p=(await f.ok('/api/projects/'+p.id,'PATCH',{project:{status:'produccion'}})).project;
-  const o=(await f.ok('/api/v55/operators','POST',{name:'Instalador de prueba',userId:installer.id,areas:['installations']})).operator;
-  await f.ok('/api/v55/pay-rates','POST',{operatorId:o.id,serviceSku:'SER-INST-BASE',mode:'unit',unitRate:6000,hourRate:0,effectiveDate:'2026-10-01'},finance.headers,201);
-  const task=(await f.ok('/api/v55/tasks','POST',{quoteId:p.id,area:'installations',operatorId:o.id,serviceSku:'SER-INST-BASE',quantity:2,startDate:'2026-10-05',startTime:'08:00',plannedMinutes:60})).task;
-  const entry=(await f.ok('/api/v55/entries','POST',{taskId:task.id,date:'2026-10-05',quantity:2,minutes:60},f.headers,201)).entry;assert.equal(entry.payAmount,12000);
+  const o=(await f.ok('/api/v61/operators','POST',{name:'Instalador de prueba',kind:'operator',userId:installer.id,areas:['installations']})).operator;
+  const seed=(await f.ok('/api/v61/operations')).tasks.find(t=>t.quoteId===p.id);
+  const task=(await f.ok('/api/v61/tasks/'+seed.id+'/assign','POST',{operatorId:o.id,quantity:seed.quantity,version:seed.version})).task;
+  const entry=(await f.ok('/api/v61/entries','POST',{taskId:task.id,date:'2026-10-05',quantity:2},f.headers,201)).entry;assert.equal(entry.payAmount,10000);
   const frozen=structuredClone(await f.store.getProject(p.id));
-  for(const u of [admin,logistics,finance]){const report=await f.ok('/api/v60/labor-payables?month=2026-10','GET',undefined,u.headers);assert.equal(report.totals.pendingAmount,12000);assert.equal(report.rows[0].entries[0].amount,12000);assert.equal(JSON.stringify(report).includes('purchasePrice'),false);}
+  for(const u of [admin,logistics,finance]){const report=await f.ok('/api/v60/labor-payables?month=2026-10','GET',undefined,u.headers);assert.equal(report.totals.pendingAmount,10000);assert.equal(report.rows[0].entries[0].amount,10000);assert.equal(JSON.stringify(report).includes('purchasePrice'),false);}
   for(const role of ['comercial','supervisor','produccion','instalacion','operador','cliente']){const u=await f.login(role);assert.equal((await f.request('/api/v60/labor-payables','GET',undefined,u.headers)).status,403);}
   const body={entryIds:[entry.id],date:'2026-10-06',reference:'Transferencia de prueba'};
   assert.equal((await f.request('/api/v60/labor-payments','POST',body,logistics.headers)).status,403);
   const results=await Promise.all([f.request('/api/v60/labor-payments','POST',body,finance.headers),f.request('/api/v60/labor-payments','POST',body,finance.headers)]);assert.deepEqual(results.map(r=>r.status).sort(),[201,409]);
   assert.equal((await f.ok('/api/v60/labor-payables?month=2026-10','GET',undefined,logistics.headers)).totals.pendingAmount,0);
-  assert.equal((await f.store.getV5('entry:'+entry.id)).payAmount,12000);assert.deepEqual(await f.store.getProject(p.id),frozen);
-  await f.ok('/api/v55/tasks/'+task.id+'/complete','POST',{version:task.version+1},installer.headers);assert.equal((await f.store.getProject(p.id)).project.status,'despacho');
+  assert.equal((await f.store.getV5('entry:'+entry.id)).payAmount,10000);assert.deepEqual(await f.store.getProject(p.id),frozen);
+  await f.ok('/api/v61/tasks/'+task.id+'/complete','POST',{version:task.version+1},installer.headers);assert.equal((await f.store.getProject(p.id)).project.status,'despacho');
   const revision=await f.ok('/api/admin/catalog/service/'+s.id,'PATCH',{product:{netPrice:30000}},f.headers);assert.ok(revision);assert.equal((await f.store.getProject(p.id)).summary.net,52000);
  }finally{await f.close();}
 });

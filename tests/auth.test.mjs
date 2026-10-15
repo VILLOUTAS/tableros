@@ -373,7 +373,7 @@ test("protege acceso, crea perfiles y permite guardar proyectos por perfil", asy
     assert.equal(scheduled.body.project.deliveryDate, "2026-08-05");
 
     // Fixture de producción validada: el flujo de tareas se prueba en v55.test.mjs.
-    for(const [serviceSku,quantity] of Object.entries(serviceDemand(enteredProduction.body.project)))await store.putV5('task:auth-'+serviceSku,{id:'auth-'+serviceSku,quoteId:project.body.project.id,groupId:project.body.project.groupId,area:'boards',required:true,status:'completed',serviceSku,quantity});
+    for(const task of (await store.listV5('task:')).filter(t=>t.quoteId===project.body.project.id))await store.putV5('task:'+task.id,{...task,status:'completed'});
     const dispatched = await request(
       base,
       `/api/projects/${project.body.project.id}`,

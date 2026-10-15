@@ -1,6 +1,6 @@
 {
   "name": "cotizador-casa-diseno",
-  "version": "6.0.0",
+  "version": "6.1.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -16,7 +16,8 @@
     "admin:promote-owner": "node scripts/promote-owner.mjs",
     "catalog:import:v51": "node scripts/import-catalog-v51.mjs",
     "catalog:import:v55": "node scripts/import-catalog-v55.mjs",
-    "matrix:import:v60": "node scripts/import-matrix-v60.mjs"
+    "matrix:import:v60": "node scripts/import-matrix-v60.mjs",
+    "matrix:import:v61": "node scripts/import-matrix-v61.mjs"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

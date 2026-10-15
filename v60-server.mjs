@@ -35,7 +35,7 @@ export function registerV60Routes(app,{db,authenticate,csrf}){
   const month=String(req.query.month||'');if(month&&!/^\d{4}-(0[1-9]|1[0-2])$/.test(month))throw fail('Mes inválido.');
   const ids=new Set((await db.listProjects(req.auth.user)).map(p=>p.id)),tasks=(await db.listV5('task:')).filter(t=>ids.has(t.quoteId));
   const rows=laborPayables60(tasks,await db.listV5('entry:'),await db.listV5('operator:'),await db.listV5('labor-payment:'),month);
-  res.json({month,rows,totals:{producedAmount:rows.reduce((n,r)=>n+r.producedAmount,0),paidAmount:rows.reduce((n,r)=>n+r.paidAmount,0),pendingAmount:rows.reduce((n,r)=>n+r.pendingAmount,0),missingRates:rows.reduce((n,r)=>n+r.missingRates,0)}});
+  res.json({month,rows,totals:{producedAmount:rows.reduce((n,r)=>n+r.producedAmount,0),paidAmount:rows.reduce((n,r)=>n+r.paidAmount,0),pendingAmount:rows.reduce((n,r)=>n+r.pendingAmount,0),missingRates:rows.reduce((n,r)=>n+r.missingRates,0),pendingResponsible:rows.reduce((n,r)=>n+(r.pendingResponsible||0),0)}});
  });
  app.post('/api/v60/labor-payments',authenticate,csrf,guard('laborPayments'),async(req,res)=>{
   const b=req.body,entryIds=[...new Set(b.entryIds||[])];if(!Array.isArray(b.entryIds)||!entryIds.length||entryIds.length>1000||entryIds.some(id=>typeof id!=='string'))throw fail('Selecciona los registros que se pagaron.');

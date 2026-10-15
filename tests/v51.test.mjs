@@ -47,7 +47,7 @@ test('V5.1 PostgreSQL: dimensiones atómicas, servicios y fechas históricas en 
     const rev=await database.listCatalogRevisions();assert.equal(rev.length,2);
     const untouched=currentCatalog.materials.find(x=>x.id!==m.id&&x.id!==slab.id&&!x.dimensionsPending);
     r=await f.request('/api/v51/catalog/dimensions','POST',{ids:[untouched.id,m.id],changes:{plateWidth:1200}},f.headers);assert.equal(r.status,409);assert.equal((await database.listCatalogRevisions()).length,2);
-    const svc=currentCatalog.services.find(s=>s.sku==='SER-0038');
+    const svc=(await f.request('/api/catalog','GET',undefined,f.headers)).body.services.find(s=>s.sku==='SER-TAB-DIM-05'&&s.active);
     r=await f.request('/api/admin/catalog/service/'+svc.id,'PATCH',{product:{netPrice:650}},f.headers);assert.equal(r.status,200,JSON.stringify(r.body));
     r=await f.request('/api/v5/config','GET',undefined,f.headers);assert.equal(r.body.services.edge04.price,650);
     await initializeV51(database);assert.equal((await database.listCatalogRevisions()).length,3);
