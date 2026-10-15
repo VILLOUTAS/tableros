@@ -1347,6 +1347,7 @@ function projectRecord(body, ownerId, current = null) {
       quoteKind:['products','services'].includes(body.quoteKind)?body.quoteKind:current?.quoteKind||null,
       assignedOperatorIds:current?.assignedOperatorIds||[],
       actualProductionEnd:current?.actualProductionEnd||null,
+      deliveryReadiness:current?.deliveryReadiness||null,
       saleLines:Array.isArray(body.saleLines)?body.saleLines:current?.saleLines||[],
       delivery:body.delivery??current?.delivery??{required:false},
       workType:
@@ -1748,7 +1749,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
   };
 
   app.get("/api/health", (_request, response) => {
-    response.json({ ok: true, version:'6.1.0', database: databaseUrl ? "postgresql" : "memoria-local" });
+    response.json({ ok: true, version:'6.1.1', database: databaseUrl ? "postgresql" : "memoria-local" });
   });
 
   app.get("/api/catalog", async (_request, response) => {
@@ -2552,7 +2553,7 @@ export async function createApplication({ store, useMemory = false } = {}) {
       projectProductionSignature(record.payload) !==
       projectProductionSignature(current);
     if(calculationSignature(record.payload)!==calculationSignature(current) && !permitted(request.auth.user,'quote')) throw fail('Tu perfil puede gestionar el trabajo, pero no cambiar su valorización.',403);
-    if(['5.5','6.0','6.1'].includes(current.settings?.calculationVersion)&&requestedStatus==='despacho'&&current.project.status!=='despacho'){const tasks=(await database.listV5('task:')).filter(t=>t.groupId===(current.groupId||current.id)&&t.required&&['boards','slabs','installations'].includes(t.area));const siblings=(await database.listProjects({role:'superadmin'})).filter(p=>(p.groupId||p.id)===(current.groupId||current.id));if(!productionReady(siblings,tasks))throw fail('Completa las tareas de producción requeridas antes de pasar a despacho.');}
+    if(['5.5','6.0','6.1'].includes(current.settings?.calculationVersion)&&requestedStatus==='despacho'&&current.project.status!=='despacho'){const tasks=(await database.listV5('task:')).filter(t=>t.groupId===(current.groupId||current.id)&&t.required&&['boards','slabs','installations'].includes(t.area));const siblings=(await database.listProjects({role:'superadmin'})).filter(p=>(p.groupId||p.id)===(current.groupId||current.id));if(!productionReady(siblings,tasks)&&!(request.body.readyForDelivery===true&&permitted(request.auth.user,'tasks')))throw fail('Valida las tareas de producción o confirma que el pedido está procesado, revisado y listo para entrega o carga. No es necesario contratar ni programar transporte.');}
     const dimensionError = productionChanged
       ? projectDimensionError(record, catalog.materials, catalog.edgeBands)
       : "";
@@ -2610,6 +2611,11 @@ export async function createApplication({ store, useMemory = false } = {}) {
       record.project.status === "facturado_pagado";
     await prepareProjectV5(record, typeof current !== 'undefined' ? current : null, request.auth?.user||null, catalog, mergeConfig(await database.getV5('config')), database, request.body);
       await validateOrderChange61(database,typeof current!=='undefined'?current:null,record.payload,catalog);
+      if(requestedStatus==='despacho'&&current.project.status!=='despacho'&&request.body.readyForDelivery===true&&permitted(request.auth.user,'tasks')){
+        const confirmedAt=new Date().toISOString();
+        record.payload.deliveryReadiness={confirmedAt,confirmedBy:request.auth.user.id,processed:true,reviewed:true};
+        record.payload.actualProductionEnd=record.payload.actualProductionEnd||confirmedAt;
+      }
       const saved = await database.saveProject(record);
       await syncOrder61(database,saved,catalog);
     for (const collaboratorId of addedCollaborators) {

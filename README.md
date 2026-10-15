@@ -1,6 +1,14 @@
-# Casa Diseño Multiespacio · Plataforma V6.1.0
+# Casa Diseño Multiespacio · Plataforma V6.1.1
 
-Actualización sobre `VILLOUTAS/tableros`, el servicio existente y la misma base PostgreSQL. Comienza por [ACTUALIZACION_V6.1.0.md](ACTUALIZACION_V6.1.0.md).
+Actualización sobre `VILLOUTAS/tableros`, el servicio existente y la misma base PostgreSQL. Comienza por [ACTUALIZACION_V6.1.1.md](ACTUALIZACION_V6.1.1.md).
+
+## Corrección V6.1.1: Despacho del CRM
+
+**Despacho significa pedido procesado, revisado y listo para entrega o carga**, tanto para retiro del cliente como para transporte interno o externo. La programación de viajes se administra aparte, en la pestaña Despachos.
+
+Al pasar un pedido a Despacho, un perfil operativo autorizado confirma que está procesado y revisado. Se registra quién confirmó y cuándo, sin generar registros de producción, asignar operadores ni calcular pagos automáticamente. Puede completarse el registro de mano de obra posteriormente.
+
+Las tarjetas listas ya no muestran “Sin programar” ni solicitan programar producción. Las etapas comerciales, precios e historial se conservan. Las tareas pueden seguir cerrando automáticamente la producción cuando toda su cantidad está validada.
 
 ## Cambios incluidos
 
@@ -34,8 +42,8 @@ npm run build
 npm start
 ```
 
-`/api/health` informa `6.1.0`. Conserva `DATABASE_URL`: sin base, desarrollo utiliza memoria temporal. Matriz original en `catalog/MATRIZ_PRODUCTOS_SERVICIOS_V6.1.xlsx`; regeneración del código semilla mediante `npm run matrix:import:v61`. Conserva los catálogos y motores históricos.
+`/api/health` informa `6.1.1`. Conserva `DATABASE_URL`: sin base, desarrollo utiliza memoria temporal. Matriz original en `catalog/MATRIZ_PRODUCTOS_SERVICIOS_V6.1.xlsx`; regeneración del código semilla mediante `npm run matrix:import:v61`. Conserva los catálogos y motores históricos.
 
-Documentación: [carga GitHub/Render](SUBIR_A_GITHUB_Y_RENDER.txt), [servicios y pagos](docs/SERVICIOS_Y_PAGOS_V6.1.md), [validación](docs/VALIDACION_V6.1.md), [autoría](COPYRIGHT.txt).
+Documentación: [carga GitHub/Render](SUBIR_A_GITHUB_Y_RENDER.txt), [servicios y pagos](docs/SERVICIOS_Y_PAGOS_V6.1.md), [validación](docs/VALIDACION_V6.1.1.md), [autoría](COPYRIGHT.txt).
 
 Paquete validado localmente. No se ha publicado en GitHub ni desplegado en Render desde esta sesión.

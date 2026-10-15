@@ -1,8 +1,8 @@
-CASA DISEÑO MULTIESPACIO - ACTUALIZACIÓN V6.1.0
+CASA DISEÑO MULTIESPACIO - ACTUALIZACIÓN V6.1.1
 
 Repositorio: https://github.com/VILLOUTAS/tableros
 
-1. Lee ACTUALIZACION_V6.1.0.md y respalda la base y el código actuales.
+1. Lee ACTUALIZACION_V6.1.1.md y respalda la base y el código actuales.
 2. Abre tu repositorio existente en GitHub Desktop. Fetch/Pull origin.
 3. Descomprime el ZIP. Copia su CONTENIDO en la raíz del repositorio.
    Reemplaza archivos coincidentes; conserva carpetas, .git, .env y fotos propias.
@@ -13,14 +13,16 @@ Repositorio: https://github.com/VILLOUTAS/tableros
    npm ci --include=dev
    npm test
    npm run build
-6. Commit: Actualizar Casa Diseño a V6.1.0
+6. Commit: Actualizar Casa Diseño a V6.1.1
 7. Push origin con tu cuenta autorizada.
 8. Render: servicio EXISTENTE, misma DATABASE_URL.
    Build: npm ci --include=dev && npm test && npm run build
    Start: npm start
    Health: /api/health
-9. Comprueba /api/health: 6.1.0 y PostgreSQL. Abre cotizaciones anteriores.
-10. Revisa costos de servicios, tareas ya realizadas y responsables pendientes.
+9. Comprueba /api/health: 6.1.1 y PostgreSQL. Abre cotizaciones anteriores.
+10. CRM: confirma que un pedido está procesado, revisado y listo para entrega
+    o carga; debe pasar a Despacho sin necesitar transporte programado.
+11. Revisa costos de servicios, tareas ya realizadas y responsables pendientes.
 
 El paquete conserva catálogos históricos y utiliza la nueva matriz de 104 servicios.
 No crear otra base ni servicio. No cargar datos de prueba en producción.
