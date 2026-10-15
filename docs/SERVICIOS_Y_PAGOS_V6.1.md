@@ -33,6 +33,7 @@ Una excepción manual exige descripción, unidad, cantidad, área y motivo. Si c
 - Los cambios de matriz se aplican a nuevas tareas. Una tarea/registro existente conserva su tarifa.
 - Una tarea antigua con código equivalente y la misma unidad puede registrar trabajo nuevo con la tarifa vigente por unidad; sus registros anteriores permanecen intactos. Sin equivalencia de unidad, no se presume conversión ni tarifa.
 - Sin responsable o tarifa, el registro no se puede liquidar.
+- Para registrar el pedido como listo para entrega o carga en el CRM, un perfil operativo autorizado puede confirmar que está procesado y revisado. Se guardan usuario y fecha, sin exigir transporte programado ni crear avances o pagos. Los registros de mano de obra pendientes pueden completarse después.
 - Una tarea solo se cierra tras validar toda su cantidad. Al terminar las tareas requeridas del grupo, se actualiza término real y el estado de los pedidos en producción.
 
 Informe por persona, servicio y período, con detalle por proyecto/fecha y exportación CSV. El panel de saldo por pagar sigue visible para Super Administrador, Administración, Logística y Finanzas. Los pagos registrados requieren fecha y comprobante; Logística solo consulta. Bloquea pagar dos veces la misma línea.

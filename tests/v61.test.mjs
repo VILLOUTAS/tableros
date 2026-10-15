@@ -107,3 +107,39 @@ test('V6.1 PostgreSQL migración repetible preserva datos previos, dimensiones, 
   assert.deepEqual(await db.getProject(p.id),before);assert.deepEqual((await db.listUsers())[0],user);assert.equal((await db.getV5('config')).defaultKerf,4.25);assert.equal((await db.getV5('entry:historic')).payAmount,12345);assert.equal((await db.getV5('operator:historic')).name,'Anterior');assert.equal((await db.listCatalogRevisions()).length,1);assert.equal((await db.getV5('v61:migration')).release,'6.1');
  }finally{if(f)await f.close();await pg.close();}
 });
+
+test('Despacho del CRM admite retiro y transporte sin programación de producción ni de viajes',async()=>{
+ const f=await fixture();try{
+  for(const required of [false,true]){
+   const input=f.board();input.project.projectName=required?'Entrega con transporte':'Retiro del cliente';input.delivery=required?{required:true,communeId:'concepcion',street:'Dirección QA'}:{required:false};
+   let p=await f.paid((await f.ok('/api/projects','POST',input,f.headers,201)).project);
+   p=(await f.ok('/api/projects/'+p.id,'PATCH',{project:{status:'produccion'}})).project;
+   const tasks=(await f.ok('/api/v61/operations')).tasks.filter(t=>t.quoteId===p.id);assert.ok(tasks.length);
+   const premature=await f.request('/api/projects/'+p.id,'PATCH',{project:{status:'despacho'}},f.headers);assert.equal(premature.status,400);assert.match(premature.body.error,/tareas de producción/);
+   for(const t of tasks){await f.ok('/api/v61/entries','POST',{taskId:t.id,date:'2026-10-15',quantity:t.quantity},f.headers,201);await f.ok('/api/v61/tasks/'+t.id+'/complete','POST',{version:t.version+1});}
+   const ready=await f.store.getProject(p.id);assert.equal(ready.project.status,'despacho');assert.equal(ready.delivery.required,required);assert.ok(ready.actualProductionEnd);assert.deepEqual(ready.summary,p.summary);
+   assert.equal((await f.store.listV5('schedule:')).length,0);assert.equal((await f.store.listV5('dispatch:')).length,0);
+  }
+ }finally{await f.close();}
+});
+
+test('Producción y Logística confirman pedido procesado y revisado sin depender del registro de mano de obra',async()=>{
+ const f=await fixture();try{
+  for(const role of ['produccion','logistica']){
+   const u=await f.login(role),input=f.board();input.delivery=role==='logistica'?{required:true,communeId:'concepcion',street:'Dirección QA'}:{required:false};
+   let p=await f.paid((await f.ok('/api/projects','POST',input,f.headers,201)).project);p=(await f.ok('/api/projects/'+p.id,'PATCH',{project:{status:'produccion'}},u.headers)).project;
+   const before=(await f.store.listV5('task:')).filter(t=>t.quoteId===p.id),entries=await f.store.listV5('entry:');
+   const ready=(await f.ok('/api/projects/'+p.id,'PATCH',{project:{status:'despacho'},readyForDelivery:true},u.headers)).project;
+   assert.equal(ready.project.status,'despacho');assert.equal(ready.deliveryReadiness.confirmedBy,u.id);assert.equal(ready.deliveryReadiness.processed,true);assert.equal(ready.deliveryReadiness.reviewed,true);assert.ok(ready.deliveryReadiness.confirmedAt);assert.ok(ready.actualProductionEnd);
+   assert.deepEqual((await f.store.listV5('task:')).filter(t=>t.quoteId===p.id),before);assert.deepEqual(await f.store.listV5('entry:'),entries);assert.deepEqual(ready.summary,p.summary);assert.deepEqual(ready.history,p.history);assert.equal((await f.store.listV5('dispatch:')).length,0);
+   const comments=(await f.ok('/api/projects/'+p.id,'PATCH',{comments:'Listo para retiro'},u.headers)).project;assert.deepEqual(comments.deliveryReadiness,ready.deliveryReadiness);
+  }
+ }finally{await f.close();}
+});
+test('La confirmación de listo para entrega no habilita cambios de estado a perfiles de consulta',async()=>{
+ const f=await fixture();try{
+  let p=await f.paid((await f.ok('/api/projects','POST',f.board(),f.headers,201)).project);p=(await f.ok('/api/projects/'+p.id,'PATCH',{project:{status:'produccion'}})).project;
+  for(const role of ['supervisor','finanzas']){const u=await f.login(role);assert.equal((await f.request('/api/projects/'+p.id,'PATCH',{project:{status:'despacho'},readyForDelivery:true},u.headers)).status,403);}
+  assert.equal((await f.store.getProject(p.id)).project.status,'produccion');
+ }finally{await f.close();}
+});

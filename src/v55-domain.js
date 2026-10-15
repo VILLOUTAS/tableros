@@ -114,6 +114,8 @@ export function materialCostLines(project){
  for(const l of project.saleLines||[])if(l.productSnapshot?.productType!=='service')add(l.productSnapshot,l.quantity);
  return lines;
 }
+// Readiness is the completion of production work; freight purchase and transport
+// calendars are independent and must never be prerequisites for this CRM stage.
 export function productionReady(projects,tasks){
  const required=tasks.filter(t=>t.required&&t.status!=='cancelled'&&['boards','slabs','installations'].includes(t.area));
  if(!required.length)return projects.length>0&&projects.every(p=>!Object.values(serviceDemand(p)).some(n=>n>0));

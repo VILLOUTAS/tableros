@@ -499,6 +499,10 @@ function moveStep(delta) {
   try{render();window.scrollTo({top:0});}catch(e){state.step=before;notify('No se pudo calcular: '+e.message,'error');}
 }
 
+function confirmReadyForDelivery(){
+  return window.confirm('¿Confirmas que este pedido está procesado, revisado y listo para entrega o carga? Puede retirarlo el cliente o utilizar transporte interno o externo. Esta confirmación no registra producción ni pagos de operadores.');
+}
+
 async function saveProject(showMessage = true) {
   if(!canEditCurrent()){notify("Esta revisión es de consulta.","error");return false;}
   if (
@@ -557,6 +561,10 @@ async function saveProject(showMessage = true) {
     submissionSource: auth.visitor ? "visitante" : state.submissionSource,
     summary: result.summary,
   };
+  if(state.project.status==='despacho'&&projectsCache.find(p=>p.id===state.projectId)?.project.status!=='despacho'){
+    if(!confirmReadyForDelivery())return false;
+    record.readyForDelivery=true;
+  }
   if(state.loadedSignature===calculationSignature(state) && state.originalSettings) record.settings=state.originalSettings;
   try {
     if (auth.visitor) {
@@ -744,7 +752,7 @@ function shell(content) {
   const limited=userRoles().some(r=>["operador","instalador"].includes(r))&&!permitted(auth.user,"allProjects");
   const quote=state.view==='quote';
   const title=quote?(state.workType==='hardware'?(state.quoteKind==='services'?'Servicios':'Productos'):state.workType==='slabs'?'Placas':'Tableros'):({optimizers:'Optimizador','catalog-products':'Catálogo de Productos','catalog-services':'Catálogo de Servicios',dashboard:'Panel general',projects:'Proyectos',dispatch:'Despachos','v5-settings':'Configuración','v5-catalog':'Catálogo',users:'Usuarios',catalog:'Catálogo',production:'Agenda de pedidos',crm:'CRM de Producción',notifications:'Notificaciones'}[state.view]||'Casa Diseño');
-  return `<div class="v5-shell"><header class="v5-topbar"><button class="v5-brand" data-v5="home"><img class="brand-logo" src="/logo-casa-diseno.png" alt="Casa Diseño"><span>GESTIÓN & PROYECTOS <b>V6.1</b></span></button><nav aria-label="Navegación general">${!limited?'<button data-v5="home">Panel</button>':''}<button data-v61="optimizers">Optimizador</button>${internalUser(auth.user)?'<button data-v51="crm">CRM Producción</button>':''}${!limited?'<button data-v60="products">Catálogo de Productos</button><button data-v60="services">Catálogo de Servicios</button><button data-v55="dispatch">Despachos</button>':''}${permitted(auth.user,'catalog')?'<button data-v5="catalog-manage">Administración</button>':''}</nav><details class="v5-account"><summary>${safe(auth.user?.fullName||'Visitante')} ▾</summary><div><small>${userRoles().map(r=>roleLabels[r]).join(' · ')||'Venta sin descuento'}</small>${permitted(auth.user,'users')?'<button data-action="users">Usuarios y roles</button>':''}${permitted(auth.user,'settings')||permitted(auth.user,'catalog')?'<button data-v5="settings">Configuración</button>':''}${auth.user?'<button data-action="notifications">Notificaciones</button>':''}<button data-action="${auth.visitor?'visitor-exit':'logout'}">Cerrar sesión</button></div></details></header>
+  return `<div class="v5-shell"><header class="v5-topbar"><button class="v5-brand" data-v5="home"><img class="brand-logo" src="/logo-casa-diseno.png" alt="Casa Diseño"><span>GESTIÓN & PROYECTOS <b>V6.1.1</b></span></button><nav aria-label="Navegación general">${!limited?'<button data-v5="home">Panel</button>':''}<button data-v61="optimizers">Optimizador</button>${internalUser(auth.user)?'<button data-v51="crm">CRM Producción</button>':''}${!limited?'<button data-v60="products">Catálogo de Productos</button><button data-v60="services">Catálogo de Servicios</button><button data-v55="dispatch">Despachos</button>':''}${permitted(auth.user,'catalog')?'<button data-v5="catalog-manage">Administración</button>':''}</nav><details class="v5-account"><summary>${safe(auth.user?.fullName||'Visitante')} ▾</summary><div><small>${userRoles().map(r=>roleLabels[r]).join(' · ')||'Venta sin descuento'}</small>${permitted(auth.user,'users')?'<button data-action="users">Usuarios y roles</button>':''}${permitted(auth.user,'settings')||permitted(auth.user,'catalog')?'<button data-v5="settings">Configuración</button>':''}${auth.user?'<button data-action="notifications">Notificaciones</button>':''}<button data-action="${auth.visitor?'visitor-exit':'logout'}">Cerrar sesión</button></div></details></header>
   <div class="v5-layout ${quote?'has-context':''}">${quote?`<aside class="v5-context"><p class="eyebrow">${title.toUpperCase()}</p><h3>${safe(state.project.projectName||'Nuevo proyecto')}</h3><p>${safe(state.quoteName||'Cotización')}</p><nav aria-label="Etapas de cotización">${steps.map(([label,subtitle],i)=>({label,subtitle,i})).filter(({i})=>state.workType!=='hardware'||i>=3).map(({label,subtitle,i})=>`<button class="step-link ${state.step===i?'active':''}" data-action="step" data-step="${i}"><span>${state.workType==='hardware'?i-2:i+1}</span><b>${state.workType==='hardware'?(i===3?'Datos y venta':'Resumen'):label}<small>${state.workType==='hardware'?(i===3?'Cliente, productos o servicios':'Revisión y descarga'):subtitle}</small></b></button>`).join('')}</nav><div class="v5-context-note"><b>R${state.revisionNo||1} · cálculo ${safe(state.settings.calculationVersion)}</b>${state.workType==='hardware'?'':'<p>Las modificaciones generan una nueva revisión al guardar.</p>'}${state.readOnlyRevision?'<strong>Historial · solo consulta</strong>':''}</div></aside>`:''}<main class="v5-main"><header class="v5-page-header"><p class="eyebrow">${quote?'COTIZACIÓN / '+title.toUpperCase():'ESPACIO DE TRABAJO'}</p><h1>${quote?(state.workType==='hardware'?(state.step===4?'Resumen':'Datos y venta'):steps[state.step][0]):title}</h1>${quote?`<span class="status-pill">${statusLabels[state.project.status]}</span>`:''}</header><div class="workspace">${auth.user?searchForm():''}${content}</div></main></div>${state.message?`<div class="toast ${state.message.type}">${safe(state.message.text)}</div>`:''}</div>`;
 }
 
@@ -4051,12 +4059,15 @@ app.addEventListener("change", async (event) => {
             return;
           }
         }
+        const readyForDelivery=target.value==='despacho'&&project.project.status!=='despacho';
+        if(readyForDelivery&&!confirmReadyForDelivery()){render();return;}
         const payload = await api(`/api/projects/${project.id}`, {
           method: "PATCH",
           body: {
             ...project,
             invoiceNumber,
             dispatchGuideNumber,
+            readyForDelivery,
             project: { ...project.project, status: target.value },
           },
         });
